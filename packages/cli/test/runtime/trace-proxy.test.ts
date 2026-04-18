@@ -57,7 +57,10 @@ async function startHttpsEchoServer(): Promise<{
   const { cert, key } = await generateUpstreamCert();
   const server = createTlsServer({ cert, key, minVersion: 'TLSv1.2' }, (socket) => {
     const parts: Buffer[] = [];
-    socket.on('data', (data) => {
+    // Socket has no encoding set, so `data` is always a Buffer at
+    // runtime. @types/node 23+ types it as `string | NonSharedBuffer`
+    // for correctness — narrow explicitly so the push typechecks.
+    socket.on('data', (data: Buffer) => {
       parts.push(data);
       const buf = Buffer.concat(parts);
       const end = buf.indexOf('\r\n\r\n');
@@ -171,7 +174,9 @@ describe('proxy MITM path', () => {
 
     const response = await new Promise<Buffer>((resolve, reject) => {
       const parts: Buffer[] = [];
-      client.on('data', (d) => parts.push(d));
+      // See note above — `d` narrows to Buffer at runtime since we
+      // never call setEncoding on the client socket.
+      client.on('data', (d: Buffer) => parts.push(d));
       client.on('end', () => resolve(Buffer.concat(parts)));
       client.on('error', reject);
     });
