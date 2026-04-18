@@ -4,14 +4,14 @@
   "description": "Runtime-agnostic broker logic for ac7 \u2014 agent registry, push fanout, SSE, event log.",
   "license": "Apache-2.0",
   "author": "Andrew Przybilla <andrewprzybilla@gmail.com>",
-  "homepage": "https://github.com/ac7/ac7#readme",
+  "homepage": "https://github.com/agentc7/ac7#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ac7/ac7.git",
+    "url": "git+https://github.com/agentc7/ac7.git",
     "directory": "packages/core"
   },
   "bugs": {
-    "url": "https://github.com/ac7/ac7/issues"
+    "url": "https://github.com/agentc7/ac7/issues"
   },
   "keywords": [
     "ac7",

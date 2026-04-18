@@ -97,9 +97,21 @@ export interface ClaudeCodeCommandInput {
  * `stdio: 'inherit'` spawn. We need a TTY on both ends (stdin and
  * stdout) to own the user's terminal; otherwise (tests, CI, piped
  * input) we keep the old behavior so automation stays deterministic.
+ *
+ * Also returns `false` when `node-pty` isn't loadable — the package
+ * is listed in `optionalDependencies` so it may be absent on hosts
+ * that couldn't build the native binding (CI runners without
+ * build-essential, uncommon platforms, etc.). In those environments
+ * we transparently fall back to `stdio: 'inherit'` and skip the HUD.
  */
-function shouldUsePty(): boolean {
-  return process.stdout.isTTY === true && process.stdin.isTTY === true;
+async function shouldUsePty(): Promise<boolean> {
+  if (process.stdout.isTTY !== true || process.stdin.isTTY !== true) return false;
+  try {
+    await import('node-pty');
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -342,14 +354,18 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
       `      (pass either flag yourself to suppress this line)\n\n`;
     process.stderr.write(banner);
   }
+
+  const usePty = await shouldUsePty();
   // Heads-up to the user: claude-code's ink fork blocks its first
   // render on a terminal-capability probe (kitty-keyboard + DA1)
   // whose reply never materializes under a pty relay, so nothing
   // paints until it reads a byte from stdin. Any keypress works —
   // Enter is just the least surprising. We forward the keystroke
   // through to claude's stdin so the same Enter that unblocks the
-  // TUI becomes a no-op submit against the welcome prompt.
-  if (process.stdin.isTTY === true) {
+  // TUI becomes a no-op submit against the welcome prompt. Only
+  // shown when we're actually taking the pty path — the
+  // stdio:'inherit' fallback doesn't have this quirk.
+  if (usePty) {
     process.stderr.write('ac7: press Enter to render the Claude Code TUI.\n\n');
   }
 
@@ -360,7 +376,7 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
     cwd,
     nodeOptions: childEnv.NODE_OPTIONS,
     sslKeylogFile: childEnv.SSLKEYLOGFILE,
-    transport: shouldUsePty() ? 'pty' : 'inherit',
+    transport: usePty ? 'pty' : 'inherit',
   });
 
   // Last-ditch teardown if the node process itself is dying — we'd
@@ -383,7 +399,7 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
   let onSigterm: () => void = () => {};
 
   const exitCode = await new Promise<number>((resolvePromise) => {
-    if (shouldUsePty()) {
+    if (usePty) {
       void runPty({
         claudeBinary,
         args: finalClaudeArgs,

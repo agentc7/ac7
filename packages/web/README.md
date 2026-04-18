@@ -1,6 +1,6 @@
 # @agentc7/web
 
-Preact+Vite+UnoCSS web UI for [ac7](https://github.com/ac7/ac7). Built as a PWA with Web Push support; served by `@agentc7/server` as static assets.
+Preact+Vite+UnoCSS web UI for [ac7](https://github.com/agentc7/ac7). Built as a PWA with Web Push support; served by `@agentc7/server` as static assets.
 
 ## What it does
 
@@ -84,4 +84,4 @@ packages/web/
 
 ## License
 
-Apache 2.0. See the [ac7 monorepo](https://github.com/ac7/ac7) for the full source.
+Apache 2.0. See the [ac7 monorepo](https://github.com/agentc7/ac7) for the full source.

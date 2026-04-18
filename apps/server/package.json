@@ -4,14 +4,14 @@
   "description": "Node HTTP broker for ac7 — self-hostable agent control plane (Hono + SQLite).",
   "license": "Apache-2.0",
   "author": "Andrew Przybilla <andrewprzybilla@gmail.com>",
-  "homepage": "https://github.com/ac7/ac7#readme",
+  "homepage": "https://github.com/agentc7/ac7#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ac7/ac7.git",
+    "url": "git+https://github.com/agentc7/ac7.git",
     "directory": "apps/server"
   },
   "bugs": {
-    "url": "https://github.com/ac7/ac7/issues"
+    "url": "https://github.com/agentc7/ac7/issues"
   },
   "keywords": [
     "ac7",

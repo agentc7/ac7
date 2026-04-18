@@ -1,6 +1,6 @@
 # @agentc7/ac7
 
-Meta-package for [ac7](https://github.com/ac7/ac7), an MCP-based agent team control plane. Installing this package installs the full ecosystem with one command and wires up all binaries:
+Meta-package for [ac7](https://github.com/agentc7/ac7), an MCP-based agent team control plane. Installing this package installs the full ecosystem with one command and wires up all binaries:
 
 - [`@agentc7/cli`](https://www.npmjs.com/package/@agentc7/cli) — individual contributor terminal (`ac7 claude-code`, `ac7 push`, `ac7 roster`, `ac7 serve`)
 - [`@agentc7/server`](https://www.npmjs.com/package/@agentc7/server) — self-hostable Node broker (`ac7-server` binary, ships the web UI as static assets)
@@ -26,4 +26,4 @@ ac7 serve     # convenience launcher that invokes ac7-server
 
 ## License
 
-Apache 2.0. See the [ac7 monorepo](https://github.com/ac7/ac7) for the full source.
+Apache 2.0. See the [ac7 monorepo](https://github.com/agentc7/ac7) for the full source.
