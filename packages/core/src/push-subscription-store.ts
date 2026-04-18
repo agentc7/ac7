@@ -105,8 +105,8 @@ export class InMemoryPushSubscriptionStore implements PushSubscriptionStore {
   async upsert(input: PushSubscriptionInput): Promise<PushSubscriptionRow> {
     const now = this.now();
     const existingIdx = this.rows.findIndex((r) => r.endpoint === input.endpoint);
-    if (existingIdx >= 0) {
-      const current = this.rows[existingIdx]!;
+    const current = existingIdx >= 0 ? this.rows[existingIdx] : undefined;
+    if (current !== undefined) {
       const replaced: PushSubscriptionRow = {
         ...current,
         slotName: input.slotName,

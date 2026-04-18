@@ -474,7 +474,7 @@ body::before {
 .input-group .input {
   border: 0;
   border-radius: 0;
-  box-shadow: none !important;
+  box-shadow: none;
   background: transparent;
 }
 .input-group .input:focus {
@@ -1215,6 +1215,7 @@ body::before {
 .toast .icon {
   color: var(--frost);
 }
+/* biome-ignore lint/style/noDescendingSpecificity: .toast .msg and .callout .body .msg never match the same element (a .msg can't be nested in both), so the cascade-order warning is a false positive */
 .toast .msg {
   font-size: 13px;
 }

@@ -151,5 +151,5 @@ export class InMemorySessionStore implements SessionStore {
 function defaultIdGenerator(): string {
   // NOT cryptographically secure — in-memory is a test fixture. See
   // the class doc for why production impls must not use this.
-  return 'imss_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  return `imss_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 }
