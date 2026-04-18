@@ -1,0 +1,255 @@
+/**
+ * End-to-end test for ac7's team control plane.
+ *
+ * Brings up the real server (in-process via `runServer`), spawns the
+ * real link binary as a subprocess, and drives the full loop:
+ *
+ *   1. IndividualContributor pushes a message via the SDK Client
+ *   2. Server fans out to the live SSE subscriber (the link)
+ *   3. Link forwards to Claude Code as `notifications/claude/channel`
+ *   4. Agent-as-'individual-contributor': link's `send` tool is invoked via stdio and
+ *      hits the broker's /push endpoint through the same client path.
+ */
+
+import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { Client } from '@ac7/sdk/client';
+import type { Role, Team } from '@ac7/sdk/types';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { type RunningServer, runServer } from '../src/run.js';
+import { createSlotStore } from '../src/slots.js';
+
+interface JsonRpcMessage {
+  jsonrpc?: '2.0';
+  id?: string | number;
+  method?: string;
+  params?: Record<string, unknown>;
+  result?: Record<string, unknown>;
+  error?: Record<string, unknown>;
+}
+
+const LINK_BINARY = resolve(
+  fileURLToPath(new URL('../../../packages/link/dist/index.js', import.meta.url)),
+);
+// agentId === slot.name is enforced by the broker. Three
+// slots exercise: individual-contributor → agent (ACTUAL → e2e-agent), and
+// agent-as-individual-contributor (e2e-agent → e2e-peer).
+const AGENT_ID = 'e2e-agent';
+const PEER_AGENT_ID = 'e2e-peer';
+const OP_TOKEN = 'ac7_test_operator';
+const AGENT_TOKEN = 'ac7_test_agent';
+const PEER_TOKEN = 'ac7_test_peer';
+
+const TEAM: Team = {
+  name: 'e2e-team',
+  directive: 'Exercise the full ac7 stack end-to-end.',
+  brief: '',
+};
+
+const ROLES: Record<string, Role> = {
+  'individual-contributor': {
+    description: 'Directs the team.',
+    instructions: 'Lead.',
+  },
+  implementer: {
+    description: 'Writes code.',
+    instructions: 'Ship work.',
+  },
+};
+
+// Skipped during the runner/bridge refactor (Phase 1): this e2e test
+// spawned the `ac7-link` binary, which no longer exists. Phase 2 ships
+// `ac7 mcp-bridge` as its replacement and this test will be rewritten
+// to spawn that verb against an in-process runner. See
+// /home/aprzy/.claude/plans/runner-bridge-trace.md.
+describe.skip('end-to-end: individual-contributor → broker → link → channel event', () => {
+  let server: RunningServer;
+  let link: ChildProcessWithoutNullStreams;
+  let client: Client;
+
+  const inbound: JsonRpcMessage[] = [];
+  let stdoutBuf = '';
+
+  beforeAll(async () => {
+    const slots = createSlotStore([
+      {
+        name: 'ACTUAL',
+        role: 'individual-contributor',
+        authority: 'director',
+        token: OP_TOKEN,
+      },
+      { name: AGENT_ID, role: 'implementer', token: AGENT_TOKEN },
+      { name: PEER_AGENT_ID, role: 'implementer', token: PEER_TOKEN },
+    ]);
+    server = await runServer({
+      slots,
+      team: TEAM,
+      roles: ROLES,
+      port: 0,
+      host: '127.0.0.1',
+      dbPath: ':memory:',
+      // Silence server logs during the test to keep output clean.
+      logger: {
+        debug: () => {},
+        info: () => {},
+        warn: () => {},
+        error: () => {},
+      },
+    });
+    const url = `http://${server.host}:${server.port}`;
+    client = new Client({ url, token: OP_TOKEN });
+
+    // Sanity-check the server is up before spawning the link.
+    const health = await client.health();
+    expect(health.status).toBe('ok');
+
+    link = spawn(process.execPath, [LINK_BINARY], {
+      env: {
+        ...process.env,
+        AC7_URL: url,
+        AC7_TOKEN: AGENT_TOKEN,
+      },
+      stdio: 'pipe',
+    });
+
+    link.stdout.on('data', (chunk: Buffer) => {
+      stdoutBuf += chunk.toString('utf8');
+      let idx = stdoutBuf.indexOf('\n');
+      while (idx !== -1) {
+        const line = stdoutBuf.slice(0, idx).trim();
+        stdoutBuf = stdoutBuf.slice(idx + 1);
+        if (line.length > 0) {
+          try {
+            inbound.push(JSON.parse(line) as JsonRpcMessage);
+          } catch {
+            // skip non-JSON lines
+          }
+        }
+        idx = stdoutBuf.indexOf('\n');
+      }
+    });
+    link.stderr.on('data', (chunk: Buffer) => {
+      if (process.env.E2E_DEBUG) {
+        process.stderr.write(`[link] ${chunk.toString('utf8')}`);
+      }
+    });
+
+    // Simulate Claude Code's MCP initialize handshake.
+    link.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'initialize',
+        params: {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'e2e', version: '0.0.1' },
+        },
+      })}\n`,
+    );
+    await waitForMessage((m) => m.id === 1, inbound, 5_000);
+
+    link.stdin.write(
+      `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`,
+    );
+
+    // Wait until the link subscribes (connected > 0).
+    await waitUntil(async () => {
+      const { connected } = await client.roster();
+      const us = connected.find((a) => a.agentId === AGENT_ID);
+      return Boolean(us && us.connected > 0);
+    }, 5_000);
+  }, 20_000);
+
+  afterAll(async () => {
+    if (link && link.exitCode === null) {
+      link.kill('SIGTERM');
+      await new Promise<void>((r) => link.once('exit', () => r()));
+    }
+    await server.stop();
+  });
+
+  it('individual-contributor push via SDK surfaces as a channel event on link stdio', async () => {
+    await client.push({
+      agentId: AGENT_ID,
+      body: 'end-to-end test push',
+      title: 'e2e',
+      level: 'warning',
+      data: { run_id: 'e2e-1', kind: 'ci_alert' },
+    });
+
+    const event = await waitForMessage(
+      (m) => m.method === 'notifications/claude/channel',
+      inbound,
+      5_000,
+    );
+    const params = event.params as {
+      content: string;
+      meta: Record<string, string>;
+    };
+    expect(params.content).toBe('end-to-end test push');
+    expect(params.meta.title).toBe('e2e');
+    expect(params.meta.level).toBe('warning');
+    expect(params.meta.run_id).toBe('e2e-1');
+    expect(params.meta.kind).toBe('ci_alert');
+    expect(params.meta.thread).toBe('dm');
+    expect(params.meta.from).toBe('ACTUAL');
+  });
+
+  it('agent-as-individual-contributor: link send tool reaches the broker and back', async () => {
+    link.stdin.write(
+      `${JSON.stringify({
+        jsonrpc: '2.0',
+        id: 42,
+        method: 'tools/call',
+        params: {
+          name: 'send',
+          arguments: {
+            to: PEER_AGENT_ID,
+            body: 'agent-originated message',
+            title: 'hello from e2e-agent',
+            level: 'info',
+          },
+        },
+      })}\n`,
+    );
+
+    const response = await waitForMessage((m) => m.id === 42, inbound, 5_000);
+    const result = response.result as {
+      content: Array<{ type: string; text: string }>;
+    };
+    expect(result.content[0]?.text ?? '').toContain(`delivered to ${PEER_AGENT_ID}`);
+  });
+});
+
+async function waitForMessage(
+  predicate: (m: JsonRpcMessage) => boolean,
+  queue: JsonRpcMessage[],
+  timeoutMs = 3_000,
+): Promise<JsonRpcMessage> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    for (let i = 0; i < queue.length; i++) {
+      const msg = queue[i];
+      if (msg && predicate(msg)) {
+        queue.splice(i, 1);
+        return msg;
+      }
+    }
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error('timed out waiting for message');
+}
+
+async function waitUntil(
+  check: () => boolean | Promise<boolean>,
+  timeoutMs = 3_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await check()) return;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  throw new Error('waitUntil timed out');
+}

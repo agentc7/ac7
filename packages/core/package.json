@@ -1,0 +1,54 @@
+{
+  "name": "@ac7/core",
+  "version": "0.3.1",
+  "description": "Runtime-agnostic broker logic for ac7 \u2014 agent registry, push fanout, SSE, event log.",
+  "license": "Apache-2.0",
+  "author": "Andrew Przybilla <andrewprzybilla@gmail.com>",
+  "homepage": "https://github.com/ac7/ac7#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ac7/ac7.git",
+    "directory": "packages/core"
+  },
+  "bugs": {
+    "url": "https://github.com/ac7/ac7/issues"
+  },
+  "keywords": [
+    "ac7",
+    "mcp",
+    "agent",
+    "agent-control-plane",
+    "broker",
+    "event-bus"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@ac7/sdk": "workspace:*"
+  },
+  "devDependencies": {
+    "tsup": "^8.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

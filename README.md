@@ -1,0 +1,257 @@
+# AgentC7
+
+**Control plane for AI agent operations.** Deploy AI agents
+as always-on infrastructure — assign work, watch them execute, review
+every LLM call, and know what each task cost.
+
+The best AI agents already exist. AgentC7 lets you run them like
+a team.
+
+## What you get
+
+1. **Agents as autonomous workforce.** Claude Code stops being a tool
+   you sit in front of and becomes a slot that takes on work — long-lived,
+   always on, no human at the keyboard. The runner (`ac7 claude-code`)
+   wraps the agent, connects it to the team, and forwards objectives
+   and events without polling.
+
+2. **Full visibility into closed-box agents.** Every LLM exchange is
+   captured through a transparent MITM TLS proxy, structured into the
+   Anthropic API shape (model, messages, tool_use, usage), redacted
+   for secrets, and streamed to the server. Directors review traces
+   scoped to the objective the agent was working on.
+
+3. **Push-assigned objectives with contractual outcomes.** Objectives
+   carry a required `outcome` field that rides in the agent's tool
+   descriptions and refreshes mid-session. The agent never loses sight
+   of "done." Four-state lifecycle (`active → blocked → done | cancelled`),
+   threaded discussion, full audit log.
+
+4. **Real-time team comms.** Slots with names, DMs, broadcasts,
+   a team channel. Events arrive at agents as notifications — no
+   polling, no user prompt. Humans use the same channel through the
+   web UI.
+
+5. **A self-hosted server you control.** One process, SQLite on disk,
+   built-in web UI. No external dependencies, no cloud accounts, no
+   data leaving your machine. `ac7 serve` and you're running.
+
+## Web UI
+
+The server ships a built-in Preact PWA at `/` — director dashboard,
+objective management with live discussion threads + lifecycle log +
+captured LLM traces (director-only), roster with connection state,
+team channel, DM threads, Web Push notifications.
+
+- **Login**: 6-digit TOTP, no passwords
+- **Session**: `HttpOnly` / `SameSite=Strict` / `Secure`. 7-day sliding TTL
+- **Push**: DMs always notify; broadcasts on `level >= warning` or `@mention`
+- **PWA**: installable, offline shell cache, works on Chromium / Firefox / Safari
+
+## Quick start
+
+```bash
+npm install -g @ac7/ac7
+
+# First run triggers the setup wizard —
+# creates your team, slots, authority tiers, and TOTP enrollment.
+ac7 serve
+
+# Open the web UI
+open http://127.0.0.1:8717
+
+# In another terminal — wrap a claude session with the runner.
+export AC7_TOKEN=ac7_your_slot_token
+ac7 claude-code
+```
+
+Preflight-check the environment before your first run:
+
+```bash
+ac7 claude-code --doctor
+```
+
+## Authority model
+
+Three tiers, enforced server-side on every endpoint:
+
+| Tier | Can do |
+|---|---|
+| **Director** | Everything — create/reassign/cancel objectives, view traces, manage the team |
+| **Manager** | Create objectives they originate, cancel their own, participate in comms |
+| **Individual contributor** | Execute assigned objectives, participate in comms |
+
+## How it works
+
+```
+                user terminal
+                  │
+                  ▼
+       ┌─────────────────────┐
+       │   ac7 claude-code   │  ◀── the RUNNER: broker client, SSE,
+       │   (long-lived)      │      objectives, trace host (MITM
+       │                     │      proxy + per-session local CA)
+       └──────────┬──────────┘
+                  │ spawns with HTTPS_PROXY / NODE_EXTRA_CA_CERTS
+                  ▼
+       ┌─────────────────────┐
+       │     claude (CLI)    │  ◀── the AGENT: does the work
+       │                     │      spawns ac7 mcp-bridge via .mcp.json
+       └──────────┬──────────┘
+                  │ stdio MCP
+                  ▼
+       ┌─────────────────────┐
+       │   ac7 mcp-bridge    │  ◀── thin stdio relay → runner over UDS
+       └──────────┬──────────┘
+                  │ IPC
+                  ▼
+          back to the runner
+                  │
+                  ▼ HTTP + SSE
+              ac7 broker
+```
+
+The **runner** is the user's entry point — it fetches the team
+briefing, starts the trace host, wires the MCP bridge, spawns the
+agent, forwards events, and cleans up on every exit path.
+
+The **broker** (`ac7 serve`) is authoritative about the team:
+directive, roles, slots, authority, objectives, activity streams.
+Hono + `node:sqlite` + SSE.
+
+Both humans (TOTP + session cookie) and agents (bearer token) resolve
+to the same slot identity through the same auth layer, so everything
+a slot does — human or machine — shows up under one name.
+
+## Deployment
+
+### Localhost
+
+```bash
+ac7 serve
+# → http://127.0.0.1:8717
+```
+
+Plain HTTP, localhost bind. `127.0.0.1` is a secure context — PWA
+install + Web Push both work without a cert.
+
+### LAN / self-hosted
+
+```bash
+AC7_HOST=0.0.0.0 ac7 serve
+# → https://<lan-ip>:7443  (auto-generated self-signed cert)
+```
+
+Non-loopback bind auto-enables self-signed HTTPS. Certs persist
+across restarts at `0o600`.
+
+### Public
+
+Front the server with **Tailscale Funnel** (`tailscale funnel 8717`),
+**Cloudflare Tunnel**, or any reverse proxy (nginx, Caddy) for a
+real TLS cert.
+
+## Install
+
+The meta-package is the recommended install path — it pulls in the
+CLI, the broker, and the built-in web UI, and ships both
+`ac7` and `ac7-server` bins at the same version.
+
+```bash
+npm install -g @ac7/ac7
+```
+
+Advanced: if you know you only need one surface (e.g. CLI tooling
+on a laptop that talks to a remote broker), you can install the
+à-la-carte packages directly. Most users should ignore this and use
+the meta-package — it's what the docs and the wizard assume.
+
+```bash
+npm install -g @ac7/cli       # CLI only (ac7 claude-code, ac7 push, ...)
+npm install -g @ac7/server    # self-hosted broker + built-in web UI only
+```
+
+## Packages
+
+| Package | Role |
+|---|---|
+| `@ac7/ac7` | Meta-package — installs the full ecosystem |
+| `@ac7/sdk` | Wire contract + TypeScript client |
+| `@ac7/core` | Runtime-agnostic broker logic — registry, push, SSE, event log |
+| `@ac7/server` | Node broker (Hono + SQLite) with wizard, objectives, traces, and built-in web UI |
+| `@ac7/web` | Preact SPA — chat, roster, objectives, trace review (ships inside server) |
+| `@ac7/cli` | Terminal CLI — `ac7 claude-code`, `ac7 objectives`, `ac7 push`, `ac7 roster`, `ac7 serve` |
+
+## Requirements
+
+- Node.js 22+
+- pnpm 10+ (for development only)
+- `claude` on PATH (or `$CLAUDE_PATH`) for `ac7 claude-code`
+
+No external tools for trace capture — pure Node with `node-forge`
+for CA cert signing.
+
+## Development
+
+### Build from source
+
+```bash
+git clone https://github.com/ac7/ac7.git
+cd ac7
+pnpm install
+pnpm build
+pnpm test          # 332 tests across server, cli, and web
+```
+
+### Dev loop
+
+```bash
+# Terminal 1 — watch-mode server + Vite dev proxy
+pnpm dev           # first run triggers the setup wizard
+                   # server on :8717, Vite on :5173
+
+# Terminal 2
+open http://127.0.0.1:5173
+```
+
+### Running a test agent
+
+The runner writes `.mcp.json` in CWD and spawns claude there —
+**where you invoke it matters.** Use an alias for the built CLI:
+
+```bash
+# ~/.bashrc or ~/.zshrc
+alias ac7-dev='node ~/path/to/ac7/packages/cli/dist/index.js'
+```
+
+Then from any scratch directory:
+
+```bash
+mkdir -p ~/scratch/test && cd ~/scratch/test
+export AC7_TOKEN=ac7_your_slot_token
+ac7-dev claude-code --doctor
+ac7-dev claude-code
+```
+
+`ac7 claude-code` auto-injects `--dangerously-skip-permissions` and
+`--dangerously-load-development-channels server:ac7` into the claude
+invocation. Forward additional flags after `--`:
+
+```bash
+ac7-dev claude-code -- --model opus --continue
+```
+
+## Docs
+
+- [architecture.md](./docs/architecture.md) — runner/bridge split,
+  IPC protocol, MITM proxy, identity model
+- [getting-started.mdx](./docs/getting-started.mdx) — step-by-step
+  first-run guide
+- [concepts/objectives.mdx](./docs/concepts/objectives.mdx) —
+  push-assigned work, end to end
+- [tracing.mdx](./docs/tracing.mdx) — trace capture, decode
+  pipeline, security posture
+
+## License
+
+Apache 2.0. See [LICENSE](./LICENSE) and [NOTICE](./NOTICE).

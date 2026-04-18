@@ -1,0 +1,63 @@
+{
+  "name": "@ac7/cli",
+  "version": "0.3.1",
+  "description": "IndividualContributor CLI for ac7 \u2014 wrap agents with ac7 claude-code, push objectives, manage the team.",
+  "license": "Apache-2.0",
+  "author": "Andrew Przybilla <andrewprzybilla@gmail.com>",
+  "homepage": "https://github.com/ac7/ac7#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ac7/ac7.git",
+    "directory": "packages/cli"
+  },
+  "bugs": {
+    "url": "https://github.com/ac7/ac7/issues"
+  },
+  "keywords": [
+    "ac7",
+    "cli",
+    "mcp",
+    "agent",
+    "agent-control-plane"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "bin": {
+    "ac7": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@ac7/sdk": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "node-forge": "^1.3.1"
+  },
+  "peerDependencies": {
+    "@ac7/server": "workspace:*"
+  },
+  "peerDependenciesMeta": {
+    "@ac7/server": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@ac7/server": "workspace:*",
+    "@types/node": "^22.0.0",
+    "@types/node-forge": "^1.3.11",
+    "selfsigned": "^5.5.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.0.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
