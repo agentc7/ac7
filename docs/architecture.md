@@ -459,7 +459,7 @@ shell for humans.
 
 ## Protocol boundary
 
-Every HTTP request carries an `X-C17-Protocol: 1` header and is
+Every HTTP request carries an `X-AC7-Protocol: 1` header and is
 validated against the zod schemas in `@agentc7/sdk/schemas`.
 Breaking changes bump the version constant in
 `@agentc7/sdk/protocol` and are gated by the header, so older
