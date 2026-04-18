@@ -58,9 +58,12 @@ export function Composer({ viewer }: ComposerProps) {
     sendError.value = null;
     // Optimistic append — the message lands in the local transcript
     // immediately so the user sees their input reflected even on a
-    // slow network. The SSE echo arrives with a server id, appends
-    // as a separate row next to the optimistic one, and the optimistic
-    // row is then pruned by id (below) once the POST resolves.
+    // slow network. Once the POST resolves we:
+    //   - append the real server message (dedupes by id against the
+    //     SSE echo if it already arrived)
+    //   - prune the optimistic row by its local id
+    // so the transcript swaps cleanly without a flash of emptiness.
+    // On error we restore the draft and drop the optimistic row.
     const agentId = targetAgentIdFor(threadKey, viewer);
     const optimisticId = `optimistic-${++optimisticSeq}`;
     appendMessages(viewer, [
@@ -78,7 +81,15 @@ export function Composer({ viewer }: ComposerProps) {
     const clearedDraft = draft.value;
     draft.value = '';
     try {
-      await getClient().push({ body, ...(agentId !== undefined ? { agentId } : {}) });
+      const result = await getClient().push({
+        body,
+        ...(agentId !== undefined ? { agentId } : {}),
+      });
+      // Drop the optimistic row and land the authoritative one. If
+      // the SSE echo beat the POST response back, appendMessages
+      // dedupes by id and this is a no-op for the echo side.
+      pruneOptimistic(threadKey, optimisticId);
+      appendMessages(viewer, [result.message]);
     } catch (err) {
       // Restore the user's draft so they don't lose it, and drop the
       // optimistic row so it doesn't sit there forever pretending to

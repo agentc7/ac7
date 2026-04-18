@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please do **not** file public GitHub issues for security vulnerabilities.
-Email **security@ac7.com** with a description, affected version, and
+Email **security@agentc7.com** with a description, affected version, and
 reproduction steps. We aim to acknowledge within 72 hours and patch
 in-band-severity issues within 14 days.
 

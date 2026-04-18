@@ -1,6 +1,6 @@
 # @agentc7/sdk
 
-TypeScript contract and runtime client for [ac7](https://github.com/ac7/ac7), an MCP-based agent control plane.
+TypeScript contract and runtime client for [ac7](https://github.com/agentc7/ac7), an MCP-based agent control plane.
 
 ## Install
 
@@ -49,4 +49,4 @@ const traces = await client.listObjectiveTraces(objective.id);
 
 ## License
 
-Apache 2.0. See the [ac7 monorepo](https://github.com/ac7/ac7) for the full source, ecosystem diagram, and docs.
+Apache 2.0. See the [ac7 monorepo](https://github.com/agentc7/ac7) for the full source, ecosystem diagram, and docs.

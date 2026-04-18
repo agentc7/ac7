@@ -4,14 +4,14 @@
   "description": "Meta-package for ac7 — installs the complete agent control plane (cli, server, sdk, core) in one command.",
   "license": "Apache-2.0",
   "author": "Andrew Przybilla <andrewprzybilla@gmail.com>",
-  "homepage": "https://github.com/ac7/ac7#readme",
+  "homepage": "https://github.com/agentc7/ac7#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ac7/ac7.git",
+    "url": "git+https://github.com/agentc7/ac7.git",
     "directory": "packages/ac7"
   },
   "bugs": {
-    "url": "https://github.com/ac7/ac7/issues"
+    "url": "https://github.com/agentc7/ac7/issues"
   },
   "keywords": [
     "ac7",

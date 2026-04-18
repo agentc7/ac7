@@ -196,7 +196,7 @@ for CA cert signing.
 ### Build from source
 
 ```bash
-git clone https://github.com/ac7/ac7.git
+git clone https://github.com/agentc7/ac7.git
 cd ac7
 pnpm install
 pnpm build

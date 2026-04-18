@@ -58,6 +58,7 @@ import {
   parseFrame,
 } from './ipc.js';
 import { createObjectivesTracker } from './objectives-tracker.js';
+import { createPresence, type Presence } from './presence.js';
 import { defineTools, handleToolCall } from './tools.js';
 import { startTraceHost, type TraceHost } from './trace/host.js';
 
@@ -105,6 +106,14 @@ export interface RunnerOptions {
    * `TraceHostOptions.unsafeTls` for the full rationale.
    */
   unsafeTls?: boolean;
+  /**
+   * Optional presence signal the forwarder will flip between
+   * `connecting` / `online` / `offline`. Callers that want to render
+   * a status indicator (e.g. the claude-code HUD strip) pass one
+   * in; the runner also exposes it back on its handle for anyone
+   * else who wants to subscribe.
+   */
+  presence?: Presence;
 }
 
 export interface RunnerHandle {
@@ -119,6 +128,8 @@ export interface RunnerHandle {
    * and friends into the agent child's environment.
    */
   readonly traceHost: TraceHost | null;
+  /** Presence signal driven by the forwarder. */
+  readonly presence: Presence;
   /**
    * Graceful shutdown. Aborts the SSE forwarder, closes the active
    * bridge connection (if any), closes the IPC server, and unlinks
@@ -187,6 +198,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
 
   const abortController = new AbortController();
   const socketPath = options.socketPath ?? defaultSocketPath();
+  const presence = options.presence ?? createPresence();
 
   // Optional trace host: MITM TLS proxy + per-session CA + streaming
   // activity uploader. Skipped entirely when `noTrace` is set — tests
@@ -342,6 +354,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     name: briefing.name,
     signal: abortController.signal,
     log,
+    presence,
     onObjectiveEvent: (message) => {
       tracker.refresh(message);
     },
@@ -398,6 +411,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     socketPath,
     briefing,
     traceHost,
+    presence,
     shutdown,
     waitClosed,
   };

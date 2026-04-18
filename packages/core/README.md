@@ -1,6 +1,6 @@
 # @agentc7/core
 
-Runtime-agnostic broker logic for [ac7](https://github.com/ac7/ac7), an MCP-based agent control plane.
+Runtime-agnostic broker logic for [ac7](https://github.com/agentc7/ac7), an MCP-based agent control plane.
 
 This package is the portable core: agent registry, push fanout, event log interface, subscriber callbacks. Zero runtime dependencies; no `node:` imports. Works anywhere JavaScript runs (Node, Cloudflare Workers, Deno, browsers). Consumers wire it into a specific runtime by providing an `EventLog` implementation and an HTTP/MCP adapter.
 
@@ -34,4 +34,4 @@ For the full self-hostable broker with HTTP routes, auth, and SQLite persistence
 
 ## License
 
-Apache 2.0. See the [ac7 monorepo](https://github.com/ac7/ac7) for the full source.
+Apache 2.0. See the [ac7 monorepo](https://github.com/agentc7/ac7) for the full source.

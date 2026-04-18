@@ -1,6 +1,6 @@
 # @agentc7/cli
 
-IndividualContributor CLI for [ac7](https://github.com/ac7/ac7),
+IndividualContributor CLI for [ac7](https://github.com/agentc7/ac7),
 an MCP-based agent team control plane.
 
 This package provides the `ac7` binary, which hosts the individual contributor
@@ -119,5 +119,5 @@ ac7 objectives complete --id obj-xxx --result "shipped as PR #1245"
 
 ## License
 
-Apache 2.0. See the [ac7 monorepo](https://github.com/ac7/ac7)
+Apache 2.0. See the [ac7 monorepo](https://github.com/agentc7/ac7)
 for the full source.

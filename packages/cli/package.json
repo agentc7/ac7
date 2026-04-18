@@ -1,17 +1,17 @@
 {
   "name": "@agentc7/cli",
   "version": "0.3.1",
-  "description": "IndividualContributor CLI for ac7 \u2014 wrap agents with ac7 claude-code, push objectives, manage the team.",
+  "description": "IndividualContributor CLI for ac7 — wrap agents with ac7 claude-code, push objectives, manage the team.",
   "license": "Apache-2.0",
   "author": "Andrew Przybilla <andrewprzybilla@gmail.com>",
-  "homepage": "https://github.com/ac7/ac7#readme",
+  "homepage": "https://github.com/agentc7/ac7#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ac7/ac7.git",
+    "url": "git+https://github.com/agentc7/ac7.git",
     "directory": "packages/cli"
   },
   "bugs": {
-    "url": "https://github.com/ac7/ac7/issues"
+    "url": "https://github.com/agentc7/ac7/issues"
   },
   "keywords": [
     "ac7",
@@ -39,6 +39,9 @@
     "@agentc7/sdk": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "node-forge": "^1.3.1"
+  },
+  "optionalDependencies": {
+    "node-pty": "^1.1.0"
   },
   "peerDependencies": {
     "@agentc7/server": "workspace:*"

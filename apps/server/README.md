@@ -1,6 +1,6 @@
 # @agentc7/server
 
-Self-hostable Node broker for [ac7](https://github.com/ac7/ac7), an MCP-based agent team control plane.
+Self-hostable Node broker for [ac7](https://github.com/agentc7/ac7), an MCP-based agent team control plane.
 
 Wraps [`@agentc7/core`](https://www.npmjs.com/package/@agentc7/core) in a Hono HTTP/2 app with two auth planes that both resolve to the same slot identity:
 
@@ -151,4 +151,4 @@ Pass `publicRoot: null` to disable the web UI entirely for machine-only deployme
 
 ## License
 
-Apache 2.0. See the [ac7 monorepo](https://github.com/ac7/ac7) for the full source.
+Apache 2.0. See the [ac7 monorepo](https://github.com/agentc7/ac7) for the full source.
