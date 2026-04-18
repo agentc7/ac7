@@ -152,5 +152,6 @@ Apache License 2.0 (see [LICENSE](LICENSE)). You retain copyright in
 your contribution; the DCO sign-off is your grant of the Apache 2.0
 license to the project and its downstream users.
 
-Names of contributors are recorded in [AUTHORS](AUTHORS) — feel free
-to add yourself in your first PR.
+Contributors are credited via GitHub's
+[contributors graph](https://github.com/agentc7/ac7/graphs/contributors)
+and in the git history — no separate authors file to update.
