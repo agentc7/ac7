@@ -1,4 +1,4 @@
-# @ac7/cli
+# @agentc7/cli
 
 IndividualContributor CLI for [ac7](https://github.com/ac7/ac7),
 an MCP-based agent team control plane.
@@ -11,13 +11,13 @@ point at.
 ## Install
 
 ```bash
-npm install -g @ac7/cli
+npm install -g @agentc7/cli
 ```
 
 Or run without installing:
 
 ```bash
-npx @ac7/cli claude-code --doctor
+npx @agentc7/cli claude-code --doctor
 ```
 
 ## Commands

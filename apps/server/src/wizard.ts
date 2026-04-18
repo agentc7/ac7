@@ -20,7 +20,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
-import type { Authority, Role, Team } from '@ac7/sdk/types';
+import type { Authority, Role, Team } from '@agentc7/sdk/types';
 // qrcode-terminal is CJS; default-import the namespace and destructure.
 import qrcodeTerminal from 'qrcode-terminal';
 import {

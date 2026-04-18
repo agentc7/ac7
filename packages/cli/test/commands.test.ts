@@ -1,5 +1,5 @@
-import { Client } from '@ac7/sdk/client';
-import type { Agent, Message, PushResult, Teammate } from '@ac7/sdk/types';
+import { Client } from '@agentc7/sdk/client';
+import type { Agent, Message, PushResult, Teammate } from '@agentc7/sdk/types';
 import { describe, expect, it } from 'vitest';
 import { buildPushPayload, runPushCommand, UsageError } from '../src/commands/push.js';
 import { runRosterCommand } from '../src/commands/roster.js';

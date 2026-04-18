@@ -1,5 +1,5 @@
 /**
- * `@ac7/server` library entry.
+ * `@agentc7/server` library entry.
  *
  * Exposes `runServer()` so the CLI can start the broker in-process
  * without spawning a subprocess. Keeps side effects minimal; the
@@ -21,8 +21,8 @@
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
 import { dirname, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Broker } from '@ac7/core';
-import type { Role, Team } from '@ac7/sdk/types';
+import { Broker } from '@agentc7/core';
+import type { Role, Team } from '@agentc7/sdk/types';
 import { serve } from '@hono/node-server';
 import { type AgentActivityStore, createSqliteAgentActivityStore } from './agent-activity.js';
 import { createApp } from './app.js';
@@ -141,7 +141,7 @@ export interface RunServerOptions {
    */
   configDir?: string;
   /**
-   * Absolute path to the built `@ac7/web` bundle to serve as
+   * Absolute path to the built `@agentc7/web` bundle to serve as
    * the SPA. Defaults to `<dist>/../public` — i.e., `apps/server/public`
    * relative to the built `run.js`. Pass `null` to disable SPA
    * serving entirely (useful for tests and machine-only deployments).
@@ -359,7 +359,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // `queueMicrotask` in app.ts, so this is already off the hot path
   // — just keep the handler itself cheap and catch errors.
   const onPushed = webPush
-    ? (message: import('@ac7/sdk/types').Message) => {
+    ? (message: import('@agentc7/sdk/types').Message) => {
         void dispatchPush(message, {
           sessions: pushStore,
           slots: options.slots,

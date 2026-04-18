@@ -22,8 +22,8 @@
  * single refetch so a burst of updates doesn't N-queue round trips.
  */
 
-import type { Client as BrokerClient } from '@ac7/sdk/client';
-import type { Message, Objective } from '@ac7/sdk/types';
+import type { Client as BrokerClient } from '@agentc7/sdk/client';
+import type { Message, Objective } from '@agentc7/sdk/types';
 
 const DEBOUNCE_MS = 150;
 

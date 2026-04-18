@@ -9,7 +9,7 @@
  *   - .dot for connection state
  */
 
-import type { Agent } from '@ac7/sdk/types';
+import type { Agent } from '@agentc7/sdk/types';
 import { briefing } from '../lib/briefing.js';
 import { roster } from '../lib/roster.js';
 import { senderTextClass } from '../lib/theme.js';

@@ -57,7 +57,7 @@ const AGENT_ID = FAKE_BROKER_NAME;
 // Skip the whole suite if the cli hasn't been built yet — avoids a
 // confusing ENOENT inside the child spawn call. Turbo should have
 // built the cli before tests run, but developers running raw
-// `pnpm --filter @ac7/cli test` without a prior build will
+// `pnpm --filter @agentc7/cli test` without a prior build will
 // hit this path.
 const describeIfBuilt = existsSync(CLI_BINARY) ? describe : describe.skip;
 

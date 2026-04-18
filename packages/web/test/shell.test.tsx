@@ -9,7 +9,7 @@
  * `startSubscribe` effect fail its own fetch silently.
  */
 
-import type { Message } from '@ac7/sdk/types';
+import type { Message } from '@agentc7/sdk/types';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __resetComposerForTests, Composer } from '../src/components/Composer.js';

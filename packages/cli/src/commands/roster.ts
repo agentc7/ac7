@@ -2,7 +2,7 @@
  * `ac7 roster` — list the team's slots and their current state.
  */
 
-import type { Client } from '@ac7/sdk/client';
+import type { Client } from '@agentc7/sdk/client';
 
 export async function runRosterCommand(client: Client): Promise<string> {
   const { teammates, connected } = await client.roster();

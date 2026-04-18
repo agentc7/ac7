@@ -3,7 +3,7 @@
  * slot's runner observed.
  *
  * The broker's activity surface captures four kinds of events (see
- * `@ac7/sdk/types`'s `AgentActivityEvent`):
+ * `@agentc7/sdk/types`'s `AgentActivityEvent`):
  *   - `llm_exchange` — a decoded LLM request/response pair, shipped
  *     by the MITM trace host on the runner side.
  *   - `opaque_http` — a non-LLM HTTP exchange observed by the proxy.
@@ -17,7 +17,7 @@
  *
  * This module defines the runtime-agnostic `ActivityStore` interface
  * plus an in-memory reference implementation. The concrete SQLite
- * implementation lives in `@ac7/server`; a future Cloudflare
+ * implementation lives in `@agentc7/server`; a future Cloudflare
  * Durable Objects implementation will live in `ac7/platform`.
  * Both must preserve the same observable behavior: appends fire
  * subscribers synchronously after the write commits, listing is
@@ -25,7 +25,7 @@
  * subscribers never see a row they'd miss via a concurrent `list`.
  */
 
-import type { AgentActivityEvent, AgentActivityKind, AgentActivityRow } from '@ac7/sdk/types';
+import type { AgentActivityEvent, AgentActivityKind, AgentActivityRow } from '@agentc7/sdk/types';
 
 /** Filter for `ActivityStore.list`. All fields AND-combined. */
 export interface ListActivityFilter {

@@ -1,5 +1,5 @@
 {
-  "name": "@ac7/ac7",
+  "name": "@agentc7/ac7",
   "version": "0.3.1",
   "description": "Meta-package for ac7 — installs the complete agent control plane (cli, server, sdk, core) in one command.",
   "license": "Apache-2.0",
@@ -30,10 +30,10 @@
     "bin"
   ],
   "dependencies": {
-    "@ac7/cli": "workspace:*",
-    "@ac7/core": "workspace:*",
-    "@ac7/sdk": "workspace:*",
-    "@ac7/server": "workspace:*"
+    "@agentc7/cli": "workspace:*",
+    "@agentc7/core": "workspace:*",
+    "@agentc7/sdk": "workspace:*",
+    "@agentc7/server": "workspace:*"
   },
   "publishConfig": {
     "access": "public"

@@ -21,8 +21,8 @@
  */
 
 import { existsSync } from 'node:fs';
-import { type Broker, clampQueryLimit } from '@ac7/core';
-import { PATHS, PROTOCOL_HEADER, PROTOCOL_VERSION } from '@ac7/sdk/protocol';
+import { type Broker, clampQueryLimit } from '@agentc7/core';
+import { PATHS, PROTOCOL_HEADER, PROTOCOL_VERSION } from '@agentc7/sdk/protocol';
 import {
   AgentActivityKindSchema,
   CancelObjectiveRequestSchema,
@@ -38,7 +38,7 @@ import {
   UpdateObjectiveRequestSchema,
   UpdateWatchersRequestSchema,
   UploadAgentActivityRequestSchema,
-} from '@ac7/sdk/schemas';
+} from '@agentc7/sdk/schemas';
 import type {
   AgentActivityEvent,
   Message,
@@ -47,7 +47,7 @@ import type {
   ObjectiveEventKind,
   Role,
   Team,
-} from '@ac7/sdk/types';
+} from '@agentc7/sdk/types';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
@@ -100,7 +100,7 @@ export interface AppOptions {
    */
   shutdownSignal?: AbortSignal;
   /**
-   * Absolute path to the directory containing the built `@ac7/web`
+   * Absolute path to the directory containing the built `@agentc7/web`
    * bundle (index.html + assets/). When set, the server serves the
    * SPA at `/` plus SPA fallback for any non-API GET request. When
    * omitted or missing on disk, no SPA routes are registered — useful

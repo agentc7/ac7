@@ -2,8 +2,8 @@
  * `ac7 push` — deliver a message to one agent or broadcast to all.
  */
 
-import type { Client } from '@ac7/sdk/client';
-import type { LogLevel, PushPayload } from '@ac7/sdk/types';
+import type { Client } from '@agentc7/sdk/client';
+import type { LogLevel, PushPayload } from '@agentc7/sdk/types';
 import { UsageError } from './errors.js';
 
 const VALID_LEVELS: readonly LogLevel[] = [

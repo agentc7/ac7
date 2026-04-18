@@ -8,7 +8,7 @@
  *   ac7 push        — push an event to a teammate or broadcast
  *   ac7 roster      — list slots and connection state
  *   ac7 objectives  — list / view / mutate team objectives
- *   ac7 serve       — run a local broker (optional peer: @ac7/server)
+ *   ac7 serve       — run a local broker (optional peer: @agentc7/server)
  *
  * The internal `ac7 mcp-bridge` verb is hidden from the top-level
  * help; agents spawn it via `.mcp.json` and it connects back to the
@@ -19,8 +19,8 @@
  *   AC7_TOKEN     (required for claude-code / push / roster / objectives)
  */
 
-import { Client } from '@ac7/sdk/client';
-import { DEFAULT_PORT, ENV } from '@ac7/sdk/protocol';
+import { Client } from '@agentc7/sdk/client';
+import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 import { parseDataFlag, parseSubcommandArgs } from './args.js';
 import { runClaudeCodeCommand } from './commands/claude-code.js';
 import { formatReport, runDoctor } from './commands/doctor.js';

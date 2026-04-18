@@ -1,5 +1,5 @@
 /**
- * Shared @ac7/sdk Client instance for the whole SPA.
+ * Shared @agentc7/sdk Client instance for the whole SPA.
  *
  * One module-level singleton so every component and hook talks to
  * the same configured client. `useCookies: true` makes `fetch` send
@@ -11,7 +11,7 @@
  * dev. Either way, `location.origin` is the right base URL.
  */
 
-import { Client } from '@ac7/sdk/client';
+import { Client } from '@agentc7/sdk/client';
 
 // Lazy so unit tests can mock `window.location` before the first
 // access. Created once, cached forever.

@@ -2,7 +2,7 @@
  * Minimal HTTP broker used by the link integration tests.
  *
  * Speaks just enough of the ac7 wire protocol to exercise the
- * link's HTTP + SSE paths without pulling in @ac7/core or the
+ * link's HTTP + SSE paths without pulling in @agentc7/core or the
  * real server. Pushes are captured in an array; incoming subscribers
  * are exposed so tests can inject messages on demand.
  */

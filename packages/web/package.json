@@ -1,5 +1,5 @@
 {
-  "name": "@ac7/web",
+  "name": "@agentc7/web",
   "version": "0.3.1",
   "description": "Browser-based web UI for ac7 \u2014 team chat, roster, and notifications served by the self-hosted broker.",
   "license": "Apache-2.0",
@@ -31,7 +31,7 @@
     "clean": "rm -rf dist .turbo ../../apps/server/public"
   },
   "dependencies": {
-    "@ac7/sdk": "workspace:*",
+    "@agentc7/sdk": "workspace:*",
     "@preact/signals": "^2.9.0",
     "preact": "^10.29.1",
     "workbox-precaching": "^7.3.0",

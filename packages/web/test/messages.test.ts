@@ -2,7 +2,7 @@
  * Pure-logic tests for the messages signal store.
  */
 
-import type { Message } from '@ac7/sdk/types';
+import type { Message } from '@agentc7/sdk/types';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   __resetMessagesForTests,

@@ -13,7 +13,7 @@ import { X509Certificate } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Client as BrokerClient } from '@ac7/sdk/client';
+import type { Client as BrokerClient } from '@agentc7/sdk/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { startTraceHost } from '../../src/runtime/trace/host.js';
 

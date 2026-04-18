@@ -8,7 +8,7 @@
  * collide visually.
  */
 
-import type { Objective, ObjectiveStatus } from '@ac7/sdk/types';
+import type { Objective, ObjectiveStatus } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import { briefing } from '../lib/briefing.js';

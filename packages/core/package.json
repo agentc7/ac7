@@ -1,5 +1,5 @@
 {
-  "name": "@ac7/core",
+  "name": "@agentc7/core",
   "version": "0.3.1",
   "description": "Runtime-agnostic broker logic for ac7 \u2014 agent registry, push fanout, SSE, event log.",
   "license": "Apache-2.0",
@@ -41,7 +41,7 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
-    "@ac7/sdk": "workspace:*"
+    "@agentc7/sdk": "workspace:*"
   },
   "devDependencies": {
     "tsup": "^8.0.0",

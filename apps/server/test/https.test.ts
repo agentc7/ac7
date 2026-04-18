@@ -9,8 +9,8 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node
 import { connect as http2Connect } from 'node:http2';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { Broker, InMemoryEventLog } from '@ac7/core';
-import type { Role, Team } from '@ac7/sdk/types';
+import { Broker, InMemoryEventLog } from '@agentc7/core';
+import type { Role, Team } from '@agentc7/sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';

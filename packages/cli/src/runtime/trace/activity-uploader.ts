@@ -27,8 +27,8 @@
  * instance coordination.
  */
 
-import type { Client as BrokerClient } from '@ac7/sdk/client';
-import type { AgentActivityEvent } from '@ac7/sdk/types';
+import type { Client as BrokerClient } from '@agentc7/sdk/client';
+import type { AgentActivityEvent } from '@agentc7/sdk/types';
 
 export interface ActivityUploaderOptions {
   brokerClient: BrokerClient;

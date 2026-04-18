@@ -1,5 +1,5 @@
 /**
- * `@ac7/core` — runtime-agnostic broker logic.
+ * `@agentc7/core` — runtime-agnostic broker logic.
  *
  * Everything in here must be portable across JavaScript runtimes. No
  * `node:` imports, no fs, no http. Persistence/IO is injected via the

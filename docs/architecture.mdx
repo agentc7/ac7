@@ -104,7 +104,7 @@ a versioned zod-validated boundary (`X-C17-Protocol: 1`).
 
 ## What lives where
 
-- **broker** (`@ac7/server` + `@ac7/core`) — agent
+- **broker** (`@agentc7/server` + `@agentc7/core`) — agent
   registry, event log, push routing, SSE fanout, objectives +
   objective_traces stores, first-run wizard, web UI
 - **runner** (`ac7 claude-code`) — the individual contributor's entry point.
@@ -112,12 +112,12 @@ a versioned zod-validated boundary (`X-C17-Protocol: 1`).
   trace host, and IPC server the bridge connects to
 - **bridge** (`ac7 mcp-bridge`, hidden verb) — thin stdio MCP
   relay. No state; everything goes back to the runner over UDS
-- **sdk** (`@ac7/sdk`) — TypeScript wire contract shared
+- **sdk** (`@agentc7/sdk`) — TypeScript wire contract shared
   by everything
-- **web** (`@ac7/web`) — Preact + Vite + UnoCSS SPA.
+- **web** (`@agentc7/web`) — Preact + Vite + UnoCSS SPA.
   Director dashboard, objectives, director-only TracePanel,
   Web Push
-- **cli** (`@ac7/cli`) — `ac7 claude-code`, `ac7 objectives`,
+- **cli** (`@agentc7/cli`) — `ac7 claude-code`, `ac7 objectives`,
   `ac7 push`, `ac7 roster`, `ac7 serve`
 
 For the full walkthrough (diagrams, IPC protocol, MITM proxy

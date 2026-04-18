@@ -14,7 +14,7 @@
  *      while the first message of a thread does not.
  */
 
-import type { Message } from '@ac7/sdk/types';
+import type { Message } from '@agentc7/sdk/types';
 import { render } from '@testing-library/preact';
 import { describe, expect, it } from 'vitest';
 import { isContinuationOf, MessageLine } from '../src/components/MessageLine.js';

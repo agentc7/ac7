@@ -1,5 +1,5 @@
 /**
- * SQLite-backed implementation of `@ac7/core`'s EventLog using
+ * SQLite-backed implementation of `@agentc7/core`'s EventLog using
  * Node's built-in `node:sqlite` module.
  *
  * Why `node:sqlite` over `better-sqlite3`:
@@ -29,8 +29,8 @@ import {
   type EventLog,
   type EventLogQueryOptions,
   type EventLogTailOptions,
-} from '@ac7/core';
-import type { LogLevel, Message } from '@ac7/sdk/types';
+} from '@agentc7/core';
+import type { LogLevel, Message } from '@agentc7/sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
 
 interface EventRow {

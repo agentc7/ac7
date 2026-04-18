@@ -14,8 +14,8 @@
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Client } from '@ac7/sdk/client';
-import type { Role, Team } from '@ac7/sdk/types';
+import { Client } from '@agentc7/sdk/client';
+import type { Role, Team } from '@agentc7/sdk/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type RunningServer, runServer } from '../src/run.js';
 import { createSlotStore } from '../src/slots.js';

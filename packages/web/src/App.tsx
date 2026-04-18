@@ -1,5 +1,5 @@
 /**
- * Root component for @ac7/web.
+ * Root component for @agentc7/web.
  *
  * Phase 4 wires auth. The flow:
  *   1. `bootstrap()` runs once on mount, calling GET /session to

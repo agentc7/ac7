@@ -7,9 +7,9 @@
  * MCP stdio server. Reconnects with exponential backoff on any error.
  */
 
-import type { Client as BrokerClient } from '@ac7/sdk/client';
-import { MCP_CHANNEL_NOTIFICATION } from '@ac7/sdk/protocol';
-import type { Message } from '@ac7/sdk/types';
+import type { Client as BrokerClient } from '@agentc7/sdk/client';
+import { MCP_CHANNEL_NOTIFICATION } from '@agentc7/sdk/protocol';
+import type { Message } from '@agentc7/sdk/types';
 import { formatAgentTimestamp } from './tools.js';
 
 /**

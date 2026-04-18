@@ -1,5 +1,5 @@
 /**
- * `@ac7/server` — CLI entry for the self-hosted broker.
+ * `@agentc7/server` — CLI entry for the self-hosted broker.
  *
  * Thin wrapper around `runServer()` that reads config from env/argv,
  * loads the team config file (or drops into the first-run wizard
@@ -11,7 +11,7 @@
 import { networkInterfaces } from 'node:os';
 import { dirname } from 'node:path';
 import { parseArgs } from 'node:util';
-import { DEFAULT_PORT, ENV } from '@ac7/sdk/protocol';
+import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 import { KekResolutionError, resolveKek } from './kek.js';
 import { logger } from './logger.js';
 import { type ListenInfo, runServer } from './run.js';

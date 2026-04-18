@@ -23,10 +23,10 @@ importers:
 
   apps/server:
     dependencies:
-      '@ac7/core':
+      '@agentc7/core':
         specifier: workspace:*
         version: link:../../packages/core
-      '@ac7/sdk':
+      '@agentc7/sdk':
         specifier: workspace:*
         version: link:../../packages/sdk
       '@hono/node-server':
@@ -54,7 +54,7 @@ importers:
         specifier: ^4.0.0
         version: 4.3.6
     devDependencies:
-      '@ac7/web':
+      '@agentc7/web':
         specifier: workspace:*
         version: link:../../packages/web
       '@types/node':
@@ -78,22 +78,22 @@ importers:
 
   packages/ac7:
     dependencies:
-      '@ac7/cli':
+      '@agentc7/cli':
         specifier: workspace:*
         version: link:../cli
-      '@ac7/core':
+      '@agentc7/core':
         specifier: workspace:*
         version: link:../core
-      '@ac7/sdk':
+      '@agentc7/sdk':
         specifier: workspace:*
         version: link:../sdk
-      '@ac7/server':
+      '@agentc7/server':
         specifier: workspace:*
         version: link:../../apps/server
 
   packages/cli:
     dependencies:
-      '@ac7/sdk':
+      '@agentc7/sdk':
         specifier: workspace:*
         version: link:../sdk
       '@modelcontextprotocol/sdk':
@@ -103,7 +103,7 @@ importers:
         specifier: ^1.3.1
         version: 1.4.0
     devDependencies:
-      '@ac7/server':
+      '@agentc7/server':
         specifier: workspace:*
         version: link:../../apps/server
       '@types/node':
@@ -127,7 +127,7 @@ importers:
 
   packages/core:
     dependencies:
-      '@ac7/sdk':
+      '@agentc7/sdk':
         specifier: workspace:*
         version: link:../sdk
     devDependencies:
@@ -159,7 +159,7 @@ importers:
 
   packages/web:
     dependencies:
-      '@ac7/sdk':
+      '@agentc7/sdk':
         specifier: workspace:*
         version: link:../sdk
       '@preact/signals':

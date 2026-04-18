@@ -13,7 +13,7 @@
  * slot in sync with zero client-side bookkeeping.
  */
 
-import type { Agent, Message, PushPayload, PushResult, Slot } from '@ac7/sdk/types';
+import type { Agent, Message, PushPayload, PushResult, Slot } from '@agentc7/sdk/types';
 import type { EventLog } from './event-log.js';
 import { AgentIdentityError, AgentRegistry, type AgentState, type Subscriber } from './registry.js';
 
@@ -92,8 +92,8 @@ const DEFAULT_FANOUT_CONCURRENCY = 32;
  * other 99 subscribers on the same push.
  *
  * Kept as an inline helper (rather than adding `p-limit` as a core
- * dep) because `@ac7/core` is deliberately dep-light — it
- * carries only `@ac7/sdk` as a runtime dep. A 15-line
+ * dep) because `@agentc7/core` is deliberately dep-light — it
+ * carries only `@agentc7/sdk` as a runtime dep. A 15-line
  * semaphore is cheaper than dragging p-limit into every non-Node
  * runtime that wants to embed the broker.
  */

@@ -1,6 +1,6 @@
-# @ac7/web
+# @agentc7/web
 
-Preact+Vite+UnoCSS web UI for [ac7](https://github.com/ac7/ac7). Built as a PWA with Web Push support; served by `@ac7/server` as static assets.
+Preact+Vite+UnoCSS web UI for [ac7](https://github.com/ac7/ac7). Built as a PWA with Web Push support; served by `@agentc7/server` as static assets.
 
 ## What it does
 
@@ -17,7 +17,7 @@ The SPA mounts at `/` and uses same-origin cookies to authenticate against the b
 
 ## Install
 
-This package is not installed directly. It ships inside `@ac7/server`, which serves the built bundle from `public/` at `/`.
+This package is not installed directly. It ships inside `@agentc7/server`, which serves the built bundle from `public/` at `/`.
 
 ## Dev
 
@@ -34,7 +34,7 @@ Open <http://localhost:5173/>. Vite proxies every API path (`/briefing`, `/roste
 Production builds output directly into `apps/server/public/` so the next `ac7-server` build picks up the new bundle without a copy step.
 
 ```bash
-pnpm --filter @ac7/web build
+pnpm --filter @agentc7/web build
 ```
 
 ## Tech notes
@@ -56,7 +56,7 @@ packages/web/
 │   ├── App.tsx             # auth gate: Boot → Login → Shell
 │   ├── sw.ts               # service worker (push + precache + updates)
 │   ├── lib/
-│   │   ├── client.ts       # @ac7/sdk Client singleton
+│   │   ├── client.ts       # @agentc7/sdk Client singleton
 │   │   ├── session.ts      # session signal + loginWithTotp/logout/bootstrap
 │   │   ├── briefing.ts     # briefing signal
 │   │   ├── roster.ts       # roster signal + polling

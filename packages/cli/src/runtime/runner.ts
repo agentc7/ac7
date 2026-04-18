@@ -45,8 +45,8 @@ import { unlinkSync } from 'node:fs';
 import type { Socket } from 'node:net';
 import { createServer as createNetServer, type Server as NetServer } from 'node:net';
 import { createInterface } from 'node:readline';
-import { Client as BrokerClient } from '@ac7/sdk/client';
-import type { BriefingResponse, Objective } from '@ac7/sdk/types';
+import { Client as BrokerClient } from '@agentc7/sdk/client';
+import type { BriefingResponse, Objective } from '@agentc7/sdk/types';
 import { CLI_VERSION } from '../version.js';
 import { type ForwarderNotificationSink, runForwarder } from './forwarder.js';
 import {

@@ -21,7 +21,7 @@
  * live off this function's return value so they're easy to bolt on.
  */
 
-import type { LogLevel, Message } from '@ac7/sdk/types';
+import type { LogLevel, Message } from '@agentc7/sdk/types';
 
 const HIGH_PRIORITY_LEVELS: ReadonlySet<LogLevel> = new Set<LogLevel>([
   'warning',

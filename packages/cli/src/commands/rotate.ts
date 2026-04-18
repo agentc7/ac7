@@ -25,7 +25,7 @@
  * secret.
  */
 
-import { ENV } from '@ac7/sdk/protocol';
+import { ENV } from '@agentc7/sdk/protocol';
 import { UsageError } from './errors.js';
 
 export { UsageError };
@@ -113,18 +113,18 @@ export async function runRotateCommand(
   stdout('');
 }
 
-async function loadServerModule(): Promise<typeof import('@ac7/server')> {
+async function loadServerModule(): Promise<typeof import('@agentc7/server')> {
   try {
-    return await import('@ac7/server');
+    return await import('@agentc7/server');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') {
       throw new UsageError(
-        'rotate: @ac7/server is not installed.\n' +
+        'rotate: @agentc7/server is not installed.\n' +
           '  This command needs the broker package. Install it alongside the CLI:\n' +
-          '    npm install -g @ac7/server\n' +
+          '    npm install -g @agentc7/server\n' +
           '  Or install the full ecosystem in one step:\n' +
-          '    npm install -g @ac7/ac7',
+          '    npm install -g @agentc7/ac7',
       );
     }
     throw err;

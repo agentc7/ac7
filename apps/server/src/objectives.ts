@@ -29,7 +29,7 @@
  *   Separation of concerns keeps the store free of broker knowledge.
  */
 
-import { ObjectiveEventKindSchema, ObjectiveStatusSchema } from '@ac7/sdk/schemas';
+import { ObjectiveEventKindSchema, ObjectiveStatusSchema } from '@agentc7/sdk/schemas';
 import type {
   CancelObjectiveRequest,
   CompleteObjectiveRequest,
@@ -41,7 +41,7 @@ import type {
   ReassignObjectiveRequest,
   UpdateObjectiveRequest,
   UpdateWatchersRequest,
-} from '@ac7/sdk/types';
+} from '@agentc7/sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
 
 const CREATE_SCHEMA = `

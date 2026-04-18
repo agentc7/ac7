@@ -36,7 +36,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DEFAULT_PORT, ENV } from '@ac7/sdk/protocol';
+import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 import {
   ClaudeCodeAdapterError,
   findClaudeBinary,

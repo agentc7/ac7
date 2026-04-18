@@ -18,8 +18,8 @@
  * directors / managers via CLI or web UI, never by agents.
  */
 
-import type { Client as BrokerClient, ClientError } from '@ac7/sdk/client';
-import type { BriefingResponse, LogLevel, Message, ObjectiveStatus } from '@ac7/sdk/types';
+import type { Client as BrokerClient, ClientError } from '@agentc7/sdk/client';
+import type { BriefingResponse, LogLevel, Message, ObjectiveStatus } from '@agentc7/sdk/types';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 
 const LEVELS: readonly LogLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical'];

@@ -20,7 +20,7 @@
  * when reconciling.
  */
 
-import type { Message } from '@ac7/sdk/types';
+import type { Message } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 
 export const PRIMARY_THREAD = 'primary';

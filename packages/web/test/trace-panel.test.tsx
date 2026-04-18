@@ -16,7 +16,7 @@
  * for the gate.
  */
 
-import type { AgentActivityRow, ListAgentActivityResponse, Objective } from '@ac7/sdk/types';
+import type { AgentActivityRow, ListAgentActivityResponse, Objective } from '@agentc7/sdk/types';
 import { cleanup, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TracePanel } from '../src/components/TracePanel.js';

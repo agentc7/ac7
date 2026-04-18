@@ -15,7 +15,7 @@
  * is disconnecting-then-reconnecting" situations.
  */
 
-import type { RosterResponse } from '@ac7/sdk/types';
+import type { RosterResponse } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { getClient } from './client.js';
 

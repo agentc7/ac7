@@ -21,9 +21,9 @@
  * full stream path.
  */
 
-import { Broker, InMemoryEventLog } from '@ac7/core';
-import { AGENT_PATHS } from '@ac7/sdk/protocol';
-import type { AgentActivityEvent, ListAgentActivityResponse, Role, Team } from '@ac7/sdk/types';
+import { Broker, InMemoryEventLog } from '@agentc7/core';
+import { AGENT_PATHS } from '@agentc7/sdk/protocol';
+import type { AgentActivityEvent, ListAgentActivityResponse, Role, Team } from '@agentc7/sdk/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSqliteAgentActivityStore } from '../src/agent-activity.js';
 import { createApp } from '../src/app.js';

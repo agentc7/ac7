@@ -66,7 +66,7 @@ function makeDevOnSuccess(): () => Promise<() => Promise<void>> {
 }
 
 export default defineConfig([
-  // Library entry (consumed by @ac7/cli, etc.)
+  // Library entry (consumed by @agentc7/cli, etc.)
   {
     name: 'lib',
     entry: { run: 'src/run.ts' },

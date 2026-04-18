@@ -12,7 +12,7 @@
  * notice via .callout.err.
  */
 
-import type { Objective, Teammate } from '@ac7/sdk/types';
+import type { Objective, Teammate } from '@agentc7/sdk/types';
 import { useEffect } from 'preact/hooks';
 import { agentActivityError, startAgentActivitySubscribe } from '../lib/agent-activity.js';
 import { briefing } from '../lib/briefing.js';

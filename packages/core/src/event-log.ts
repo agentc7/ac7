@@ -6,7 +6,7 @@
  * the in-memory variant below).
  */
 
-import type { Message } from '@ac7/sdk/types';
+import type { Message } from '@agentc7/sdk/types';
 
 export interface EventLogTailOptions {
   /** Return only events with `ts >= since`. Defaults to 0 (all). */

@@ -51,7 +51,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { Authority, Role, Slot, Team, Teammate } from '@ac7/sdk/types';
+import type { Authority, Role, Slot, Team, Teammate } from '@agentc7/sdk/types';
 import { z } from 'zod';
 import { decryptField, ENCRYPTED_FIELD_PREFIX, encryptField } from './kek.js';
 

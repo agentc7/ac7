@@ -31,7 +31,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import type { Client, ClientError } from '@ac7/sdk/client';
+import type { Client, ClientError } from '@agentc7/sdk/client';
 
 const DEMO_TITLE = 'quickstart — summarize this repository';
 const DEMO_OUTCOME =

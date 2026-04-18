@@ -34,7 +34,7 @@
  * code savings.
  */
 
-import { ENV } from '@ac7/sdk/protocol';
+import { ENV } from '@agentc7/sdk/protocol';
 import { UsageError } from './errors.js';
 
 export { UsageError };
@@ -192,7 +192,7 @@ export async function runEnrollCommand(
  * Render an `otpauth://` URI as a terminal QR code using
  * `qrcode-terminal`'s small (half-block) mode.
  *
- * `qrcode-terminal` is a transitive dep of `@ac7/server`, not a
+ * `qrcode-terminal` is a transitive dep of `@agentc7/server`, not a
  * direct CLI dep — we resolve it lazily via `createRequire` scoped at
  * the server module's location. This keeps the CLI's dep tree lean
  * (users who never run `ac7 enroll` never load it) and avoids
@@ -218,7 +218,7 @@ function renderQr(uri: string): string {
 }
 
 /**
- * Build a `require` scoped to the resolved `@ac7/server`
+ * Build a `require` scoped to the resolved `@agentc7/server`
  * package, so we can pull in `qrcode-terminal` from the server's
  * node_modules without declaring it as a direct CLI dep.
  */
@@ -230,7 +230,7 @@ function nodeRequire(moduleId: string): unknown {
   // import.meta.resolve isn't available in all Node versions we support;
   // resolve through a stable anchor (this file) instead.
   const base = createRequire(import.meta.url);
-  const serverPkgPath = base.resolve('@ac7/server/package.json');
+  const serverPkgPath = base.resolve('@agentc7/server/package.json');
   const fromServer = createRequire(serverPkgPath);
   return fromServer(moduleId);
 }
@@ -246,18 +246,18 @@ function describeVerifyError(reason: 'malformed' | 'invalid' | 'replay'): string
   }
 }
 
-async function loadServerModule(): Promise<typeof import('@ac7/server')> {
+async function loadServerModule(): Promise<typeof import('@agentc7/server')> {
   try {
-    return await import('@ac7/server');
+    return await import('@agentc7/server');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') {
       throw new UsageError(
-        'enroll: @ac7/server is not installed.\n' +
+        'enroll: @agentc7/server is not installed.\n' +
           '  This command needs the broker package. Install it alongside the CLI:\n' +
-          '    npm install -g @ac7/server\n' +
+          '    npm install -g @agentc7/server\n' +
           '  Or install the full ecosystem in one step:\n' +
-          '    npm install -g @ac7/ac7',
+          '    npm install -g @agentc7/ac7',
       );
     }
     throw err;

@@ -34,8 +34,8 @@ The broker serves two kinds of clients:
                                   ▼
                        ╔═══════════════════╗
                        ║      BROKER       ║
-                       ║  @ac7/core  ║
-                       ║  @ac7/server║
+                       ║  @agentc7/core  ║
+                       ║  @agentc7/server║
                        ╚═══════════════════╝
 ```
 
@@ -78,7 +78,7 @@ individual contributor's CLI process relates to the agent it's driving:
            │   ac7 claude-code                │
            │                                  │
            │   ── runner, long-lived ──       │
-           │   • @ac7/sdk Client        │   <-- HTTP to broker
+           │   • @agentc7/sdk Client        │   <-- HTTP to broker
            │   • /briefing + objectives       │
            │   • SSE forwarder loop           │
            │   • TraceHost (MITM proxy + local CA)   │
@@ -269,14 +269,14 @@ See [tracing.mdx](./tracing.mdx) for the full setup guide.
          └─────────────────┴───────┬───────┴─────────────────┘
                                    │
                                    │  HTTP/2 + TLS
-                                   │  @ac7/sdk · protocol v1
+                                   │  @agentc7/sdk · protocol v1
                                    ▼
                      ╔═══════════════════════════════════════╗
                      ║               BROKER                  ║
                      ╚═══════════════════════════════════════╝
 
                 ┌──────────────────────────────────────┐
-                │           @ac7/core            │
+                │           @agentc7/core            │
                 │ agent registry · push fanout ·       │
                 │ event log · SSE delivery · auth ·    │
                 │ identity enforcement                 │
@@ -286,7 +286,7 @@ See [tracing.mdx](./tracing.mdx) for the full setup guide.
                                    │ hosted by
                                    ▼
                  ┌──────────────────────────────────┐
-                 │       @ac7/server          │
+                 │       @agentc7/server          │
                  │   Node + Hono + node:sqlite      │
                  │                                  │
                  │  loads team config:          │
@@ -304,7 +304,7 @@ See [tracing.mdx](./tracing.mdx) for the full setup guide.
                  │   • machine API (bearer)         │
                  │   • human API (session cookie)   │
                  │   • /objectives + /agents/*      │
-                 │   • @ac7/web static SPA    │
+                 │   • @agentc7/web static SPA    │
                  │                                  │
                  │  first-run wizard for setup      │
                  └────────────┬─────────────────────┘
@@ -346,15 +346,15 @@ See [tracing.mdx](./tracing.mdx) for the full setup guide.
 
 | Package | Role | Install when you want |
 |---|---|---|
-| **`@ac7/ac7`** | Meta-package. Depends on everything below, no code of its own. | The full ecosystem in one install |
-| **`@ac7/sdk`** | The wire contract. Types, zod schemas, protocol constants, TS client. Everything speaks this. | To embed a client in your own Node / Workers / browser code |
-| **`@ac7/core`** | Broker logic with zero runtime deps. Registry, push fanout, event log, SSE delivery, identity enforcement. | To build a custom broker runtime (Durable Objects, etc.) |
-| **`@ac7/server`** | Node broker. Wraps `core` in Hono + `node:sqlite`. Team config loader, first-run wizard, objectives + traces persistence, built-in web UI. | To host a self-hosted broker |
-| **`@ac7/web`** | Preact + Vite + UnoCSS PWA served by the broker. Real-time chat, roster, objectives with director-only TracePanel, Web Push. | Nothing — it ships inside `@ac7/server` |
-| **`@ac7/cli`** | IndividualContributor terminal. `ac7 claude-code`, `ac7 push`, `ac7 roster`, `ac7 objectives`, `ac7 serve`. Also hosts the internal `ac7 mcp-bridge` verb. | To push / inspect from a terminal or run the runner |
+| **`@agentc7/ac7`** | Meta-package. Depends on everything below, no code of its own. | The full ecosystem in one install |
+| **`@agentc7/sdk`** | The wire contract. Types, zod schemas, protocol constants, TS client. Everything speaks this. | To embed a client in your own Node / Workers / browser code |
+| **`@agentc7/core`** | Broker logic with zero runtime deps. Registry, push fanout, event log, SSE delivery, identity enforcement. | To build a custom broker runtime (Durable Objects, etc.) |
+| **`@agentc7/server`** | Node broker. Wraps `core` in Hono + `node:sqlite`. Team config loader, first-run wizard, objectives + traces persistence, built-in web UI. | To host a self-hosted broker |
+| **`@agentc7/web`** | Preact + Vite + UnoCSS PWA served by the broker. Real-time chat, roster, objectives with director-only TracePanel, Web Push. | Nothing — it ships inside `@agentc7/server` |
+| **`@agentc7/cli`** | IndividualContributor terminal. `ac7 claude-code`, `ac7 push`, `ac7 roster`, `ac7 objectives`, `ac7 serve`. Also hosts the internal `ac7 mcp-bridge` verb. | To push / inspect from a terminal or run the runner |
 
-**Light install:** `@ac7/cli` has `@ac7/sdk` as its only
-hard dependency. `@ac7/server` is an optional peer —
+**Light install:** `@agentc7/cli` has `@agentc7/sdk` as its only
+hard dependency. `@agentc7/server` is an optional peer —
 subcommands dynamically import it and print an install hint if
 missing.
 
@@ -402,7 +402,7 @@ without client-side echo logic.
 
 1. IndividualContributor calls `ac7 push --agent scout --body "ci failed"` (or
    posts `/push` directly, or clicks send in the web UI).
-2. Broker validates against `@ac7/sdk/schemas`, writes to the
+2. Broker validates against `@agentc7/sdk/schemas`, writes to the
    event log, and fans out the message to `scout`'s SSE subscribers
    (plus the sender's own agent, if registered).
 3. The individual contributor's `ac7 claude-code` runner is subscribed on
@@ -460,8 +460,8 @@ shell for humans.
 ## Protocol boundary
 
 Every HTTP request carries an `X-C17-Protocol: 1` header and is
-validated against the zod schemas in `@ac7/sdk/schemas`.
+validated against the zod schemas in `@agentc7/sdk/schemas`.
 Breaking changes bump the version constant in
-`@ac7/sdk/protocol` and are gated by the header, so older
+`@agentc7/sdk/protocol` and are gated by the header, so older
 runners keep working against newer brokers within the same major
 version.

@@ -15,7 +15,7 @@
  * the rendered DOM.
  */
 
-import type { Message } from '@ac7/sdk/types';
+import type { Message } from '@agentc7/sdk/types';
 import { cleanup, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { Sidebar } from '../src/components/Sidebar.js';

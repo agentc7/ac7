@@ -27,7 +27,7 @@ import type {
   AnthropicContentBlock,
   AnthropicMessagesEntry,
   Objective,
-} from '@ac7/sdk/types';
+} from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import type { JSX } from 'preact';
 import { useEffect } from 'preact/hooks';

@@ -14,7 +14,7 @@
  *                      a push failure to bubble into the main request)
  */
 
-import type { Message } from '@ac7/sdk/types';
+import type { Message } from '@agentc7/sdk/types';
 import pLimit from 'p-limit';
 // Default-import for the same CJS reason as vapid.ts.
 import webpush from 'web-push';

@@ -18,10 +18,10 @@
  *     destroying anything unless `--yes` is passed. Scripts pass
  *     `--yes`; humans see the prompt.
  *   - Duration shapes: "30d", "7d", "24h", "60m", "3600s", "500ms".
- *     See `parseDurationMs` in `@ac7/server`.
+ *     See `parseDurationMs` in `@agentc7/server`.
  */
 
-import { ENV } from '@ac7/sdk/protocol';
+import { ENV } from '@agentc7/sdk/protocol';
 import { UsageError } from './errors.js';
 
 export { UsageError };
@@ -139,18 +139,18 @@ async function prompt(question: string): Promise<string> {
   }
 }
 
-async function loadServerModule(): Promise<typeof import('@ac7/server')> {
+async function loadServerModule(): Promise<typeof import('@agentc7/server')> {
   try {
-    return await import('@ac7/server');
+    return await import('@agentc7/server');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') {
       throw new UsageError(
-        'prune-traces: @ac7/server is not installed.\n' +
+        'prune-traces: @agentc7/server is not installed.\n' +
           '  This command needs the broker package. Install it alongside the CLI:\n' +
-          '    npm install -g @ac7/server\n' +
+          '    npm install -g @agentc7/server\n' +
           '  Or install the full ecosystem in one step:\n' +
-          '    npm install -g @ac7/ac7',
+          '    npm install -g @agentc7/ac7',
       );
     }
     throw err;

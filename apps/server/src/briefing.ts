@@ -24,7 +24,7 @@
  * description build), but no longer rendered into the prose.
  */
 
-import type { BriefingResponse, Role, Slot, Team, Teammate } from '@ac7/sdk/types';
+import type { BriefingResponse, Role, Slot, Team, Teammate } from '@agentc7/sdk/types';
 
 export interface ComposeBriefingInput {
   self: Slot;

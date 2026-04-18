@@ -51,7 +51,7 @@ team channel, DM threads, Web Push notifications.
 ## Quick start
 
 ```bash
-npm install -g @ac7/ac7
+npm install -g @agentc7/ac7
 
 # First run triggers the setup wizard —
 # creates your team, slots, authority tiers, and TOTP enrollment.
@@ -158,7 +158,7 @@ CLI, the broker, and the built-in web UI, and ships both
 `ac7` and `ac7-server` bins at the same version.
 
 ```bash
-npm install -g @ac7/ac7
+npm install -g @agentc7/ac7
 ```
 
 Advanced: if you know you only need one surface (e.g. CLI tooling
@@ -167,20 +167,20 @@ on a laptop that talks to a remote broker), you can install the
 the meta-package — it's what the docs and the wizard assume.
 
 ```bash
-npm install -g @ac7/cli       # CLI only (ac7 claude-code, ac7 push, ...)
-npm install -g @ac7/server    # self-hosted broker + built-in web UI only
+npm install -g @agentc7/cli       # CLI only (ac7 claude-code, ac7 push, ...)
+npm install -g @agentc7/server    # self-hosted broker + built-in web UI only
 ```
 
 ## Packages
 
 | Package | Role |
 |---|---|
-| `@ac7/ac7` | Meta-package — installs the full ecosystem |
-| `@ac7/sdk` | Wire contract + TypeScript client |
-| `@ac7/core` | Runtime-agnostic broker logic — registry, push, SSE, event log |
-| `@ac7/server` | Node broker (Hono + SQLite) with wizard, objectives, traces, and built-in web UI |
-| `@ac7/web` | Preact SPA — chat, roster, objectives, trace review (ships inside server) |
-| `@ac7/cli` | Terminal CLI — `ac7 claude-code`, `ac7 objectives`, `ac7 push`, `ac7 roster`, `ac7 serve` |
+| `@agentc7/ac7` | Meta-package — installs the full ecosystem |
+| `@agentc7/sdk` | Wire contract + TypeScript client |
+| `@agentc7/core` | Runtime-agnostic broker logic — registry, push, SSE, event log |
+| `@agentc7/server` | Node broker (Hono + SQLite) with wizard, objectives, traces, and built-in web UI |
+| `@agentc7/web` | Preact SPA — chat, roster, objectives, trace review (ships inside server) |
+| `@agentc7/cli` | Terminal CLI — `ac7 claude-code`, `ac7 objectives`, `ac7 push`, `ac7 roster`, `ac7 serve` |
 
 ## Requirements
 

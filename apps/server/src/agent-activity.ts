@@ -26,9 +26,9 @@ import type {
   ActivityListener,
   ActivityStore as CoreActivityStore,
   ListActivityFilter as CoreListActivityFilter,
-} from '@ac7/core';
-import { AgentActivityEventSchema } from '@ac7/sdk/schemas';
-import type { AgentActivityEvent, AgentActivityRow } from '@ac7/sdk/types';
+} from '@agentc7/core';
+import { AgentActivityEventSchema } from '@agentc7/sdk/schemas';
+import type { AgentActivityEvent, AgentActivityRow } from '@agentc7/sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
 
 const CREATE_SCHEMA = `
@@ -91,14 +91,14 @@ function rowToActivity(row: AgentActivityRowRaw): AgentActivityRow {
 }
 
 /**
- * Server-side alias for `@ac7/core`'s `ListActivityFilter`.
+ * Server-side alias for `@agentc7/core`'s `ListActivityFilter`.
  * Re-exported so existing server callers don't have to switch imports
  * in the same PR; new code should import directly from core.
  */
 export type ListActivityFilter = CoreListActivityFilter;
 
 /**
- * Server-side alias for `@ac7/core`'s `ActivityStore`. The
+ * Server-side alias for `@agentc7/core`'s `ActivityStore`. The
  * SQLite impl below `implements ActivityStore` from core; this alias
  * keeps existing server-side consumer types stable while the consumer
  * migration PR moves the rest of the codebase onto the core import

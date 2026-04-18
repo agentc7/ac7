@@ -12,8 +12,8 @@
  *   - Explicit `flush()` and `close()`
  */
 
-import type { Client as BrokerClient } from '@ac7/sdk/client';
-import type { AgentActivityEvent } from '@ac7/sdk/types';
+import type { Client as BrokerClient } from '@agentc7/sdk/client';
+import type { AgentActivityEvent } from '@agentc7/sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActivityUploader } from '../../src/runtime/trace/activity-uploader.js';
 

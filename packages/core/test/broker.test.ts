@@ -1,4 +1,4 @@
-import type { Message } from '@ac7/sdk/types';
+import type { Message } from '@agentc7/sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { AgentIdentityError, Broker, InMemoryEventLog } from '../src/index.js';
 

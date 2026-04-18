@@ -17,7 +17,7 @@
  * state based on whether the stream is currently live.
  */
 
-import { MessageSchema } from '@ac7/sdk/schemas';
+import { MessageSchema } from '@agentc7/sdk/schemas';
 import { signal } from '@preact/signals';
 import { getClient } from './client.js';
 import { appendMessages } from './messages.js';

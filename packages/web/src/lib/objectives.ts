@@ -18,7 +18,7 @@ import type {
   ReassignObjectiveRequest,
   UpdateObjectiveRequest,
   UpdateWatchersRequest,
-} from '@ac7/sdk/types';
+} from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { getClient } from './client.js';
 

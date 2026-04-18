@@ -34,7 +34,7 @@
 
 import { connect, type Socket } from 'node:net';
 import { createInterface } from 'node:readline';
-import { MCP_CHANNEL_CAPABILITY } from '@ac7/sdk/protocol';
+import { MCP_CHANNEL_CAPABILITY } from '@agentc7/sdk/protocol';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {

@@ -28,7 +28,7 @@
  * `dangerouslySetInnerHTML`.
  */
 
-import type { Message } from '@ac7/sdk/types';
+import type { Message } from '@agentc7/sdk/types';
 import { renderInlineMarkdown } from '../lib/markdown.js';
 import { senderTextClass } from '../lib/theme.js';
 

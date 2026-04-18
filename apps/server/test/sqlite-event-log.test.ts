@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Message } from '@ac7/sdk/types';
+import type { Message } from '@agentc7/sdk/types';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type DatabaseSyncInstance, openDatabase } from '../src/db.js';
 import { SqliteEventLog } from '../src/sqlite-event-log.js';

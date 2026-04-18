@@ -13,7 +13,12 @@
  * to drive EventSource in jsdom is flaky.
  */
 
-import type { AgentActivityRow, BriefingResponse, Objective, RosterResponse } from '@ac7/sdk/types';
+import type {
+  AgentActivityRow,
+  BriefingResponse,
+  Objective,
+  RosterResponse,
+} from '@agentc7/sdk/types';
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentPage } from '../src/components/AgentPage.js';

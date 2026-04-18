@@ -1,7 +1,7 @@
 /**
  * `ac7 serve` — start a local ac7 broker.
  *
- * Thin launcher. `@ac7/server` is an *optional* peer dependency
+ * Thin launcher. `@agentc7/server` is an *optional* peer dependency
  * of the CLI so that users who only ever push events don't drag in
  * Hono, node:sqlite, and the MCP server SDK. When the user invokes
  * `ac7 serve`, we dynamically import the server at runtime. If it
@@ -13,10 +13,10 @@
  * stay consistent.
  */
 
-import { DEFAULT_PORT, ENV } from '@ac7/sdk/protocol';
+import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 
 // Type-only import: compiles away, never loaded at runtime.
-import type { RunningServer, TeamConfig } from '@ac7/server';
+import type { RunningServer, TeamConfig } from '@agentc7/server';
 import { UsageError } from './errors.js';
 
 export { UsageError };
@@ -67,7 +67,7 @@ export async function runServeCommand(
 }
 
 async function loadOrCreateTeamConfig(
-  server: typeof import('@ac7/server'),
+  server: typeof import('@agentc7/server'),
   configPath: string,
   stdout: (line: string) => void,
 ): Promise<TeamConfig> {
@@ -104,7 +104,7 @@ async function loadOrCreateTeamConfig(
 }
 
 async function runWizardOrFail(
-  server: typeof import('@ac7/server'),
+  server: typeof import('@agentc7/server'),
   configPath: string,
 ): Promise<TeamConfig> {
   const { io, close } = server.createTtyWizardIO();
@@ -134,18 +134,18 @@ async function runWizardOrFail(
  * installed (it's an optional peer), throw a UsageError with install
  * instructions rather than a raw MODULE_NOT_FOUND trace.
  */
-async function loadServerModule(): Promise<typeof import('@ac7/server')> {
+async function loadServerModule(): Promise<typeof import('@agentc7/server')> {
   try {
-    return await import('@ac7/server');
+    return await import('@agentc7/server');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException)?.code;
     if (code === 'ERR_MODULE_NOT_FOUND' || code === 'MODULE_NOT_FOUND') {
       throw new UsageError(
-        'serve: @ac7/server is not installed.\n' +
+        'serve: @agentc7/server is not installed.\n' +
           '  This command needs the broker package. Install it alongside the CLI:\n' +
-          '    npm install -g @ac7/server\n' +
+          '    npm install -g @agentc7/server\n' +
           '  Or install the full ecosystem in one step:\n' +
-          '    npm install -g @ac7/ac7',
+          '    npm install -g @agentc7/ac7',
       );
     }
     throw err;

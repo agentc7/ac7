@@ -7,8 +7,8 @@
  * file is focused on what's new.
  */
 
-import { Broker, InMemoryEventLog } from '@ac7/core';
-import type { Role, SessionResponse, Team } from '@ac7/sdk/types';
+import { Broker, InMemoryEventLog } from '@agentc7/core';
+import type { Role, SessionResponse, Team } from '@agentc7/sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';

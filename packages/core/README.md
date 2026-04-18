@@ -1,4 +1,4 @@
-# @ac7/core
+# @agentc7/core
 
 Runtime-agnostic broker logic for [ac7](https://github.com/ac7/ac7), an MCP-based agent control plane.
 
@@ -7,13 +7,13 @@ This package is the portable core: agent registry, push fanout, event log interf
 ## Install
 
 ```bash
-npm install @ac7/core @ac7/sdk
+npm install @agentc7/core @agentc7/sdk
 ```
 
 ## Usage
 
 ```ts
-import { Broker, InMemoryEventLog } from '@ac7/core';
+import { Broker, InMemoryEventLog } from '@agentc7/core';
 
 const broker = new Broker({ eventLog: new InMemoryEventLog() });
 
@@ -30,7 +30,7 @@ await broker.push({
 });
 ```
 
-For the full self-hostable broker with HTTP routes, auth, and SQLite persistence, see [`@ac7/server`](https://www.npmjs.com/package/@ac7/server).
+For the full self-hostable broker with HTTP routes, auth, and SQLite persistence, see [`@agentc7/server`](https://www.npmjs.com/package/@agentc7/server).
 
 ## License
 

@@ -31,7 +31,7 @@
  * later if a real use case appears.
  */
 
-import type { Message } from '@ac7/sdk/types';
+import type { Message } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { messagesByThread } from './messages.js';
 

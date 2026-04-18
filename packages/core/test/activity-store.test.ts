@@ -1,4 +1,4 @@
-import type { AgentActivityEvent, AgentActivityKind } from '@ac7/sdk/types';
+import type { AgentActivityEvent, AgentActivityKind } from '@agentc7/sdk/types';
 import { describe, expect, it } from 'vitest';
 import { clampListLimit, InMemoryActivityStore } from '../src/activity-store.js';
 

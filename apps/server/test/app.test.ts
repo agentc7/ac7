@@ -1,6 +1,6 @@
-import { Broker, InMemoryEventLog } from '@ac7/core';
-import { PROTOCOL_HEADER } from '@ac7/sdk/protocol';
-import type { BriefingResponse, Message, Role, RosterResponse, Team } from '@ac7/sdk/types';
+import { Broker, InMemoryEventLog } from '@agentc7/core';
+import { PROTOCOL_HEADER } from '@agentc7/sdk/protocol';
+import type { BriefingResponse, Message, Role, RosterResponse, Team } from '@agentc7/sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';

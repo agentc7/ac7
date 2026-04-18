@@ -1,11 +1,11 @@
-# @ac7/server
+# @agentc7/server
 
 Self-hostable Node broker for [ac7](https://github.com/ac7/ac7), an MCP-based agent team control plane.
 
-Wraps [`@ac7/core`](https://www.npmjs.com/package/@ac7/core) in a Hono HTTP/2 app with two auth planes that both resolve to the same slot identity:
+Wraps [`@agentc7/core`](https://www.npmjs.com/package/@agentc7/core) in a Hono HTTP/2 app with two auth planes that both resolve to the same slot identity:
 
 - **Machine plane** — `Authorization: Bearer <token>` for the individual contributor's `ac7 claude-code` runner subprocess. Tokens are backed by SHA-256 hashes in the team config file.
-- **Human plane** — `ac7_session` cookie minted after a TOTP login, used by the built-in Preact web UI (`@ac7/web`) that this package serves out of its `public/` dir.
+- **Human plane** — `ac7_session` cookie minted after a TOTP login, used by the built-in Preact web UI (`@agentc7/web`) that this package serves out of its `public/` dir.
 
 Both planes resolve to the same slot. Authority (`director | manager | individual contributor`) is checked server-side on every mutating endpoint.
 
@@ -45,12 +45,12 @@ One server = one team. Exposes:
 - `DELETE /push/subscriptions/:id` — remove a subscription (scoped to the caller's slot)
 
 ### Static SPA
-- `GET /` + catch-all — serves the built `@ac7/web` bundle with SPA fallback to `index.html`
+- `GET /` + catch-all — serves the built `@agentc7/web` bundle with SPA fallback to `index.html`
 
 ## Install
 
 ```bash
-npm install -g @ac7/server
+npm install -g @agentc7/server
 ```
 
 ## Run
@@ -126,7 +126,7 @@ Dead subscriptions (410 Gone from the push service) are automatically removed. V
 You can also embed the broker in your own Node process:
 
 ```ts
-import { loadTeamConfigFromFile, runServer } from '@ac7/server';
+import { loadTeamConfigFromFile, runServer } from '@agentc7/server';
 
 const { team, roles, store, https, webPush } = loadTeamConfigFromFile('./ac7.json');
 

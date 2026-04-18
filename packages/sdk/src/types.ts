@@ -2,7 +2,7 @@
  * Pure TypeScript types for the ac7 wire protocol.
  *
  * Zero runtime dependencies. Consumers that only want types should import
- * from `@ac7/sdk/types`.
+ * from `@agentc7/sdk/types`.
  */
 
 export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical';

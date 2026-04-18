@@ -1,18 +1,18 @@
-# @ac7/ac7
+# @agentc7/ac7
 
 Meta-package for [ac7](https://github.com/ac7/ac7), an MCP-based agent team control plane. Installing this package installs the full ecosystem with one command and wires up all binaries:
 
-- [`@ac7/cli`](https://www.npmjs.com/package/@ac7/cli) — individual contributor terminal (`ac7 claude-code`, `ac7 push`, `ac7 roster`, `ac7 serve`)
-- [`@ac7/server`](https://www.npmjs.com/package/@ac7/server) — self-hostable Node broker (`ac7-server` binary, ships the web UI as static assets)
-- [`@ac7/sdk`](https://www.npmjs.com/package/@ac7/sdk) — contract + TypeScript client library
-- [`@ac7/core`](https://www.npmjs.com/package/@ac7/core) — runtime-agnostic broker logic library
+- [`@agentc7/cli`](https://www.npmjs.com/package/@agentc7/cli) — individual contributor terminal (`ac7 claude-code`, `ac7 push`, `ac7 roster`, `ac7 serve`)
+- [`@agentc7/server`](https://www.npmjs.com/package/@agentc7/server) — self-hostable Node broker (`ac7-server` binary, ships the web UI as static assets)
+- [`@agentc7/sdk`](https://www.npmjs.com/package/@agentc7/sdk) — contract + TypeScript client library
+- [`@agentc7/core`](https://www.npmjs.com/package/@agentc7/core) — runtime-agnostic broker logic library
 
 This package has no code of its own — it's a convenience alias that ships thin shim binaries forwarding to the real ones. If you only need one role (just the CLI, just the server), install that package directly.
 
 ## Install
 
 ```bash
-npm install -g @ac7/ac7
+npm install -g @agentc7/ac7
 ```
 
 After install, the binaries are available:

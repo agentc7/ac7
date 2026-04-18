@@ -17,7 +17,7 @@
  * Action groups only render when the viewer can take them.
  */
 
-import type { Message, Objective, ObjectiveEvent } from '@ac7/sdk/types';
+import type { Message, Objective, ObjectiveEvent } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import type { JSX } from 'preact';
 import { useEffect, useRef } from 'preact/hooks';

@@ -1,5 +1,5 @@
 /**
- * Vite config for @ac7/web.
+ * Vite config for @agentc7/web.
  *
  * Build output lands directly in `apps/server/public/` so Hono's
  * static-file middleware can serve it without a copy step. Dev mode

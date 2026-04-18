@@ -1,4 +1,4 @@
-import type { Role, Slot, Team, Teammate } from '@ac7/sdk/types';
+import type { Role, Slot, Team, Teammate } from '@agentc7/sdk/types';
 import { describe, expect, it } from 'vitest';
 import { composeBriefing } from '../src/briefing.js';
 

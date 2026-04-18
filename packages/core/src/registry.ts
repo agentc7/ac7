@@ -11,7 +11,7 @@
  * A mismatched identity surfaces as `AgentIdentityError`.
  */
 
-import type { Agent, Authority, Message } from '@ac7/sdk/types';
+import type { Agent, Authority, Message } from '@agentc7/sdk/types';
 
 export type Subscriber = (message: Message) => void | Promise<void>;
 

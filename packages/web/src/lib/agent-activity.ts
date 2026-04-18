@@ -24,8 +24,8 @@
  * pagination.
  */
 
-import { AgentActivityRowSchema } from '@ac7/sdk/schemas';
-import type { AgentActivityRow } from '@ac7/sdk/types';
+import { AgentActivityRowSchema } from '@agentc7/sdk/schemas';
+import type { AgentActivityRow } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { getClient } from './client.js';
 

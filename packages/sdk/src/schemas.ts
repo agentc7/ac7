@@ -2,7 +2,7 @@
  * Runtime validators for the ac7 wire protocol.
  *
  * Both the server and the client use these to validate messages crossing
- * the network boundary. Pulling from `@ac7/sdk/schemas` keeps zod
+ * the network boundary. Pulling from `@agentc7/sdk/schemas` keeps zod
  * as an explicit runtime dependency for consumers that want it.
  */
 

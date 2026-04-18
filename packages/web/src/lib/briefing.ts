@@ -7,7 +7,7 @@
  * endpoints that reload the SPA anyway.
  */
 
-import type { BriefingResponse } from '@ac7/sdk/types';
+import type { BriefingResponse } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { getClient } from './client.js';
 

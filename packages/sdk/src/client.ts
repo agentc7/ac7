@@ -1,8 +1,8 @@
 /**
- * `@ac7/sdk` runtime client.
+ * `@agentc7/sdk` runtime client.
  *
  * A thin, typed wrapper over the broker HTTP API. Validates every response
- * against `@ac7/sdk/schemas` so callers get either a validated,
+ * against `@agentc7/sdk/schemas` so callers get either a validated,
  * strongly-typed result or a `ClientError`.
  */
 

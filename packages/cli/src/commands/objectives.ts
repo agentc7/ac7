@@ -16,8 +16,8 @@
  */
 
 import { parseArgs } from 'node:util';
-import type { Client } from '@ac7/sdk/client';
-import type { Objective, ObjectiveStatus } from '@ac7/sdk/types';
+import type { Client } from '@agentc7/sdk/client';
+import type { Objective, ObjectiveStatus } from '@agentc7/sdk/types';
 import { UsageError } from './push.js';
 
 export async function runObjectivesCommand(client: Client, args: string[]): Promise<string> {

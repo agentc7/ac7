@@ -1,5 +1,5 @@
 /**
- * Entry point for @ac7/web. Renders the Preact app into #app
+ * Entry point for @agentc7/web. Renders the Preact app into #app
  * and pulls in UnoCSS + a minimal reset.
  *
  * Also registers the Phase 6 service worker via
