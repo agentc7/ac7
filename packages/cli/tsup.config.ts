@@ -14,4 +14,7 @@ export default defineConfig({
   define: {
     __PKG_VERSION__: JSON.stringify(pkg.version),
   },
+  // node-pty ships a native .node binding — keep it external so tsup
+  // doesn't try to bundle the platform-specific prebuild.
+  external: ['node-pty'],
 });

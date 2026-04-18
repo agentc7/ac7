@@ -10,6 +10,7 @@
 import type { Client as BrokerClient } from '@agentc7/sdk/client';
 import { MCP_CHANNEL_NOTIFICATION } from '@agentc7/sdk/protocol';
 import type { Message } from '@agentc7/sdk/types';
+import type { Presence } from './presence.js';
 import { formatAgentTimestamp } from './tools.js';
 
 /**
@@ -44,18 +45,35 @@ export interface ForwarderOptions {
    * acts on its own objective.
    */
   onObjectiveEvent?: (message: Message) => void;
+  /**
+   * Optional presence signal. Flipped to `connecting` before each
+   * subscribe attempt, `online` on first successful message, and
+   * `offline` when the stream errors or ends. The HUD uses this to
+   * drive the bottom-strip dot.
+   */
+  presence?: Presence;
 }
 
 export async function runForwarder(opts: ForwarderOptions): Promise<void> {
-  const { server, brokerClient, name, signal, log, onObjectiveEvent } = opts;
+  const { server, brokerClient, name, signal, log, onObjectiveEvent, presence } = opts;
   let backoff = BACKOFF_START_MS;
 
   while (!signal.aborted) {
     try {
       log('subscribing to broker', { name });
+      presence?.setConnecting();
       backoff = BACKOFF_START_MS;
 
-      for await (const message of brokerClient.subscribe(name, signal)) {
+      const stream = brokerClient.subscribe(name, signal);
+      // Presence flips to `online` optimistically as soon as subscribe
+      // returns an iterator — we don't wait for the first message
+      // because a quiet team with long heartbeat gaps would otherwise
+      // spin at `connecting` for 30s+ after a perfectly healthy
+      // subscribe. If the connection is actually dead, the iterator
+      // will throw on the first `.next()` and our catch below flips
+      // back to `offline`.
+      presence?.setOnline();
+      for await (const message of stream) {
         const isObjectiveEvent =
           typeof message.data === 'object' &&
           message.data !== null &&
@@ -85,8 +103,10 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
 
       // If we get here, the stream ended cleanly — treat as a reconnect.
       log('broker subscription stream ended, reconnecting');
+      presence?.setOffline();
     } catch (err) {
       if (signal.aborted) return;
+      presence?.setOffline();
       log('broker loop error', {
         error: err instanceof Error ? err.message : String(err),
       });

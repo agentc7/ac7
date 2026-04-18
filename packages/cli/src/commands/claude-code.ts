@@ -43,7 +43,10 @@ import {
   type McpConfigHandle,
   prepareMcpConfig,
 } from '../runtime/agents/claude-code.js';
+import { HUD_HEIGHT, startHud } from '../runtime/hud.js';
+import { createPresence } from '../runtime/presence.js';
 import { type RunnerHandle, RunnerStartupError, startRunner } from '../runtime/runner.js';
+import { createSessionLog } from '../runtime/session-log.js';
 import { UsageError } from './errors.js';
 
 export { UsageError };
@@ -88,9 +91,15 @@ export interface ClaudeCodeCommandInput {
   unsafeTls?: boolean;
 }
 
-function defaultLog(msg: string, ctx: Record<string, unknown> = {}): void {
-  const record = { ts: new Date().toISOString(), component: 'claude-code', msg, ...ctx };
-  process.stderr.write(`${JSON.stringify(record)}\n`);
+/**
+ * Decide whether this invocation should run inside a node-pty relay
+ * with the HUD strip at the bottom, or fall back to the older
+ * `stdio: 'inherit'` spawn. We need a TTY on both ends (stdin and
+ * stdout) to own the user's terminal; otherwise (tests, CI, piped
+ * input) we keep the old behavior so automation stays deterministic.
+ */
+function shouldUsePty(): boolean {
+  return process.stdout.isTTY === true && process.stdin.isTTY === true;
 }
 
 /**
@@ -101,7 +110,14 @@ function defaultLog(msg: string, ctx: Record<string, unknown> = {}): void {
  * state.
  */
 export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promise<number> {
-  const log = input.log ?? defaultLog;
+  // When the caller (tests, embedders) provides an explicit log, honor
+  // it unchanged. Otherwise auto-route: if stderr is a TTY we'll be
+  // running the pty + HUD path and stderr writes would corrupt claude's
+  // frame, so structured logs go to ~/.cache/agentc7/session-<pid>.log
+  // instead. `sessionLog.path` is printed on startup so the user
+  // can `tail -f` it for live diagnostics.
+  const ownedSessionLog = input.log ? null : createSessionLog({ component: 'claude-code' });
+  const log = input.log ?? (ownedSessionLog as NonNullable<typeof ownedSessionLog>).log;
   const url = input.url ?? process.env[ENV.url] ?? `http://127.0.0.1:${DEFAULT_PORT}`;
   const token = input.token ?? process.env[ENV.token];
   if (!token) {
@@ -125,19 +141,23 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
 
   // 2. Start the runner. If this fails we haven't touched `.mcp.json`
   //    yet either, so a failure here just propagates cleanly.
+  const presence = createPresence();
   let runner: RunnerHandle;
   try {
     runner = await startRunner({
       url,
       token,
       log,
+      presence,
       noTrace: input.noTrace,
       unsafeTls: input.unsafeTls,
     });
   } catch (err) {
     if (err instanceof RunnerStartupError) {
+      ownedSessionLog?.close();
       throw new UsageError(err.message);
     }
+    ownedSessionLog?.close();
     throw err;
   }
   log('claude-code: runner started', {
@@ -178,7 +198,8 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
     `ac7: runner cwd = ${cwd}\n` +
       `ac7: .mcp.json = ${mcpTargetPath}${
         mcpExistedPriorToRun ? ' (found — backing up and merging ac7 entry)' : ' (creating)'
-      }\n`,
+      }\n` +
+      (ownedSessionLog?.path ? `ac7: session log = ${ownedSessionLog.path}\n` : ''),
   );
 
   try {
@@ -201,14 +222,24 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
   }
   log('claude-code: .mcp.json prepared', { path: mcpHandle.path });
 
-  // 4. Spawn claude. Inherited stdio: the individual-contributor sees claude's TUI
-  //    directly in this terminal. We also forward SIGINT/SIGTERM to
-  //    claude so Ctrl+C cleanly kills the child before we tear down.
+  // 4. Spawn claude. In interactive sessions we route through a
+  //    node-pty relay so we can (a) reserve the bottom `HUD_HEIGHT`
+  //    rows for the ac7 status strip and (b) own the stream for
+  //    later features (e.g. injecting `/compact` on demand). When
+  //    stdout/stdin aren't TTYs (tests, piped input) we fall back
+  //    to `stdio: 'inherit'` so automation stays byte-for-byte
+  //    compatible.
   let teardownDone = false;
+  let closeHud: (() => void) | null = null;
   const teardown = async (reason: string): Promise<void> => {
     if (teardownDone) return;
     teardownDone = true;
     log('claude-code: tearing down', { reason });
+    try {
+      closeHud?.();
+    } catch {
+      /* ignore */
+    }
     try {
       mcpHandle.restore();
     } catch (err) {
@@ -221,6 +252,7 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
         error: err instanceof Error ? err.message : String(err),
       });
     });
+    ownedSessionLog?.close();
   };
 
   // Merge trace host env vars (ALL_PROXY / SSLKEYLOGFILE / NODE_OPTIONS)
@@ -310,6 +342,16 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
       `      (pass either flag yourself to suppress this line)\n\n`;
     process.stderr.write(banner);
   }
+  // Heads-up to the user: claude-code's ink fork blocks its first
+  // render on a terminal-capability probe (kitty-keyboard + DA1)
+  // whose reply never materializes under a pty relay, so nothing
+  // paints until it reads a byte from stdin. Any keypress works —
+  // Enter is just the least surprising. We forward the keystroke
+  // through to claude's stdin so the same Enter that unblocks the
+  // TUI becomes a no-op submit against the welcome prompt.
+  if (process.stdin.isTTY === true) {
+    process.stderr.write('ac7: press Enter to render the Claude Code TUI.\n\n');
+  }
 
   log('claude-code: spawning claude', {
     binary: claudeBinary,
@@ -318,28 +360,8 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
     cwd,
     nodeOptions: childEnv.NODE_OPTIONS,
     sslKeylogFile: childEnv.SSLKEYLOGFILE,
+    transport: shouldUsePty() ? 'pty' : 'inherit',
   });
-  const child = spawn(claudeBinary, finalClaudeArgs, {
-    cwd,
-    stdio: 'inherit',
-    env: childEnv,
-  });
-
-  // Forward signals to claude; claude exiting will trigger our
-  // teardown via the 'exit' handler below.
-  const forwardSignal = (signal: NodeJS.Signals): void => {
-    if (child.exitCode === null && child.signalCode === null) {
-      try {
-        child.kill(signal);
-      } catch {
-        /* ignore */
-      }
-    }
-  };
-  const onSigint = (): void => forwardSignal('SIGINT');
-  const onSigterm = (): void => forwardSignal('SIGTERM');
-  process.on('SIGINT', onSigint);
-  process.on('SIGTERM', onSigterm);
 
   // Last-ditch teardown if the node process itself is dying — we'd
   // rather the individual-contributor's `.mcp.json` be restored on an unhandled
@@ -348,8 +370,6 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
     log('claude-code: uncaught exception', {
       error: err instanceof Error ? (err.stack ?? err.message) : String(err),
     });
-    // Synchronous restore is fine here because mcpHandle.restore()
-    // doesn't await anything and the rest is best-effort.
     try {
       mcpHandle.restore();
     } catch {
@@ -359,16 +379,71 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
   process.on('uncaughtException', onUncaught);
   process.on('unhandledRejection', onUncaught);
 
-  const exitCode = await new Promise<number>((resolve) => {
+  let onSigint: () => void = () => {};
+  let onSigterm: () => void = () => {};
+
+  const exitCode = await new Promise<number>((resolvePromise) => {
+    if (shouldUsePty()) {
+      void runPty({
+        claudeBinary,
+        args: finalClaudeArgs,
+        cwd,
+        env: childEnv,
+        presence,
+        label: runner.briefing.name,
+        log,
+        onSigintRegister: (handler) => {
+          onSigint = handler;
+          process.on('SIGINT', onSigint);
+        },
+        onSigtermRegister: (handler) => {
+          onSigterm = handler;
+          process.on('SIGTERM', onSigterm);
+        },
+        onHudReady: (close) => {
+          closeHud = close;
+        },
+      })
+        .then(resolvePromise)
+        .catch((err) => {
+          log('claude-code: pty run failed', {
+            error: err instanceof Error ? err.message : String(err),
+          });
+          resolvePromise(1);
+        });
+      return;
+    }
+
+    // Fallback: stdio inherit. Used for tests and non-TTY contexts.
+    const child = spawn(claudeBinary, finalClaudeArgs, {
+      cwd,
+      stdio: 'inherit',
+      env: childEnv,
+    });
+
+    const forwardSignal = (signal: NodeJS.Signals): void => {
+      if (child.exitCode === null && child.signalCode === null) {
+        try {
+          child.kill(signal);
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    onSigint = (): void => forwardSignal('SIGINT');
+    onSigterm = (): void => forwardSignal('SIGTERM');
+    process.on('SIGINT', onSigint);
+    process.on('SIGTERM', onSigterm);
+
     child.on('exit', (code, signal) => {
       const resolved = code ?? (signal ? 128 + (signalNumber(signal) ?? 0) : 0);
-      resolve(resolved);
+      resolvePromise(resolved);
     });
     child.on('error', (err) => {
       log('claude-code: failed to spawn claude', {
         error: err instanceof Error ? err.message : String(err),
       });
-      resolve(1);
+      resolvePromise(1);
     });
   });
 
@@ -401,4 +476,148 @@ function signalNumber(signal: NodeJS.Signals): number | null {
     default:
       return null;
   }
+}
+
+interface RunPtyOptions {
+  claudeBinary: string;
+  args: string[];
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+  presence: ReturnType<typeof createPresence>;
+  label: string;
+  log: (msg: string, ctx?: Record<string, unknown>) => void;
+  onSigintRegister: (handler: () => void) => void;
+  onSigtermRegister: (handler: () => void) => void;
+  onHudReady: (close: () => void) => void;
+}
+
+/**
+ * Spawn claude via node-pty, relaying stdin/stdout and reserving the
+ * bottom `HUD_HEIGHT` rows for the ac7 status strip. Resolves with
+ * the child's exit code.
+ *
+ * Key mechanics:
+ *
+ *   - The pty we give claude reports `rows - HUD_HEIGHT` via
+ *     TIOCGWINSZ, so claude's ink renderer never paints into our
+ *     panel rows. We still redraw the HUD after every chunk because
+ *     claude's initial alt-screen entry issues `CSI 2J` which wipes
+ *     the entire screen buffer, including our strip.
+ *
+ *   - SIGWINCH on the parent recalculates size and issues
+ *     `pty.resize(cols, rows - HUD_HEIGHT)`. Claude picks up the new
+ *     dims on its next render tick.
+ *
+ *   - We import `node-pty` lazily so the rest of the CLI (push,
+ *     roster, setup, etc.) can run on systems where the native
+ *     prebuild didn't install cleanly. Only this verb needs it.
+ */
+async function runPty(opts: RunPtyOptions): Promise<number> {
+  const pty = await import('node-pty');
+
+  const getSize = (): { rows: number; cols: number } => ({
+    rows: process.stdout.rows ?? 24,
+    cols: process.stdout.columns ?? 80,
+  });
+
+  const { rows: realRows, cols: realCols } = getSize();
+  const ptyRows = Math.max(4, realRows - HUD_HEIGHT);
+  const ptyCols = realCols;
+
+  const term = pty.spawn(opts.claudeBinary, opts.args, {
+    name: opts.env.TERM ?? 'xterm-256color',
+    cwd: opts.cwd,
+    env: opts.env as { [key: string]: string },
+    cols: ptyCols,
+    rows: ptyRows,
+  });
+
+  const hud = startHud({
+    presence: opts.presence,
+    label: opts.label,
+  });
+  opts.onHudReady(hud.close);
+
+  // Forward pty output → stdout, re-painting the HUD after every
+  // chunk so `CSI 2J` / repaints from claude don't leave the panel
+  // stale.
+  term.onData((data) => {
+    process.stdout.write(data);
+    hud.redraw();
+  });
+
+  // Raw mode on stdin so individual keystrokes (arrow keys, Ctrl-C,
+  // etc.) reach claude without the parent's line discipline eating
+  // them. Restore cooked mode on exit. We attach the 'data' listener
+  // BEFORE calling resume(): if the terminal sends a response to a
+  // capability query claude fired during mount (DSR, DA, etc.),
+  // attaching late risks the response being emitted into a void
+  // and claude hanging on its own handshake.
+  const stdin = process.stdin;
+  const wasRaw = stdin.isRaw;
+  const forwardInput = (data: Buffer | string): void => {
+    try {
+      term.write(typeof data === 'string' ? data : data.toString('utf8'));
+    } catch {
+      /* term may have exited */
+    }
+  };
+  stdin.on('data', forwardInput);
+  if (stdin.isTTY) {
+    try {
+      stdin.setRawMode(true);
+    } catch {
+      /* some TTYs (e.g. some CI runners) don't support raw mode */
+    }
+  }
+  stdin.resume();
+
+  const onResize = (): void => {
+    const { rows, cols } = getSize();
+    try {
+      term.resize(cols, Math.max(4, rows - HUD_HEIGHT));
+    } catch {
+      /* ignore race with pty exit */
+    }
+    hud.redraw();
+  };
+  process.stdout.on('resize', onResize);
+
+  opts.onSigintRegister(() => {
+    try {
+      term.kill('SIGINT');
+    } catch {
+      /* ignore */
+    }
+  });
+  opts.onSigtermRegister(() => {
+    try {
+      term.kill('SIGTERM');
+    } catch {
+      /* ignore */
+    }
+  });
+
+  const exitCode = await new Promise<number>((resolvePromise) => {
+    term.onExit(({ exitCode: code, signal }) => {
+      const resolved = code ?? (signal ? 128 + signal : 0);
+      resolvePromise(resolved);
+    });
+  });
+
+  // Stop forwarding stdin and restore cooked mode so the user's
+  // shell doesn't inherit raw-mode terminal state after we exit.
+  stdin.off('data', forwardInput);
+  if (stdin.isTTY) {
+    try {
+      stdin.setRawMode(wasRaw ?? false);
+    } catch {
+      /* ignore */
+    }
+  }
+  stdin.pause();
+  process.stdout.off('resize', onResize);
+  hud.close();
+
+  return exitCode;
 }
