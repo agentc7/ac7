@@ -36,4 +36,3 @@
 - [ ] `pnpm typecheck` is clean
 - [ ] `pnpm test` passes
 - [ ] Docs/README updated if user-facing behavior changed
-- [ ] I've added myself to `AUTHORS` if this is my first contribution
