@@ -90,6 +90,7 @@ a {
 /* ─────────────────────────── BASE ─────────────────────────── */
 html {
   scroll-behavior: smooth;
+  height: 100%;
 }
 body {
   background:
@@ -102,7 +103,23 @@ body {
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
-  overflow-x: hidden;
+  overflow: hidden;
+  height: 100%;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  overscroll-behavior: none;
+  position: fixed;
+  width: 100%;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
 }
 
 body::before {

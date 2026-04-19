@@ -190,34 +190,40 @@ export function Shell() {
   const mountErr = mountError.value;
 
   return (
-    <main class="h-screen flex flex-col">
+    <>
       <Header />
-      {mountErr !== null && (
-        <div role="alert" class="callout warn flex-shrink-0" style="border-radius:0">
-          <div class="icon" aria-hidden="true">
-            ◆
-          </div>
-          <div class="body">
-            <div class="title">Some panels failed to load</div>
-            <div class="msg">{mountErr}</div>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              mountError.value = null;
-            }}
-            aria-label="Dismiss"
-            class="close"
+      <main class="flex flex-col min-h-0 flex-1 overflow-hidden">
+        {mountErr !== null && (
+          <div
+            role="alert"
+            class="callout warn flex-shrink-0"
+            style="border-radius:0;overflow-y:auto"
           >
-            ×
-          </button>
+            <div class="icon" aria-hidden="true">
+              ◆
+            </div>
+            <div class="body">
+              <div class="title">Some panels failed to load</div>
+              <div class="msg">{mountErr}</div>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                mountError.value = null;
+              }}
+              aria-label="Dismiss"
+              class="close"
+            >
+              ×
+            </button>
+          </div>
+        )}
+        <div class="flex flex-1 min-h-0 overflow-hidden">
+          <Sidebar viewer={s.slot} />
+          <section class="flex-1 flex flex-col min-w-0 min-h-0">{renderView(v, s.slot)}</section>
         </div>
-      )}
-      <div class="flex flex-1 min-h-0">
-        <Sidebar viewer={s.slot} />
-        <section class="flex-1 flex flex-col min-w-0">{renderView(v, s.slot)}</section>
-      </div>
-    </main>
+      </main>
+    </>
   );
 }
 

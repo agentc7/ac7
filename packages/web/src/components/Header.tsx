@@ -26,7 +26,7 @@ export function Header() {
 
   return (
     <header
-      class="flex items-center justify-between gap-3 flex-shrink-0 relative z-50"
+      class="flex items-center justify-between gap-3 flex-shrink-0 relative z-40"
       style="background:var(--paper);border-bottom:1px solid var(--rule);padding:12px max(0.75rem,env(safe-area-inset-right)) 12px max(0.75rem,env(safe-area-inset-left));padding-top:max(0.75rem,env(safe-area-inset-top))"
     >
       <div class="flex items-center gap-3 sm:gap-4 min-w-0">
