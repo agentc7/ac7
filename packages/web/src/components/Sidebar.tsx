@@ -134,7 +134,10 @@ export function Sidebar({ viewer }: SidebarProps) {
         </div>
 
         {/* ── Team section (Team Chat + DMs) ──────────────────── */}
-        <ul class="flex-1 overflow-y-auto" style="padding:12px 0 8px;list-style:none;margin:0;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation">
+        <ul
+          class="flex-1 overflow-y-auto"
+          style="padding:12px 0 8px;list-style:none;margin:0;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation"
+        >
           <li>
             <p class="eyebrow" style="padding:0 12px 6px">
               Team

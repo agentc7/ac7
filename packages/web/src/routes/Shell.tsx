@@ -194,7 +194,11 @@ export function Shell() {
       <Header />
       <main class="flex flex-col min-h-0 flex-1 overflow-hidden">
         {mountErr !== null && (
-          <div role="alert" class="callout warn flex-shrink-0" style="border-radius:0;overflow-y:auto">
+          <div
+            role="alert"
+            class="callout warn flex-shrink-0"
+            style="border-radius:0;overflow-y:auto"
+          >
             <div class="icon" aria-hidden="true">
               ◆
             </div>
