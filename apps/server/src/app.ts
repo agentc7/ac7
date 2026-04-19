@@ -16,7 +16,7 @@
  * MCP link) or `Cookie: ac7_session=<id>` (human plane, web SPA).
  * Both resolve to the same `LoadedSlot`, which downstream handlers
  * use to stamp authoritative `from` on pushes and to gate identity
- * checks on subscribe. All routes must carry `X-C17-Protocol: 1` if
+ * checks on subscribe. All routes must carry `X-AC7-Protocol: 1` if
  * the header is present.
  */
 

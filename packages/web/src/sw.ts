@@ -59,7 +59,7 @@ self.addEventListener('message', (event) => {
  * TS interface rather than imported so the worker bundle doesn't
  * need to pull in server-side modules.
  */
-interface C17PushPayload {
+interface Ac7PushPayload {
   title: string;
   body: string;
   tag: string;
@@ -69,9 +69,9 @@ interface C17PushPayload {
 }
 
 self.addEventListener('push', (event) => {
-  let payload: C17PushPayload;
+  let payload: Ac7PushPayload;
   try {
-    payload = (event.data?.json() as C17PushPayload) ?? fallbackPayload();
+    payload = (event.data?.json() as Ac7PushPayload) ?? fallbackPayload();
   } catch {
     payload = fallbackPayload();
   }
@@ -164,7 +164,7 @@ self.addEventListener('pushsubscriptionchange', (event) => {
   );
 });
 
-function fallbackPayload(): C17PushPayload {
+function fallbackPayload(): Ac7PushPayload {
   return {
     title: 'ac7',
     body: 'new activity on the net',
