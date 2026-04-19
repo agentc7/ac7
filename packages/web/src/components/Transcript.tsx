@@ -88,7 +88,7 @@ export function Transcript({ viewer }: TranscriptProps) {
         aria-live="polite"
         aria-atomic="false"
         class="flex-1 overflow-y-auto"
-        style="background:var(--paper);padding:18px max(0.75rem,env(safe-area-inset-right)) 18px max(0.75rem,env(safe-area-inset-left))"
+        style="background:var(--paper);padding:18px max(0.75rem,env(safe-area-inset-right)) 18px max(0.75rem,env(safe-area-inset-left));-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation"
       >
         {messages.length === 0 ? (
           <EmptyState threadKey={threadKey} />

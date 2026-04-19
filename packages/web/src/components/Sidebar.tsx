@@ -101,7 +101,7 @@ export function Sidebar({ viewer }: SidebarProps) {
       <nav
         class={`flex-shrink-0 flex-col
           md:static md:flex md:w-52 md:translate-x-0 md:shadow-none md:z-0
-          fixed inset-y-0 left-0 z-40 w-[85vw] max-w-72 transition-transform duration-200
+          fixed inset-y-0 left-0 z-50 w-[85vw] max-w-72 transition-transform duration-200
           ${drawerOpen ? 'translate-x-0 flex shadow-2xl' : '-translate-x-full hidden md:flex md:-translate-x-0'}`}
         style="background:var(--paper);border-right:1px solid var(--rule);padding-left:env(safe-area-inset-left);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)"
       >
@@ -134,7 +134,7 @@ export function Sidebar({ viewer }: SidebarProps) {
         </div>
 
         {/* ── Team section (Team Chat + DMs) ──────────────────── */}
-        <ul class="flex-1 overflow-y-auto" style="padding:12px 0 8px;list-style:none;margin:0">
+        <ul class="flex-1 overflow-y-auto" style="padding:12px 0 8px;list-style:none;margin:0;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation">
           <li>
             <p class="eyebrow" style="padding:0 12px 6px">
               Team

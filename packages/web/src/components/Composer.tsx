@@ -120,16 +120,18 @@ export function Composer({ viewer }: ComposerProps) {
   const onFocus = () => {
     const el = textareaRef.current;
     if (!el) return;
-    // Defer one frame — iOS adjusts the viewport after focus fires.
+    // On iOS, defer scroll to let the soft keyboard settle, but don't
+    // smooth-scroll since it can fight the viewport shift. Instant scroll
+    // is less jarring on mobile with dynamic address bar.
     setTimeout(() => {
-      el.scrollIntoView({ behavior: 'smooth', block: 'end' });
-    }, 100);
+      el.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+    }, 300);
   };
 
   return (
     <div
       class="flex-shrink-0"
-      style="background:var(--ice);border-top:1px solid var(--rule);padding:12px max(0.75rem,env(safe-area-inset-right)) max(0.75rem,env(safe-area-inset-bottom)) max(0.75rem,env(safe-area-inset-left))"
+      style="background:var(--ice);border-top:1px solid var(--rule);padding:12px max(0.75rem,env(safe-area-inset-right)) max(0.75rem,env(safe-area-inset-bottom)) max(0.75rem,env(safe-area-inset-left));overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation"
     >
       {sendError.value && (
         <div role="alert" class="callout err" style="margin-bottom:10px;padding:10px 12px">
