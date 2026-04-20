@@ -39,6 +39,7 @@ const PROXIED_PATHS = [
   '/session',
   '/objectives',
   '/agents',
+  '/fs',
 ];
 
 export default defineConfig({
