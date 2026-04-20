@@ -12,8 +12,8 @@
  * session cookie, and caching). No SPA-side blob buffering.
  */
 
-import type { Attachment } from '@agentc7/sdk/types';
 import { FS_PATHS } from '@agentc7/sdk/protocol';
+import type { Attachment } from '@agentc7/sdk/types';
 
 export interface MessageAttachmentsProps {
   attachments: Attachment[];

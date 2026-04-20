@@ -33,10 +33,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function stubActivity(
-  body: ListActivityResponse | Record<string, unknown>,
-  status = 200,
-): void {
+function stubActivity(body: ListActivityResponse | Record<string, unknown>, status = 200): void {
   globalThis.fetch = (() =>
     Promise.resolve(
       new Response(JSON.stringify(body), {

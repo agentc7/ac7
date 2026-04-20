@@ -38,9 +38,7 @@ export async function runUserCommand(
 ): Promise<void> {
   const [sub, ...rest] = args;
   if (!sub || sub === '-h' || sub === '--help') {
-    throw new UsageError(
-      'user subcommand required. Use: list | create | update | delete',
-    );
+    throw new UsageError('user subcommand required. Use: list | create | update | delete');
   }
   switch (sub) {
     case 'list':
@@ -112,9 +110,7 @@ async function runCreate(args: string[], stdout: (line: string) => void): Promis
     );
   }
   if (!userTypeRaw) {
-    throw new UsageError(
-      `user create: --user-type <${USER_TYPES.join('|')}> is required`,
-    );
+    throw new UsageError(`user create: --user-type <${USER_TYPES.join('|')}> is required`);
   }
   const userType = assertUserType(userTypeRaw);
   if (!NAME_REGEX.test(role)) {
@@ -333,9 +329,7 @@ async function loadConfig(
 
 function assertUserType(v: string): CliUserType {
   if ((USER_TYPES as readonly string[]).includes(v)) return v as CliUserType;
-  throw new UsageError(
-    `unknown --user-type '${v}'. Must be one of: ${USER_TYPES.join(', ')}.`,
-  );
+  throw new UsageError(`unknown --user-type '${v}'. Must be one of: ${USER_TYPES.join(', ')}.`);
 }
 
 function inferDefaultRole(userType: string | undefined): string {

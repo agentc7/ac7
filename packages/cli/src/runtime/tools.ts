@@ -108,7 +108,7 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
             type: 'array',
             items: { type: 'string' },
             description:
-              "Optional list of file paths to attach. Each must already exist and be readable to you.",
+              'Optional list of file paths to attach. Each must already exist and be readable to you.',
           },
         },
         required: ['to', 'body'],
@@ -906,7 +906,11 @@ async function handleObjectivesCreate(
   brokerClient: BrokerClient,
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
-  if (briefing.userType !== 'admin' && (briefing.userType !== 'operator' && briefing.userType !== 'lead-agent')) {
+  if (
+    briefing.userType !== 'admin' &&
+    briefing.userType !== 'operator' &&
+    briefing.userType !== 'lead-agent'
+  ) {
     return errorResult('objectives_create: requires director or manager authority on the team');
   }
   const title = typeof args.title === 'string' ? args.title.trim() : '';
@@ -951,7 +955,11 @@ async function handleObjectivesCancel(
   brokerClient: BrokerClient,
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
-  if (briefing.userType !== 'admin' && (briefing.userType !== 'operator' && briefing.userType !== 'lead-agent')) {
+  if (
+    briefing.userType !== 'admin' &&
+    briefing.userType !== 'operator' &&
+    briefing.userType !== 'lead-agent'
+  ) {
     return errorResult('objectives_cancel: requires director or manager authority on the team');
   }
   const id = typeof args.id === 'string' ? args.id : '';
@@ -966,7 +974,11 @@ async function handleObjectivesWatchers(
   brokerClient: BrokerClient,
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
-  if (briefing.userType !== 'admin' && (briefing.userType !== 'operator' && briefing.userType !== 'lead-agent')) {
+  if (
+    briefing.userType !== 'admin' &&
+    briefing.userType !== 'operator' &&
+    briefing.userType !== 'lead-agent'
+  ) {
     return errorResult('objectives_watchers: requires director or manager authority on the team');
   }
   const id = typeof args.id === 'string' ? args.id : '';
@@ -1032,9 +1044,7 @@ async function handleFsLs(
   if (entries.length === 0) {
     return textResult(`${raw}: (empty)`);
   }
-  return textResult(
-    `${raw}:\n${entries.map((e) => `  ${formatFsEntry(e)}`).join('\n')}`,
-  );
+  return textResult(`${raw}:\n${entries.map((e) => `  ${formatFsEntry(e)}`).join('\n')}`);
 }
 
 async function handleFsStat(
@@ -1083,7 +1093,8 @@ async function handleFsWrite(
   if (collideRaw !== 'error' && collideRaw !== 'overwrite' && collideRaw !== 'suffix') {
     return errorResult(`fs_write: invalid collide strategy '${collideRaw}'`);
   }
-  const source = text !== undefined ? Buffer.from(text, 'utf8') : Buffer.from(b64 as string, 'base64');
+  const source =
+    text !== undefined ? Buffer.from(text, 'utf8') : Buffer.from(b64 as string, 'base64');
   const result = await brokerClient.fsWrite({
     path,
     mimeType,

@@ -12,9 +12,9 @@ import {
   hashToken,
   loadTeamConfigFromFile,
   rotateUserToken,
-  UserLoadError,
   setKek,
   TOKEN_HASH_PREFIX,
+  UserLoadError,
   writeTeamConfig,
 } from '../src/slots.js';
 
@@ -51,7 +51,7 @@ const SAMPLE_TEAM: Team = {
 };
 
 const SAMPLE_ROLES: Record<string, Role> = {
-  'agent': {
+  agent: {
     description: 'Directs the team.',
     instructions: 'Lead.',
   },
@@ -400,7 +400,7 @@ describe('loadTeamConfigFromFile', () => {
     expect(config.store.resolve('ac7_impl_secret')?.role).toBe('implementer');
     expect(config.migrated).toBe(0);
     expect(config.team).toEqual(SAMPLE_TEAM);
-    expect(config.roles['agent']?.description).toContain('team');
+    expect(config.roles.agent?.description).toContain('team');
     expect(readFileSync(path, 'utf8')).toBe(original);
   });
 
@@ -542,7 +542,7 @@ describe('writeTeamConfig', () => {
       users: Array<{ token?: string; tokenHash?: string }>;
     };
     expect(body.team).toEqual(SAMPLE_TEAM);
-    expect(body.roles['agent']?.description).toContain('team');
+    expect(body.roles.agent?.description).toContain('team');
     for (const slot of body.users) {
       expect(slot.token).toBeUndefined();
       expect(slot.tokenHash).toMatch(/^sha256:/);

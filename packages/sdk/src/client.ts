@@ -451,10 +451,7 @@ export class Client {
    * `kind=llm_exchange` to pull the LLM calls made during an
    * objective's lifetime.
    */
-  async listActivity(
-    name: string,
-    query: ListActivityQuery = {},
-  ): Promise<ActivityRow[]> {
+  async listActivity(name: string, query: ListActivityQuery = {}): Promise<ActivityRow[]> {
     const params = new URLSearchParams();
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
@@ -592,11 +589,7 @@ export class Client {
     const resp = await this.request(FS_PATHS.read(path), { method: 'GET' });
     if (!resp.ok) {
       const text = await resp.text().catch(() => '');
-      throw new ClientError(
-        `fsRead failed: ${resp.status} ${resp.statusText}`,
-        resp.status,
-        text,
-      );
+      throw new ClientError(`fsRead failed: ${resp.status} ${resp.statusText}`, resp.status, text);
     }
     return resp.blob();
   }

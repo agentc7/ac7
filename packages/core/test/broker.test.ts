@@ -1,6 +1,6 @@
 import type { Message } from '@agentc7/sdk/types';
 import { describe, expect, it, vi } from 'vitest';
-import { PresenceIdentityError, Broker, InMemoryEventLog } from '../src/index.js';
+import { Broker, InMemoryEventLog, PresenceIdentityError } from '../src/index.js';
 
 function makeBroker(overrides: { idFactory?: () => string; now?: () => number } = {}) {
   const eventLog = new InMemoryEventLog();

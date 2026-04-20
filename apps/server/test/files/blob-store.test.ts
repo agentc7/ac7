@@ -56,9 +56,9 @@ describe('LocalBlobStore', () => {
 
   it('rejects uploads over maxSize mid-stream', async () => {
     const store = makeStore();
-    await expect(
-      store.putFromBuffer(Buffer.alloc(2048), { maxSize: 1024 }),
-    ).rejects.toMatchObject({ code: 'too_large' });
+    await expect(store.putFromBuffer(Buffer.alloc(2048), { maxSize: 1024 })).rejects.toMatchObject({
+      code: 'too_large',
+    });
   });
 
   it('delete is idempotent', async () => {

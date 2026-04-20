@@ -212,10 +212,12 @@ describe('SqliteFilesystemStore', () => {
       });
       expect(store.list('/', alice).map((e) => e.name)).toEqual(['alice']);
       expect(store.list('/', bob).map((e) => e.name)).toEqual(['bob']);
-      expect(store.list('/', viewer('diana', 'admin')).map((e) => e.name).sort()).toEqual([
-        'alice',
-        'bob',
-      ]);
+      expect(
+        store
+          .list('/', viewer('diana', 'admin'))
+          .map((e) => e.name)
+          .sort(),
+      ).toEqual(['alice', 'bob']);
     });
 
     it('lists children of a directory sorted dirs-first then alpha', async () => {
@@ -341,7 +343,10 @@ describe('SqliteFilesystemStore', () => {
       // Extra duplicate grant via a different message — should dedupe.
       store.grant('/alice/one.txt', 'bob', 'msg-3');
 
-      const shared = store.listShared(viewer('bob')).map((e) => e.path).sort();
+      const shared = store
+        .listShared(viewer('bob'))
+        .map((e) => e.path)
+        .sort();
       expect(shared).toEqual(['/alice/one.txt', '/alice/two.txt']);
     });
   });

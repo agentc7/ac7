@@ -38,15 +38,11 @@ describe('threadKeyOf', () => {
   });
 
   it('inbound DM is keyed by the sender name', () => {
-    expect(threadKeyOf(msg({ to: 'ACTUAL', from: 'build-bot' }), 'ACTUAL')).toBe(
-      'dm:build-bot',
-    );
+    expect(threadKeyOf(msg({ to: 'ACTUAL', from: 'build-bot' }), 'ACTUAL')).toBe('dm:build-bot');
   });
 
   it('outbound DM is keyed by the recipient name', () => {
-    expect(threadKeyOf(msg({ to: 'build-bot', from: 'ACTUAL' }), 'ACTUAL')).toBe(
-      'dm:build-bot',
-    );
+    expect(threadKeyOf(msg({ to: 'build-bot', from: 'ACTUAL' }), 'ACTUAL')).toBe('dm:build-bot');
   });
 
   it('self-DM gets its own key', () => {

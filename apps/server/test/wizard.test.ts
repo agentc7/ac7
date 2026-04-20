@@ -207,17 +207,7 @@ describe('runFirstRunWizard', () => {
 
   it('aborts with UserLoadError after repeated bad TOTP codes', async () => {
     const configPath = tmpConfigPath();
-    const io = mockIO([
-      '',
-      'Ship',
-      '',
-      '',
-      '',
-      '',
-      '000000',
-      '111111',
-      '222222',
-    ]);
+    const io = mockIO(['', 'Ship', '', '', '', '', '000000', '111111', '222222']);
     await expect(runFirstRunWizard(wizardOpts(configPath, io))).rejects.toBeInstanceOf(
       UserLoadError,
     );

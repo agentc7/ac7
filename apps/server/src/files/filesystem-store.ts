@@ -27,8 +27,8 @@
  * as directories if they don't exist yet.
  */
 
-import type { UserType, FsEntry } from '@agentc7/sdk/types';
 import type { Readable } from 'node:stream';
+import type { FsEntry, UserType } from '@agentc7/sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from '../db.js';
 import type { BlobStore } from './blob-store.js';
 import { FsError } from './errors.js';
@@ -196,7 +196,7 @@ class SqliteFilesystemStore implements FilesystemStore {
       "SELECT * FROM fs_entries WHERE parent_path = ? ORDER BY kind='file', name",
     );
     this.listDescendantsStmt = this.db.prepare(
-      "SELECT * FROM fs_entries WHERE path = ? OR path LIKE ? ORDER BY length(path) DESC",
+      'SELECT * FROM fs_entries WHERE path = ? OR path LIKE ? ORDER BY length(path) DESC',
     );
     this.listSharedStmt = this.db.prepare(
       `SELECT DISTINCT e.* FROM fs_entries e
@@ -280,9 +280,7 @@ class SqliteFilesystemStore implements FilesystemStore {
       // than eagerly materializing homes for every user on the team.
       const rows = this.listHomesStmt.all() as unknown as FsEntryRow[];
       if (viewer.userType === 'admin') return rows.map(rowToEntry);
-      return rows
-        .filter((r) => r.owner === viewer.name)
-        .map(rowToEntry);
+      return rows.filter((r) => r.owner === viewer.name).map(rowToEntry);
     }
 
     if (viewer.userType !== 'admin' && !this.ownsPath(normalized, viewer)) {
@@ -536,7 +534,9 @@ class SqliteFilesystemStore implements FilesystemStore {
       // grant table's PK includes granted_via so we do this as an
       // insert-with-select + delete-old.
       this.db
-        .prepare('INSERT INTO fs_grants (path, viewer, granted_at, granted_via) SELECT ?, viewer, granted_at, granted_via FROM fs_grants WHERE path = ?')
+        .prepare(
+          'INSERT INTO fs_grants (path, viewer, granted_at, granted_via) SELECT ?, viewer, granted_at, granted_via FROM fs_grants WHERE path = ?',
+        )
         .run(dst, src);
       this.deleteGrantsForPathStmt.run(src);
     });

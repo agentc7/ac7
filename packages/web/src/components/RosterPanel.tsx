@@ -113,9 +113,7 @@ export function RosterPanel({ viewer }: RosterPanelProps) {
                         (you)
                       </span>
                     )}
-                    <span class={userTypeBadgeClass(t.userType)}>
-                      {formatUserType(t.userType)}
-                    </span>
+                    <span class={userTypeBadgeClass(t.userType)}>{formatUserType(t.userType)}</span>
                   </div>
                   <div style="font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase">
                     {t.role}

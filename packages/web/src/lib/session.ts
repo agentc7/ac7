@@ -11,7 +11,7 @@
  * transitions stay auditable in one place.
  */
 
-import type { UserType, SessionResponse } from '@agentc7/sdk/types';
+import type { SessionResponse, UserType } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { getClient } from './client.js';
 

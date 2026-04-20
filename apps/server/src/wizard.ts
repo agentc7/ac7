@@ -22,8 +22,8 @@ import qrcodeTerminal from 'qrcode-terminal';
 import {
   createUserStore,
   defaultHttpsConfig,
-  UserLoadError,
   type TeamConfig,
+  UserLoadError,
   writeTeamConfig,
 } from './slots.js';
 import { generateSecret, otpauthUri, verifyCode } from './totp.js';
@@ -218,8 +218,12 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Team
   io.println('');
   io.println('Next steps:');
   io.println(`  • Sign in at the web UI as ${admin.name} with the 6-digit code from your`);
-  io.println('    authenticator app and use the Users page to add operators / lead-agents / agents.');
-  io.println('  • Or run `ac7 user create --name <name> --type agent --role implementer` from the CLI.');
+  io.println(
+    '    authenticator app and use the Users page to add operators / lead-agents / agents.',
+  );
+  io.println(
+    '  • Or run `ac7 user create --name <name> --type agent --role implementer` from the CLI.',
+  );
   io.println('');
 
   const store = createUserStore([
@@ -313,7 +317,7 @@ async function promptRole(io: WizardIO): Promise<string> {
       io.println(
         `  note: '${candidate}' is a custom role — the generated config ships with ` +
           `${defaultNames}. The wizard will add a placeholder roles.${candidate} entry ` +
-          "you can edit later.",
+          'you can edit later.',
       );
     }
     return candidate;

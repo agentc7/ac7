@@ -21,9 +21,9 @@ import {
   exampleConfig,
   type HttpsConfig,
   loadTeamConfigFromFile,
-  UserLoadError,
   setKek,
   type TeamConfig,
+  UserLoadError,
 } from './slots.js';
 import { createTtyWizardIO, runFirstRunWizard } from './wizard.js';
 

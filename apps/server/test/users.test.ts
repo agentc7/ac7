@@ -280,7 +280,7 @@ describe('DELETE /users/:name', () => {
 });
 
 describe('POST /users/:name/rotate-token', () => {
-  it('admin rotates another user\'s token and the old token stops resolving', async () => {
+  it("admin rotates another user's token and the old token stops resolving", async () => {
     const { app, persistUsers } = makeApp();
     const res = await app.request('/users/scout/rotate-token', {
       method: 'POST',

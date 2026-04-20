@@ -232,9 +232,7 @@ class SqliteActivityStore implements CoreActivityStore {
  */
 export type SqliteActivityStoreHandle = SqliteActivityStore;
 
-export function createSqliteActivityStore(
-  db: DatabaseSyncInstance,
-): SqliteActivityStoreHandle {
+export function createSqliteActivityStore(db: DatabaseSyncInstance): SqliteActivityStoreHandle {
   return new SqliteActivityStore(db);
 }
 

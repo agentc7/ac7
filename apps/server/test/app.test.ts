@@ -190,10 +190,7 @@ describe('app POST /push', () => {
       received.push(m);
     });
 
-    const res = await app.request(
-      '/push',
-      authed(OP_TOKEN, { to: 'build-bot', body: 'hello' }),
-    );
+    const res = await app.request('/push', authed(OP_TOKEN, { to: 'build-bot', body: 'hello' }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       delivery: { sse: number; targets: number };
@@ -220,10 +217,7 @@ describe('app POST /push', () => {
       botInbox.push(m);
     });
 
-    const res = await app.request(
-      '/push',
-      authed(OP_TOKEN, { to: 'build-bot', body: 'status?' }),
-    );
+    const res = await app.request('/push', authed(OP_TOKEN, { to: 'build-bot', body: 'status?' }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { delivery: { sse: number; targets: number } };
     expect(body.delivery.targets).toBe(1);
@@ -269,10 +263,7 @@ describe('app POST /push', () => {
   it('treats explicit to: null as a broadcast', async () => {
     const { app, broker } = makeApp();
     await broker.register('a1');
-    const res = await app.request(
-      '/push',
-      authed(OP_TOKEN, { to: null, body: 'null-target' }),
-    );
+    const res = await app.request('/push', authed(OP_TOKEN, { to: null, body: 'null-target' }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       delivery: { targets: number };

@@ -52,9 +52,7 @@ export async function runServeCommand(
     host,
     dbPath,
     ...(config.files?.root !== undefined ? { filesRoot: config.files.root } : {}),
-    ...(config.files?.maxFileSize !== undefined
-      ? { maxFileSize: config.files.maxFileSize }
-      : {}),
+    ...(config.files?.maxFileSize !== undefined ? { maxFileSize: config.files.maxFileSize } : {}),
     onListen: (info) => {
       stdout(
         `ac7-server listening on http://${info.address}:${info.port}\n` +

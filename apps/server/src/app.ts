@@ -56,9 +56,9 @@ import type {
   Role,
   Team,
   Teammate,
+  UserType,
 } from '@agentc7/sdk/types';
 import { isHuman } from '@agentc7/sdk/types';
-import type { UserType } from '@agentc7/sdk/types';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { type Context, Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
@@ -66,7 +66,7 @@ import { streamSSE } from 'hono/streaming';
 import type { ActivityStore } from './agent-activity.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
-import { FsError, type FilesystemStore, type ViewerContext } from './files/index.js';
+import { type FilesystemStore, FsError, type ViewerContext } from './files/index.js';
 import type { Logger } from './logger.js';
 import { ObjectivesError, type ObjectivesStore } from './objectives.js';
 import type { PushSubscriptionStore } from './push/store.js';
@@ -74,9 +74,9 @@ import { SESSION_COOKIE_NAME, SESSION_TTL_MS, type SessionStore } from './sessio
 import {
   generateUserToken,
   type LoadedUser,
-  type UserStore,
-  UserLoadError,
   teammatesFromUsers,
+  UserLoadError,
+  type UserStore,
 } from './slots.js';
 import { generateSecret, otpauthUri, verifyCode as verifyTotpCode } from './totp.js';
 
@@ -743,10 +743,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
 
       if (user.userType === 'agent') {
         if (filter.assignee && filter.assignee !== user.name) {
-          return c.json(
-            { error: 'agents may only list their own objectives' },
-            403,
-          );
+          return c.json({ error: 'agents may only list their own objectives' }, 403);
         }
         // Default scope for an agent: assigned OR originated OR watching.
         // App-level filter on the full list is fine at team scale
@@ -781,8 +778,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       ) {
         return c.json(
           {
-            error:
-              'agents may only view objectives they are assigned, originated, or watching',
+            error: 'agents may only view objectives they are assigned, originated, or watching',
           },
           403,
         );
@@ -823,14 +819,12 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         files,
       );
       if (!createAttachmentsResult.ok) {
-        return c.json(
-          { error: createAttachmentsResult.error },
-          createAttachmentsResult.status,
-        );
+        return c.json({ error: createAttachmentsResult.error }, createAttachmentsResult.status);
       }
-      const inputWithCanonical = createAttachmentsResult.canonical.length > 0
-        ? { ...parsed.data, attachments: createAttachmentsResult.canonical }
-        : parsed.data;
+      const inputWithCanonical =
+        createAttachmentsResult.canonical.length > 0
+          ? { ...parsed.data, attachments: createAttachmentsResult.canonical }
+          : parsed.data;
       try {
         const { objective: created, events } = objectives.create(inputWithCanonical, user.name);
         logger.info('objective created', {
@@ -845,13 +839,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         // call covers everyone who should see these files.
         if (files && created.attachments.length > 0) {
           const members = objectiveThreadMembers(created);
-          grantAttachmentsTo(
-            files,
-            created.attachments,
-            members,
-            `obj:${created.id}`,
-            logger,
-          );
+          grantAttachmentsTo(files, created.attachments, members, `obj:${created.id}`, logger);
         }
         queueMicrotask(() => {
           for (const ev of events) {
@@ -938,7 +926,9 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       const isLeadLike = user.userType === 'operator' || user.userType === 'lead-agent';
       if (!(isAdmin || (isLeadLike && isOriginator))) {
         return c.json(
-          { error: 'only the originating operator/lead-agent or an admin may cancel this objective' },
+          {
+            error: 'only the originating operator/lead-agent or an admin may cancel this objective',
+          },
           403,
         );
       }
@@ -1068,13 +1058,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
             }
           }
           if (addedNames.length > 0) {
-            grantAttachmentsTo(
-              files,
-              updated.attachments,
-              addedNames,
-              `obj:${updated.id}`,
-              logger,
-            );
+            grantAttachmentsTo(files, updated.attachments, addedNames, `obj:${updated.id}`, logger);
           }
         }
         queueMicrotask(() => {
@@ -1131,10 +1115,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         files,
       );
       if (!discussAttachmentsResult.ok) {
-        return c.json(
-          { error: discussAttachmentsResult.error },
-          discussAttachmentsResult.status,
-        );
+        return c.json({ error: discussAttachmentsResult.error }, discussAttachmentsResult.status);
       }
       const discussAttachments = discussAttachmentsResult.canonical;
 
@@ -1450,10 +1431,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       const isSelf = name === user.name;
       const isAdmin = user.userType === 'admin';
       if (!isSelf && !isAdmin) {
-        return c.json(
-          { error: 'only the user itself or an admin may stream this activity' },
-          403,
-        );
+        return c.json({ error: 'only the user itself or an admin may stream this activity' }, 403);
       }
       return streamSSE(c, async (stream) => {
         const unsubscribe = activityStore.subscribe(name, async (row) => {
@@ -1532,7 +1510,9 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     }
     if (!Object.hasOwn(roles, parsed.data.role)) {
       return c.json(
-        { error: `unknown role '${parsed.data.role}' (team roles: ${Object.keys(roles).join(', ')})` },
+        {
+          error: `unknown role '${parsed.data.role}' (team roles: ${Object.keys(roles).join(', ')})`,
+        },
         400,
       );
     }
@@ -1551,10 +1531,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         totpSecret,
       });
     } catch (err) {
-      return c.json(
-        { error: err instanceof Error ? err.message : 'failed to add user' },
-        409,
-      );
+      return c.json({ error: err instanceof Error ? err.message : 'failed to add user' }, 409);
     }
     persistUsers();
     const teammate: Teammate = {
@@ -1608,7 +1585,9 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     }
     if (parsed.data.role !== undefined && !Object.hasOwn(roles, parsed.data.role)) {
       return c.json(
-        { error: `unknown role '${parsed.data.role}' (team roles: ${Object.keys(roles).join(', ')})` },
+        {
+          error: `unknown role '${parsed.data.role}' (team roles: ${Object.keys(roles).join(', ')})`,
+        },
         400,
       );
     }
@@ -1623,7 +1602,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       const adminCount = slots.slots().filter((s) => s.userType === 'admin').length;
       if (adminCount <= 1) {
         return c.json(
-          { error: "cannot demote the last admin — promote another user to admin first" },
+          { error: 'cannot demote the last admin — promote another user to admin first' },
           409,
         );
       }
@@ -1674,10 +1653,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     if (target.userType === 'admin') {
       const adminCount = slots.slots().filter((s) => s.userType === 'admin').length;
       if (adminCount <= 1) {
-        return c.json(
-          { error: 'cannot delete the last admin — promote another user first' },
-          409,
-        );
+        return c.json({ error: 'cannot delete the last admin — promote another user first' }, 409);
       }
     }
     try {
@@ -1836,10 +1812,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
       const parsedCollide = FsWriteCollisionSchema.safeParse(collideRaw);
       if (!parsedCollide.success) {
-        return c.json(
-          { error: `invalid collide strategy: ${collideRaw}` },
-          400,
-        );
+        return c.json({ error: `invalid collide strategy: ${collideRaw}` }, 400);
       }
       const body = c.req.raw.body;
       if (!body) return c.json({ error: 'empty upload body' }, 400);
@@ -2125,10 +2098,7 @@ function mapFsError(c: Context<AppBindings>, err: unknown): Response {
               : 400;
     return c.json({ error: err.message, code: err.code }, status as 400 | 403 | 404 | 409 | 413);
   }
-  return c.json(
-    { error: err instanceof Error ? err.message : String(err) },
-    500,
-  );
+  return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
 }
 
 /**

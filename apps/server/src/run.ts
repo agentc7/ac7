@@ -27,6 +27,7 @@ import { serve } from '@hono/node-server';
 import { type ActivityStore, createSqliteActivityStore } from './agent-activity.js';
 import { createApp } from './app.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
+import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
 import { createHttp2ServerFactory } from './https/server.js';
 import {
   HttpsConfigError,
@@ -34,10 +35,8 @@ import {
   loadCustomCert,
   loadOrGenerateSelfSigned,
 } from './https/store.js';
-import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
 import { createSqliteObjectivesStore } from './objectives.js';
-import { persistUserStore } from './slots.js';
 import { dispatchPush } from './push/dispatch.js';
 import { PushSubscriptionStore } from './push/store.js';
 import { configureVapid, generateVapidKeys } from './push/vapid.js';
@@ -45,6 +44,7 @@ import { SessionStore } from './sessions.js';
 import {
   defaultHttpsConfig,
   type HttpsConfig,
+  persistUserStore,
   type UserStore,
   type WebPushConfig,
   writeWebPushConfig,
@@ -89,12 +89,12 @@ export {
   loadTeamConfigFromFile,
   persistUserStore,
   rotateUserToken,
-  UserLoadError,
-  type UpdateUserPatch,
-  type UserStore,
   setKek,
   type TeamConfig,
   teammatesFromUsers,
+  type UpdateUserPatch,
+  UserLoadError,
+  type UserStore,
   writeTeamConfig,
 } from './slots.js';
 export {

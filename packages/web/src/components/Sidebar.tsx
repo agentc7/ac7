@@ -19,7 +19,7 @@
  * dot is the canonical .dot pattern. Unread badge is .badge.solid.
  */
 
-import type { UserType, Teammate } from '@agentc7/sdk/types';
+import type { Teammate, UserType } from '@agentc7/sdk/types';
 import { canManageUsers } from '@agentc7/sdk/types';
 import type { ComponentChildren } from 'preact';
 import { briefing } from '../lib/briefing.js';

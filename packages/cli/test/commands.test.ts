@@ -1,5 +1,5 @@
 import { Client } from '@agentc7/sdk/client';
-import type { Presence, Message, PushResult, Teammate } from '@agentc7/sdk/types';
+import type { Message, Presence, PushResult, Teammate } from '@agentc7/sdk/types';
 import { describe, expect, it } from 'vitest';
 import { buildPushPayload, runPushCommand, UsageError } from '../src/commands/push.js';
 import { runRosterCommand } from '../src/commands/roster.js';
@@ -28,15 +28,11 @@ describe('buildPushPayload', () => {
   });
 
   it('rejects when both --agent and --broadcast are set', () => {
-    expect(() => buildPushPayload({ body: 'hi', to: 'a', broadcast: true })).toThrow(
-      UsageError,
-    );
+    expect(() => buildPushPayload({ body: 'hi', to: 'a', broadcast: true })).toThrow(UsageError);
   });
 
   it('rejects an invalid --level', () => {
-    expect(() => buildPushPayload({ body: 'hi', to: 'a', level: 'bogus' })).toThrow(
-      UsageError,
-    );
+    expect(() => buildPushPayload({ body: 'hi', to: 'a', level: 'bogus' })).toThrow(UsageError);
   });
 
   it('targeted push produces an agentId payload', () => {

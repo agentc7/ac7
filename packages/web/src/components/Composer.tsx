@@ -25,8 +25,8 @@
  * subscribers; our own SSE stream echoes the message back.
  */
 
-import { signal } from '@preact/signals';
 import type { Attachment } from '@agentc7/sdk/types';
+import { signal } from '@preact/signals';
 import type { JSX } from 'preact';
 import { useRef } from 'preact/hooks';
 import { getClient } from '../lib/client.js';
@@ -239,7 +239,9 @@ export function Composer({ viewer }: ComposerProps) {
     >
       {sendError.value && (
         <div role="alert" class="callout err" style="margin-bottom:10px;padding:10px 12px">
-          <div class="icon" aria-hidden="true">◆</div>
+          <div class="icon" aria-hidden="true">
+            ◆
+          </div>
           <div class="body">
             <div class="msg">{sendError.value}</div>
           </div>

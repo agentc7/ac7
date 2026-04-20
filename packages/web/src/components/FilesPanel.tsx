@@ -19,9 +19,9 @@
  * `/fs/shared`.
  */
 
-import { signal } from '@preact/signals';
-import type { FsEntry } from '@agentc7/sdk/types';
 import { FS_PATHS } from '@agentc7/sdk/protocol';
+import type { FsEntry } from '@agentc7/sdk/types';
+import { signal } from '@preact/signals';
 import { getClient } from '../lib/client.js';
 import { selectFiles } from '../lib/view.js';
 
@@ -194,9 +194,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
 
   return (
     <div class="flex-1 flex flex-col min-h-0" style="padding:16px;overflow-y:auto">
-      <header
-        style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--rule)"
-      >
+      <header style="display:flex;flex-direction:column;gap:10px;margin-bottom:12px;padding-bottom:10px;border-bottom:1px solid var(--rule)">
         <h2 style="margin:0;font-family:var(--f-display);letter-spacing:-.01em">Files</h2>
         <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center">
           {current.mode === 'tree' ? (
@@ -218,10 +216,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
                 multiple
                 hidden
                 onChange={(e) => {
-                  void handleUpload(
-                    (e.currentTarget as HTMLInputElement).files,
-                    current.path,
-                  );
+                  void handleUpload((e.currentTarget as HTMLInputElement).files, current.path);
                 }}
               />
             </label>
@@ -251,7 +246,9 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
 
       {current.error && (
         <div role="alert" class="callout err" style="margin-bottom:10px">
-          <div class="icon" aria-hidden="true">◆</div>
+          <div class="icon" aria-hidden="true">
+            ◆
+          </div>
           <div class="body">
             <div class="msg">{current.error}</div>
           </div>
@@ -268,9 +265,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
         </div>
       )}
 
-      {current.loading && (
-        <p style="color:var(--muted);font-size:13px">Loading…</p>
-      )}
+      {current.loading && <p style="color:var(--muted);font-size:13px">Loading…</p>}
 
       {!current.loading && entries.length === 0 && !current.error && (
         <p style="color:var(--muted);font-size:13px">

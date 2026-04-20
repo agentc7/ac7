@@ -24,7 +24,7 @@
  * description build), but no longer rendered into the prose.
  */
 
-import type { BriefingResponse, Role, User, Team, Teammate } from '@agentc7/sdk/types';
+import type { BriefingResponse, Role, Team, Teammate, User } from '@agentc7/sdk/types';
 
 export interface ComposeBriefingInput {
   self: User;

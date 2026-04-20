@@ -8,8 +8,8 @@
  * brand (component reference, marketing pages).
  */
 
-import { signal } from '@preact/signals';
 import type { Attachment } from '@agentc7/sdk/types';
+import { signal } from '@preact/signals';
 import { getClient } from '../lib/client.js';
 import { createObjective } from '../lib/objectives.js';
 import { roster } from '../lib/roster.js';
@@ -288,8 +288,8 @@ export function ObjectiveCreate() {
           <span class="field-label">Attachments (optional)</span>
           <div class="field-help">
             Files you attach here are available to every thread member (originator, assignee,
-            watchers, and admins) via the objective's discussion. Files upload into your home
-            under /{viewer}/uploads/ and any filename collisions get a numeric suffix.
+            watchers, and admins) via the objective's discussion. Files upload into your home under
+            /{viewer}/uploads/ and any filename collisions get a numeric suffix.
           </div>
           {uploads.length > 0 && (
             <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
@@ -356,11 +356,7 @@ export function ObjectiveCreate() {
 
         <div>
           <button type="submit" disabled={!canSubmit} class="btn btn-primary btn-lg">
-            {busy.value
-              ? 'Creating…'
-              : anyUploading
-                ? 'Uploading…'
-                : 'Create + assign →'}
+            {busy.value ? 'Creating…' : anyUploading ? 'Uploading…' : 'Create + assign →'}
           </button>
         </div>
       </form>

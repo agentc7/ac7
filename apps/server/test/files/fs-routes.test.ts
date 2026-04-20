@@ -154,7 +154,13 @@ describe('/fs/write', () => {
 describe('/fs/read/*', () => {
   it('streams the file body back with content-type + disposition', async () => {
     const { app } = makeApp();
-    await writeFile(app, ALICE_TOKEN, '/alice/img.png', 'image/png', Buffer.from([137, 80, 78, 71]));
+    await writeFile(
+      app,
+      ALICE_TOKEN,
+      '/alice/img.png',
+      'image/png',
+      Buffer.from([137, 80, 78, 71]),
+    );
     const res = await app.request('/fs/read/alice/img.png', {
       headers: authed(ALICE_TOKEN),
     });

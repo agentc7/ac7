@@ -447,11 +447,7 @@ function CreateUserForm() {
     >
       <div class="eyebrow">New user</div>
       {err !== null && (
-        <div
-          class="callout err"
-          role="alert"
-          style="margin:0;padding:8px 12px;font-size:13px"
-        >
+        <div class="callout err" role="alert" style="margin:0;padding:8px 12px;font-size:13px">
           <div class="body">
             <div class="msg">{err}</div>
           </div>
@@ -467,7 +463,6 @@ function CreateUserForm() {
             formName.value = (e.currentTarget as HTMLInputElement).value;
           }}
           placeholder="alice"
-          autoFocus
           required
         />
       </label>
@@ -536,10 +531,7 @@ function RevealBanner({ reveal: r }: { reveal: Reveal }) {
     lines = [`bearer token: ${r.response.token}`];
   } else {
     title = `Re-enrolled TOTP for '${r.name}'`;
-    lines = [
-      `totp secret: ${r.response.totpSecret}`,
-      `otpauth uri:  ${r.response.totpUri}`,
-    ];
+    lines = [`totp secret: ${r.response.totpSecret}`, `otpauth uri:  ${r.response.totpUri}`];
   }
 
   return (
@@ -559,9 +551,7 @@ function RevealBanner({ reveal: r }: { reveal: Reveal }) {
         >
           {lines.join('\n')}
         </div>
-        <div
-          style="margin-top:8px;font-family:var(--f-sans);font-size:12px;color:var(--muted);font-style:italic"
-        >
+        <div style="margin-top:8px;font-family:var(--f-sans);font-size:12px;color:var(--muted);font-style:italic">
           Save these now — they are not persisted anywhere else. Dismissing this banner hides them
           forever.
         </div>

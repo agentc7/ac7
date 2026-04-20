@@ -18,12 +18,7 @@ import { agentActivityError, startAgentActivitySubscribe } from '../lib/agent-ac
 import { briefing } from '../lib/briefing.js';
 import { objectives as objectivesSignal } from '../lib/objectives.js';
 import { roster as rosterSignal } from '../lib/roster.js';
-import {
-  selectDmWith,
-  selectFiles,
-  selectObjectiveDetail,
-  selectOverview,
-} from '../lib/view.js';
+import { selectDmWith, selectFiles, selectObjectiveDetail, selectOverview } from '../lib/view.js';
 import { AgentTimeline } from './AgentTimeline.js';
 
 export interface AgentPageProps {
@@ -132,11 +127,7 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
         </div>
         <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
           {viewer !== name && (
-            <button
-              type="button"
-              onClick={() => selectDmWith(name)}
-              class="btn btn-ghost btn-sm"
-            >
+            <button type="button" onClick={() => selectDmWith(name)} class="btn btn-ghost btn-sm">
               → Open DM with {name}
             </button>
           )}
