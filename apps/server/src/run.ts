@@ -37,6 +37,7 @@ import {
 import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
 import { createSqliteObjectivesStore } from './objectives.js';
+import { persistUserStore } from './slots.js';
 import { dispatchPush } from './push/dispatch.js';
 import { PushSubscriptionStore } from './push/store.js';
 import { configureVapid, generateVapidKeys } from './push/vapid.js';
@@ -73,6 +74,7 @@ export {
 } from './objectives.js';
 export { SESSION_COOKIE_NAME, SESSION_TTL_MS, SessionStore } from './sessions.js';
 export {
+  type AddUserInput,
   CONFIG_FILE_COMMENT,
   ConfigNotFoundError,
   createUserStore,
@@ -85,8 +87,10 @@ export {
   hashToken,
   type LoadedUser,
   loadTeamConfigFromFile,
+  persistUserStore,
   rotateUserToken,
   UserLoadError,
+  type UpdateUserPatch,
   type UserStore,
   setKek,
   type TeamConfig,
@@ -400,6 +404,24 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
       }
     : undefined;
 
+  // User-mutation persistence hook. When `configPath` is known the
+  // runtime rewrites the on-disk team config after every add /
+  // update / delete / rotate-token / enroll-totp. Tests without a
+  // config path get a no-op that 501s mutation endpoints — you can't
+  // mutate without persistence or state silently drifts.
+  const persistUsers = options.configPath
+    ? () => {
+        persistUserStore(
+          options.configPath as string,
+          options.team,
+          options.roles,
+          options.slots,
+          https,
+          webPush,
+        );
+      }
+    : undefined;
+
   const app = createApp({
     broker,
     slots: options.slots,
@@ -410,6 +432,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     activityStore: activityStore,
     files: filesStore,
     ...(options.maxFileSize !== undefined ? { maxFileSize: options.maxFileSize } : {}),
+    ...(persistUsers !== undefined ? { persistUsers } : {}),
     version: SERVER_VERSION,
     logger: log,
     secureCookies,

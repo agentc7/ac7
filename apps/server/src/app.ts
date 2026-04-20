@@ -29,6 +29,7 @@ import {
   CancelObjectiveRequestSchema,
   CompleteObjectiveRequestSchema,
   CreateObjectiveRequestSchema,
+  CreateUserRequestSchema,
   DiscussObjectiveRequestSchema,
   FsMkdirRequestSchema,
   FsMoveRequestSchema,
@@ -41,6 +42,7 @@ import {
   ReassignObjectiveRequestSchema,
   TotpLoginRequestSchema,
   UpdateObjectiveRequestSchema,
+  UpdateUserRequestSchema,
   UpdateWatchersRequestSchema,
   UploadActivityRequestSchema,
 } from '@agentc7/sdk/schemas';
@@ -53,7 +55,10 @@ import type {
   ObjectiveEventKind,
   Role,
   Team,
+  Teammate,
 } from '@agentc7/sdk/types';
+import { isHuman } from '@agentc7/sdk/types';
+import type { UserType } from '@agentc7/sdk/types';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { type Context, Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
@@ -66,8 +71,14 @@ import type { Logger } from './logger.js';
 import { ObjectivesError, type ObjectivesStore } from './objectives.js';
 import type { PushSubscriptionStore } from './push/store.js';
 import { SESSION_COOKIE_NAME, SESSION_TTL_MS, type SessionStore } from './sessions.js';
-import { type LoadedUser, type UserStore, teammatesFromUsers } from './slots.js';
-import { verifyCode as verifyTotpCode } from './totp.js';
+import {
+  generateUserToken,
+  type LoadedUser,
+  type UserStore,
+  UserLoadError,
+  teammatesFromUsers,
+} from './slots.js';
+import { generateSecret, otpauthUri, verifyCode as verifyTotpCode } from './totp.js';
 
 export interface AppOptions {
   broker: Broker;
@@ -144,6 +155,15 @@ export interface AppOptions {
    * by accident.
    */
   maxFileSize?: number;
+  /**
+   * Called after every successful user-store mutation (create /
+   * update / delete / rotate-token / enroll-totp) with no arguments.
+   * The runtime passes a closure that rewrites the on-disk team
+   * config atomically; tests can pass a no-op when they don't care
+   * about persistence. When omitted, user-mutation endpoints 501
+   * rather than mutating in-memory without a durable backing.
+   */
+  persistUsers?: () => void;
   /**
    * Clock injection for tests — rate-limit book-keeping uses `now()`
    * so tests don't have to wall-clock-wait to see a lockout expire.
@@ -238,7 +258,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     vapidPublicKey,
     onPushed,
   } = options;
-  const { files } = options;
+  const { files, persistUsers } = options;
   const maxFileSize = Math.min(
     options.maxFileSize ?? DEFAULT_MAX_FILE_SIZE,
     HARD_CAP_MAX_FILE_SIZE,
@@ -1467,6 +1487,262 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       });
     });
   }
+
+  // ─── User management endpoints ───────────────────────────────
+  //
+  // `GET /users` is dual-auth — every teammate can see who's on the
+  // team. Mutating verbs are admin-only and require `persistUsers`
+  // to be wired; without it, mutations would drift in-memory and lose
+  // on restart so we 501 instead.
+  //
+  // The server generates the bearer token + TOTP secret on create and
+  // on rotate; the plaintext is returned exactly once in the HTTP
+  // response. After that point only the hash and an encrypted TOTP
+  // secret exist on disk.
+  //
+  // Self-mutation exceptions: any authenticated user can rotate their
+  // own token or re-enroll their own TOTP; admins can do it on behalf
+  // of anyone else. Agents (lead-agent, agent) can't enroll TOTP —
+  // they authenticate via bearer only.
+
+  app.get(PATHS.users, auth, (c) => {
+    return c.json({ users: teammatesFromUsers(slots) });
+  });
+
+  app.post(PATHS.users, auth, async (c) => {
+    const user = c.get('user');
+    if (user.userType !== 'admin') {
+      return c.json({ error: 'only admins may create users' }, 403);
+    }
+    if (!persistUsers) {
+      return c.json(
+        { error: 'user creation is not available (server missing persistUsers hook)' },
+        501,
+      );
+    }
+    const raw = await c.req.json().catch(() => null);
+    const parsed = CreateUserRequestSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: 'invalid user payload', details: parsed.error.issues }, 400);
+    }
+    if (!Object.hasOwn(roles, parsed.data.role)) {
+      return c.json(
+        { error: `unknown role '${parsed.data.role}' (team roles: ${Object.keys(roles).join(', ')})` },
+        400,
+      );
+    }
+    if (slots.findByName(parsed.data.name)) {
+      return c.json({ error: `user '${parsed.data.name}' already exists` }, 409);
+    }
+    const token = generateUserToken();
+    const needsTotp = isHuman(parsed.data.userType);
+    const totpSecret = needsTotp ? generateSecret() : null;
+    try {
+      slots.addUser({
+        name: parsed.data.name,
+        role: parsed.data.role,
+        userType: parsed.data.userType,
+        token,
+        totpSecret,
+      });
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : 'failed to add user' },
+        409,
+      );
+    }
+    persistUsers();
+    const teammate: Teammate = {
+      name: parsed.data.name,
+      role: parsed.data.role,
+      userType: parsed.data.userType,
+    };
+    // Seed the broker registry so the new user shows up in /roster
+    // without having to restart the server.
+    broker.seedUsers([teammate]);
+    logger.info('user created', {
+      name: teammate.name,
+      userType: teammate.userType,
+      role: teammate.role,
+      createdBy: user.name,
+    });
+    return c.json({
+      user: teammate,
+      token,
+      ...(needsTotp && totpSecret
+        ? {
+            totpSecret,
+            totpUri: otpauthUri({
+              secret: totpSecret,
+              issuer: `ac7-${team.name}`,
+              label: parsed.data.name,
+            }),
+          }
+        : {}),
+    });
+  });
+
+  app.patch(`${PATHS.users}/:name`, auth, async (c) => {
+    const user = c.get('user');
+    if (user.userType !== 'admin') {
+      return c.json({ error: 'only admins may update users' }, 403);
+    }
+    if (!persistUsers) {
+      return c.json({ error: 'user updates are not available (persistUsers missing)' }, 501);
+    }
+    const targetRaw = c.req.param('name');
+    const parsedName = NameSchema.safeParse(targetRaw);
+    if (!parsedName.success) return c.json({ error: 'invalid user name' }, 400);
+    const target = slots.findByName(parsedName.data);
+    if (!target) return c.json({ error: `no such user: ${parsedName.data}` }, 404);
+
+    const raw = await c.req.json().catch(() => null);
+    const parsed = UpdateUserRequestSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: 'invalid update payload', details: parsed.error.issues }, 400);
+    }
+    if (parsed.data.role !== undefined && !Object.hasOwn(roles, parsed.data.role)) {
+      return c.json(
+        { error: `unknown role '${parsed.data.role}' (team roles: ${Object.keys(roles).join(', ')})` },
+        400,
+      );
+    }
+    // Guard the last-admin invariant. Only an admin demoting
+    // themselves (or another admin) when they're the only admin
+    // triggers this.
+    if (
+      parsed.data.userType !== undefined &&
+      parsed.data.userType !== 'admin' &&
+      target.userType === 'admin'
+    ) {
+      const adminCount = slots.slots().filter((s) => s.userType === 'admin').length;
+      if (adminCount <= 1) {
+        return c.json(
+          { error: "cannot demote the last admin — promote another user to admin first" },
+          409,
+        );
+      }
+    }
+    // Clearing TOTP when switching human → agent keeps the secret
+    // from outliving its relevance. Agents don't have TOTP anyway;
+    // leaving it would be dead config.
+    const patch: { role?: string; userType?: UserType } = {};
+    if (parsed.data.role !== undefined) patch.role = parsed.data.role;
+    if (parsed.data.userType !== undefined) patch.userType = parsed.data.userType;
+    try {
+      slots.updateUser(parsedName.data, patch);
+    } catch (err) {
+      if (err instanceof UserLoadError) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+    if (parsed.data.userType !== undefined && !isHuman(parsed.data.userType)) {
+      slots.setTotpSecret(parsedName.data, null);
+    }
+    persistUsers();
+    const updated = slots.findByName(parsedName.data);
+    if (!updated) {
+      return c.json({ error: `user vanished after update: ${parsedName.data}` }, 500);
+    }
+    logger.info('user updated', { name: updated.name, patch, updatedBy: user.name });
+    return c.json({
+      name: updated.name,
+      role: updated.role,
+      userType: updated.userType,
+    } as Teammate);
+  });
+
+  app.delete(`${PATHS.users}/:name`, auth, (c) => {
+    const user = c.get('user');
+    if (user.userType !== 'admin') {
+      return c.json({ error: 'only admins may delete users' }, 403);
+    }
+    if (!persistUsers) {
+      return c.json({ error: 'user deletion is not available (persistUsers missing)' }, 501);
+    }
+    const targetRaw = c.req.param('name');
+    const parsedName = NameSchema.safeParse(targetRaw);
+    if (!parsedName.success) return c.json({ error: 'invalid user name' }, 400);
+    const target = slots.findByName(parsedName.data);
+    if (!target) return c.json({ error: `no such user: ${parsedName.data}` }, 404);
+    // Last-admin guard: you can't delete the only admin. Promoting
+    // another user first is the explicit recovery path.
+    if (target.userType === 'admin') {
+      const adminCount = slots.slots().filter((s) => s.userType === 'admin').length;
+      if (adminCount <= 1) {
+        return c.json(
+          { error: 'cannot delete the last admin — promote another user first' },
+          409,
+        );
+      }
+    }
+    try {
+      slots.removeUser(parsedName.data);
+    } catch (err) {
+      if (err instanceof UserLoadError) return c.json({ error: err.message }, 404);
+      throw err;
+    }
+    persistUsers();
+    logger.info('user deleted', { name: parsedName.data, deletedBy: user.name });
+    return c.body(null, 204);
+  });
+
+  app.post(`${PATHS.users}/:name/rotate-token`, auth, (c) => {
+    const user = c.get('user');
+    if (!persistUsers) {
+      return c.json({ error: 'rotate-token is not available (persistUsers missing)' }, 501);
+    }
+    const targetRaw = c.req.param('name');
+    const parsedName = NameSchema.safeParse(targetRaw);
+    if (!parsedName.success) return c.json({ error: 'invalid user name' }, 400);
+    const target = slots.findByName(parsedName.data);
+    if (!target) return c.json({ error: `no such user: ${parsedName.data}` }, 404);
+    if (user.userType !== 'admin' && user.name !== target.name) {
+      return c.json({ error: 'rotate-token requires admin, or self' }, 403);
+    }
+    const token = generateUserToken();
+    try {
+      slots.rotateToken(parsedName.data, token);
+    } catch (err) {
+      if (err instanceof UserLoadError) return c.json({ error: err.message }, 404);
+      throw err;
+    }
+    persistUsers();
+    logger.info('token rotated', { name: parsedName.data, rotatedBy: user.name });
+    return c.json({ token });
+  });
+
+  app.post(`${PATHS.users}/:name/enroll-totp`, auth, (c) => {
+    const user = c.get('user');
+    if (!persistUsers) {
+      return c.json({ error: 'enroll-totp is not available (persistUsers missing)' }, 501);
+    }
+    const targetRaw = c.req.param('name');
+    const parsedName = NameSchema.safeParse(targetRaw);
+    if (!parsedName.success) return c.json({ error: 'invalid user name' }, 400);
+    const target = slots.findByName(parsedName.data);
+    if (!target) return c.json({ error: `no such user: ${parsedName.data}` }, 404);
+    if (user.userType !== 'admin' && user.name !== target.name) {
+      return c.json({ error: 'enroll-totp requires admin, or self' }, 403);
+    }
+    if (!isHuman(target.userType)) {
+      return c.json(
+        { error: `user '${target.name}' is a ${target.userType} and cannot enroll in TOTP` },
+        409,
+      );
+    }
+    const secret = generateSecret();
+    slots.setTotpSecret(parsedName.data, secret);
+    persistUsers();
+    logger.info('totp enrolled', { name: parsedName.data, enrolledBy: user.name });
+    return c.json({
+      totpSecret: secret,
+      totpUri: otpauthUri({
+        secret,
+        issuer: `ac7-${team.name}`,
+        label: target.name,
+      }),
+    });
+  });
 
   // ─── Filesystem endpoints ─────────────────────────────────────
   //

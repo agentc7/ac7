@@ -239,13 +239,67 @@ export class ConfigNotFoundError extends Error {
   }
 }
 
+/**
+ * Input to `UserStore.addUser`. The caller chooses the plaintext
+ * token (typically just-minted random bytes) and the store handles
+ * hashing + indexing.
+ */
+export interface AddUserInput {
+  name: string;
+  role: string;
+  userType: UserType;
+  token: string;
+  totpSecret?: string | null;
+}
+
+/** Patch for `UserStore.updateUser` — any subset of fields may be omitted. */
+export interface UpdateUserPatch {
+  role?: string;
+  userType?: UserType;
+}
+
 export interface UserStore {
+  // Read surface
   resolve(rawToken: string): LoadedUser | null;
   findByName(name: string): LoadedUser | null;
+  /**
+   * Internal accessor for the stored token hash of `name`. Used by
+   * the persistence helper to rewrite the config file; not meant for
+   * auth decisions (use `resolve` for that).
+   */
+  tokenHashOf(name: string): string | null;
   recordTotpAccept(name: string, counter: number): LoadedUser | null;
   size(): number;
+  /**
+   * Snapshot of every user in insertion order. Mutations on the store
+   * do not retroactively update this snapshot — callers should re-call
+   * after mutations that care about seeing fresh state.
+   */
   slots(): LoadedUser[];
   names(): string[];
+  /** True iff at least one user has `userType === 'admin'`. */
+  hasAdmin(): boolean;
+
+  // Mutation surface — runtime user management. Each method mutates
+  // the in-memory state atomically and throws `UserLoadError` on any
+  // validation failure (duplicate name, unknown name, etc.) without
+  // leaving partial state. Callers are responsible for persisting the
+  // change to disk afterwards — see `persistUserStore`.
+  addUser(input: AddUserInput): LoadedUser;
+  removeUser(name: string): void;
+  updateUser(name: string, patch: UpdateUserPatch): LoadedUser;
+  /**
+   * Replace a user's bearer-token hash with a fresh one. Returns the
+   * updated user; the prior token is instantly invalidated.
+   */
+  rotateToken(name: string, newRawToken: string): LoadedUser;
+  /**
+   * Replace a user's TOTP secret. Pass `null` to clear the enrollment
+   * (the user can no longer web-UI-login until re-enrolled). Resets
+   * `totpLastCounter` to 0 so the next valid code from the new secret
+   * is accepted.
+   */
+  setTotpSecret(name: string, secret: string | null): LoadedUser;
 }
 
 class MapUserStore implements UserStore {
@@ -273,6 +327,15 @@ class MapUserStore implements UserStore {
     return this.byName.get(name) ?? null;
   }
 
+  tokenHashOf(name: string): string | null {
+    const user = this.byName.get(name);
+    if (!user) return null;
+    for (const [h, u] of this.byHash) {
+      if (u === user) return h;
+    }
+    return null;
+  }
+
   recordTotpAccept(name: string, counter: number): LoadedUser | null {
     const user = this.byName.get(name);
     if (!user) return null;
@@ -290,6 +353,82 @@ class MapUserStore implements UserStore {
 
   names(): string[] {
     return this.order.map((s) => s.name);
+  }
+
+  hasAdmin(): boolean {
+    for (const u of this.order) {
+      if (u.userType === 'admin') return true;
+    }
+    return false;
+  }
+
+  addUser(input: AddUserInput): LoadedUser {
+    const tokenHash = hashToken(input.token);
+    const user: LoadedUser = {
+      name: input.name,
+      role: input.role,
+      userType: input.userType,
+      totpSecret: input.totpSecret ?? null,
+      totpLastCounter: 0,
+    };
+    this.addHashed(tokenHash, user);
+    return user;
+  }
+
+  removeUser(name: string): void {
+    const user = this.byName.get(name);
+    if (!user) throw new UserLoadError(`no such user: '${name}'`);
+    // Find and drop the hash entry. We don't index hashes by name so a
+    // linear scan is the cost — team size stays small enough that this
+    // is fine. If that ever changes, swap to a name→hash side index.
+    let hashToDrop: string | null = null;
+    for (const [h, u] of this.byHash) {
+      if (u === user) {
+        hashToDrop = h;
+        break;
+      }
+    }
+    if (hashToDrop !== null) this.byHash.delete(hashToDrop);
+    this.byName.delete(name);
+    const idx = this.order.indexOf(user);
+    if (idx !== -1) this.order.splice(idx, 1);
+  }
+
+  updateUser(name: string, patch: UpdateUserPatch): LoadedUser {
+    const user = this.byName.get(name);
+    if (!user) throw new UserLoadError(`no such user: '${name}'`);
+    if (patch.role !== undefined) user.role = patch.role;
+    if (patch.userType !== undefined) user.userType = patch.userType;
+    return user;
+  }
+
+  rotateToken(name: string, newRawToken: string): LoadedUser {
+    const user = this.byName.get(name);
+    if (!user) throw new UserLoadError(`no such user: '${name}'`);
+    const newHash = hashToken(newRawToken);
+    if (this.byHash.has(newHash)) {
+      throw new UserLoadError('hash collision rotating token — caller should retry');
+    }
+    // Drop the old hash mapping before installing the new one so
+    // `resolve()` stops accepting the retired token immediately.
+    let oldHash: string | null = null;
+    for (const [h, u] of this.byHash) {
+      if (u === user) {
+        oldHash = h;
+        break;
+      }
+    }
+    if (oldHash !== null) this.byHash.delete(oldHash);
+    this.byHash.set(newHash, user);
+    return user;
+  }
+
+  setTotpSecret(name: string, secret: string | null): LoadedUser {
+    const user = this.byName.get(name);
+    if (!user) throw new UserLoadError(`no such user: '${name}'`);
+    user.totpSecret = secret;
+    user.totpLastCounter = 0;
+    return user;
   }
 }
 
@@ -583,6 +722,52 @@ export function writeTeamConfig(
     totpLastCounter: s.totpLastCounter ?? 0,
   }));
   writeTeamConfigFile(path, CONFIG_FILE_COMMENT, team, roles, onDisk, https, webPush);
+}
+
+/**
+ * Atomically rewrite `path` from the current in-memory `UserStore`
+ * state plus the supplied team/roles/https/webPush context.
+ * Call this after any runtime user mutation (add / remove / update /
+ * rotate token / enroll TOTP) so the on-disk config tracks the live
+ * store.
+ *
+ * The store's `tokenHashOf` is the source of truth for each user's
+ * hash — mutation methods on the store already replace it when a
+ * token rotates.
+ */
+export function persistUserStore(
+  path: string,
+  team: Team,
+  roles: Record<string, Role>,
+  store: UserStore,
+  https: HttpsConfig,
+  webPush: WebPushConfig | null,
+): void {
+  const onDisk: UserOnDisk[] = store.slots().map((u) => {
+    const tokenHash = store.tokenHashOf(u.name);
+    if (tokenHash === null) {
+      throw new UserLoadError(`user '${u.name}' has no token hash in the store`);
+    }
+    return {
+      name: u.name,
+      role: u.role,
+      userType: u.userType,
+      tokenHash,
+      totpSecret: u.totpSecret ?? null,
+      totpLastCounter: u.totpLastCounter ?? 0,
+    };
+  });
+  // Preserve the top comment from disk if a prior file exists; fall
+  // back to the canonical comment for a fresh write.
+  let topComment = CONFIG_FILE_COMMENT;
+  try {
+    const raw = readFileSync(path, 'utf8');
+    const parsed = JSON.parse(raw) as { _comment?: unknown };
+    if (typeof parsed._comment === 'string') topComment = parsed._comment;
+  } catch {
+    /* fresh file — keep default comment */
+  }
+  writeTeamConfigFile(path, topComment, team, roles, onDisk, https, webPush);
 }
 
 /**
