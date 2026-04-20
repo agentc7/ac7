@@ -420,9 +420,9 @@ describe('briefing bootstrap', () => {
     };
     render(<Header />);
     expect(screen.getByText('ACTUAL')).toBeTruthy();
-    // Header now surfaces rank (authority) next to the name —
-    // director was stamped on the session in beforeEach.
-    expect(screen.getByText('admin')).toBeTruthy();
+    // Header surfaces the userType pill next to the name —
+    // admin was stamped on the session in beforeEach.
+    expect(screen.getByText('ADMIN')).toBeTruthy();
     expect(screen.getByText(/alpha-team/)).toBeTruthy();
   });
 });

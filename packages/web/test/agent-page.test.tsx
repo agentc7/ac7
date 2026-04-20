@@ -232,10 +232,10 @@ afterEach(() => {
 });
 
 describe('AgentPage', () => {
-  it('shows a permission denied banner for non-directors', () => {
+  it('shows a permission denied banner for non-admins', () => {
     briefing.value = OPERATOR_BRIEFING;
     render(<AgentPage name="ALPHA-1" viewer="ALPHA-1" />);
-    expect(screen.getByText(/only directors may view/i)).toBeTruthy();
+    expect(screen.getByText(/only admins may view/i)).toBeTruthy();
   });
 
   it('shows the agent header and metadata for directors', () => {

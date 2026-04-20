@@ -176,9 +176,9 @@ describe('<App /> auth gate', () => {
 
     await waitFor(() => {
       expect(screen.getByText('ACTUAL')).toBeTruthy();
-      // Header now surfaces rank (authority), not role — director
-      // was stamped on the session above, so that's what renders.
-      expect(screen.getByText('admin')).toBeTruthy();
+      // Header surfaces the userType pill, not the role — admin was
+      // stamped on the session above, so the ADMIN pill renders.
+      expect(screen.getByText('ADMIN')).toBeTruthy();
       expect(screen.getByRole('button', { name: /sign out/i })).toBeTruthy();
     });
   });

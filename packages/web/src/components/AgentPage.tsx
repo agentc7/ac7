@@ -1,14 +1,14 @@
 /**
- * AgentPage — dedicated overview of a single slot.
+ * AgentPage — dedicated overview of a single user.
  *
  *   ←  Overview › name
- *   name · authority · role · team · ●ONLINE
+ *   name · userType · role · team · ●ONLINE
  *   ┌── Objectives ──┐ ┌── Activity ──┐
  *   │ Assigned (3)   │ │  live SSE    │
  *   │ Watching (1)   │ │  timeline    │
  *   └────────────────┘ └──────────────┘
  *
- * Director-gated. Non-directors who navigate here see a permission
+ * Admin-gated. Non-admins who navigate here see a permission
  * notice via .callout.err.
  */
 
@@ -37,13 +37,13 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
   const objectives = objectivesSignal.value;
   const errorMessage = agentActivityError.value;
 
-  const isDirector = b?.userType === 'admin';
+  const isAdmin = b?.userType === 'admin';
 
   useEffect(() => {
-    if (!isDirector) return;
+    if (!isAdmin) return;
     const teardown = startAgentActivitySubscribe({ name });
     return () => teardown();
-  }, [name, isDirector]);
+  }, [name, isAdmin]);
 
   if (!b) {
     return (
@@ -56,7 +56,7 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
     );
   }
 
-  if (!isDirector) {
+  if (!isAdmin) {
     return (
       <div
         class="flex-1 overflow-y-auto"
@@ -69,7 +69,7 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
           </div>
           <div class="body">
             <div class="title">Restricted</div>
-            <div class="msg">Only directors may view another slot's activity timeline.</div>
+            <div class="msg">Only admins may view another user's activity timeline.</div>
           </div>
         </div>
       </div>
@@ -109,7 +109,7 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
             <span
               class={`badge ${teammate.userType === 'admin' ? 'solid' : teammate.userType === 'operator' || teammate.userType === 'lead-agent' ? 'ember' : 'soft'}`}
             >
-              {formatAuthority(teammate.userType)}
+              {formatUserType(teammate.userType)}
             </span>
           )}
           <span class={`badge ${isOnline ? 'soft' : 'muted'}`}>
@@ -234,7 +234,8 @@ function ObjectiveRefList({
   );
 }
 
-function formatAuthority(authority: string): string {
-  if (authority === 'individual-contributor') return 'IC';
-  return authority;
+function formatUserType(userType: string): string {
+  if (userType === 'lead-agent') return 'LEAD';
+  if (userType === 'operator') return 'OP';
+  return userType.toUpperCase();
 }

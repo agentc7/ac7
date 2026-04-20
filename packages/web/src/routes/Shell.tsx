@@ -34,6 +34,7 @@ import { ObjectivesPanel } from '../components/ObjectivesPanel.js';
 import { RosterPanel } from '../components/RosterPanel.js';
 import { Sidebar } from '../components/Sidebar.js';
 import { Transcript } from '../components/Transcript.js';
+import { UsersPanel } from '../components/UsersPanel.js';
 import { loadBriefing } from '../lib/briefing.js';
 import { getClient } from '../lib/client.js';
 import { appendMessages, messagesByThread } from '../lib/messages.js';
@@ -259,6 +260,8 @@ function renderView(v: View, viewer: string) {
       return <AgentPage name={v.name} viewer={viewer} />;
     case 'files':
       return <FilesPanel viewer={viewer} path={v.path} />;
+    case 'users':
+      return <UsersPanel />;
   }
 }
 

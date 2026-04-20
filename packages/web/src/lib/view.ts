@@ -20,7 +20,8 @@ export type View =
   | { kind: 'objective-detail'; id: string }
   | { kind: 'objective-create' }
   | { kind: 'agent-detail'; name: string }
-  | { kind: 'files'; path: string };
+  | { kind: 'files'; path: string }
+  | { kind: 'users' };
 
 export const view = signal<View>({ kind: 'thread', key: PRIMARY_THREAD });
 
@@ -81,11 +82,11 @@ export function selectObjectiveCreate(): void {
 
 /**
  * Open the agent detail page for a given name — metadata +
- * live activity timeline. Director-gated server-side, but the
- * UI also only surfaces entry points (roster rows, objective
- * assignee fields, DM headers) when the viewer is a director.
- * Non-directors who navigate here anyway see a permission-
- * denied inline error from the page itself.
+ * live activity timeline. Admin-gated server-side, but the UI
+ * also only surfaces entry points (roster rows, objective
+ * assignee fields, DM headers) when the viewer is an admin.
+ * Non-admins who navigate here anyway see a permission-denied
+ * inline error from the page itself.
  */
 export function selectAgentDetail(name: string): void {
   view.value = { kind: 'agent-detail', name };
@@ -94,12 +95,18 @@ export function selectAgentDetail(name: string): void {
 
 /**
  * Open the Files browser at an explicit path. Use `/<viewer>/` to
- * land on the caller's own home; directors can pass any slot's home.
+ * land on the caller's own home; admins can pass any user's home.
  * The panel keeps its own breadcrumb state; this action is the
  * single entry point from outside.
  */
 export function selectFiles(path: string): void {
   view.value = { kind: 'files', path };
+  isSidebarOpen.value = false;
+}
+
+/** Open the Users admin page. Admin-only; sidebar hides it for others. */
+export function selectUsers(): void {
+  view.value = { kind: 'users' };
   isSidebarOpen.value = false;
 }
 

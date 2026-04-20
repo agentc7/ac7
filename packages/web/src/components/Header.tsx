@@ -2,7 +2,7 @@
  * Header bar — identity + connection status.
  *
  * Layout (left → right):
- *   ☰  ▲ logo  │  NAME · authority · team-name   …   notif · ●ONLINE
+ *   ☰  ▲ logo  │  NAME · userType · team-name   …   notif · ●ONLINE
  *
  * Surface is paper with a subtle bottom rule, matching the canonical
  * topbar treatment from theme.css. Connection state uses canonical
@@ -92,7 +92,7 @@ export function Header() {
         <span
           class={`badge ${s.userType === 'admin' ? 'solid' : s.userType === 'operator' || s.userType === 'lead-agent' ? 'ember' : 'soft'} hidden sm:inline-flex flex-shrink-0`}
         >
-          {formatAuthority(s.userType)}
+          {formatUserType(s.userType)}
         </span>
 
         {b && (
@@ -127,7 +127,8 @@ export function Header() {
   );
 }
 
-function formatAuthority(userType: string): string {
-  if (userType === "agent") return 'IC';
-  return userType;
+function formatUserType(userType: string): string {
+  if (userType === 'lead-agent') return 'LEAD';
+  if (userType === 'operator') return 'OP';
+  return userType.toUpperCase();
 }

@@ -19,15 +19,17 @@ export interface RosterPanelProps {
   viewer: string;
 }
 
-function authorityBadgeClass(authority: string): string {
-  if (authority === 'director') return 'badge solid';
-  if (authority === 'manager') return 'badge ember solid';
+function userTypeBadgeClass(userType: string): string {
+  if (userType === 'admin') return 'badge solid';
+  if (userType === 'operator') return 'badge ember solid';
+  if (userType === 'lead-agent') return 'badge ember soft';
   return 'badge soft';
 }
 
-function formatAuthority(authority: string): string {
-  if (authority === 'individual-contributor') return 'IC';
-  return authority;
+function formatUserType(userType: string): string {
+  if (userType === 'lead-agent') return 'LEAD';
+  if (userType === 'operator') return 'OP';
+  return userType.toUpperCase();
 }
 
 function avatarInitials(name: string): string {
@@ -50,7 +52,7 @@ export function RosterPanel({ viewer }: RosterPanelProps) {
     );
   }
   const connectedByName = new Map<string, Presence>(r.connected.map((a) => [a.name, a]));
-  const isDirector = b?.userType === 'admin';
+  const isAdmin = b?.userType === 'admin';
 
   return (
     <div
@@ -111,8 +113,8 @@ export function RosterPanel({ viewer }: RosterPanelProps) {
                         (you)
                       </span>
                     )}
-                    <span class={authorityBadgeClass(t.userType)}>
-                      {formatAuthority(t.userType)}
+                    <span class={userTypeBadgeClass(t.userType)}>
+                      {formatUserType(t.userType)}
                     </span>
                   </div>
                   <div style="font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase">
@@ -158,11 +160,11 @@ export function RosterPanel({ viewer }: RosterPanelProps) {
                   {identityCluster}
                   {statusCluster}
                 </button>
-                {isDirector && (
+                {isAdmin && (
                   <button
                     type="button"
                     onClick={() => selectAgentDetail(t.name)}
-                    aria-label={`View ${t.name} agent page`}
+                    aria-label={`View ${t.name} presence page`}
                     class="row-action flex-shrink-0"
                     style="padding:10px 16px;font-family:var(--f-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-top:1px solid var(--rule);text-align:left"
                   >

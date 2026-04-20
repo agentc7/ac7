@@ -20,6 +20,7 @@
  */
 
 import type { UserType, Teammate } from '@agentc7/sdk/types';
+import { canManageUsers } from '@agentc7/sdk/types';
 import type { ComponentChildren } from 'preact';
 import { briefing } from '../lib/briefing.js';
 import { dmThreadKey, messagesByThread, PRIMARY_THREAD } from '../lib/messages.js';
@@ -35,6 +36,7 @@ import {
   selectObjectivesList,
   selectOverview,
   selectThread,
+  selectUsers,
   view,
 } from '../lib/view.js';
 
@@ -86,6 +88,8 @@ export function Sidebar({ viewer }: SidebarProps) {
   const objectivesActive =
     v.kind === 'objectives-list' || v.kind === 'objective-detail' || v.kind === 'objective-create';
   const filesActive = v.kind === 'files';
+  const usersActive = v.kind === 'users';
+  const isAdmin = b !== null && canManageUsers(b.userType);
   const activeObjectiveCount = objectives.value.filter(
     (o) => o.assignee === viewer && (o.status === 'active' || o.status === 'blocked'),
   ).length;
@@ -140,6 +144,14 @@ export function Sidebar({ viewer }: SidebarProps) {
             onClick={() => selectFiles(`/${viewer}`)}
             ariaLabel="Browse files"
           />
+          {isAdmin && (
+            <NavLink
+              label="Users"
+              active={usersActive}
+              onClick={selectUsers}
+              ariaLabel="Manage users"
+            />
+          )}
         </div>
 
         {/* ── Team section (Team Chat + DMs) ──────────────────── */}

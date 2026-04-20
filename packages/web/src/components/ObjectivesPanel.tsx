@@ -1,7 +1,8 @@
 /**
- * Objectives list view — the full plate for a slot (or team-wide
- * for manager+). Click a row to open `ObjectiveDetail`. Directors and
- * managers get a "+ New" button at the top.
+ * Objectives list view — the full plate for a user (or team-wide for
+ * admins). Click a row to open `ObjectiveDetail`. Admins, operators,
+ * and lead-agents get a "+ New" button at the top (agents cannot
+ * create objectives).
  *
  * Each row is a `.card` with status badge + title + assignee + outcome.
  * Status uses canonical `.badge` variants so Done / Cancelled don't
@@ -9,6 +10,7 @@
  */
 
 import type { Objective, ObjectiveStatus } from '@agentc7/sdk/types';
+import { canCreateObjective } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import { briefing } from '../lib/briefing.js';
@@ -43,7 +45,7 @@ export function ObjectivesPanel({ viewer }: ObjectivesPanelProps) {
     }
   }, [loaded]);
 
-  const canCreate = b !== null && (b.userType === 'admin' || b.userType === 'operator' || b.userType === 'lead-agent');
+  const canCreate = b !== null && canCreateObjective(b.userType);
 
   if (!loaded && err === null) {
     return (

@@ -1,5 +1,5 @@
 /**
- * New-objective form — visible only to managers + directors.
+ * New-objective form — visible to admins, operators, and lead-agents.
  * Fields: title, outcome (required), body, assignee (from roster),
  * optional initial watchers.
  *
@@ -288,7 +288,7 @@ export function ObjectiveCreate() {
           <span class="field-label">Attachments (optional)</span>
           <div class="field-help">
             Files you attach here are available to every thread member (originator, assignee,
-            watchers, and directors) via the objective's discussion. Files upload into your home
+            watchers, and admins) via the objective's discussion. Files upload into your home
             under /{viewer}/uploads/ and any filename collisions get a numeric suffix.
           </div>
           {uploads.length > 0 && (
