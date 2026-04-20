@@ -14,7 +14,7 @@
  * list*: MCP has no refresh hook for the `instructions` string passed
  * to `new Server()` — it's frozen for the session. If we wrote the
  * current open objectives into it at boot, that list would go stale
- * the moment a director assigns new work, and the agent would trust
+ * the moment an admin assigns new work, and the agent would trust
  * a snapshot that silently drifts. The tool descriptions for
  * `objectives_list` + `objectives_complete` ARE refresh-enabled via
  * `tools/list_changed` and carry the live state. Instructions stay
@@ -74,11 +74,11 @@ function composeInstructions(self: User, selfRole: Role, team: Team, others: Tea
   const parts: Array<string | false> = [
     `You've connected to the ac7 net. In this team you go by ${self.name}.`,
     `Your role here: ${self.role}`,
-    // Always emit the authority line. Plain individual-contributors need to know
-    // they're individual-contributors (and therefore can't create/cancel/reassign
-    // objectives) as explicitly as directors and managers know
-    // their own rank. Absence of a line is not self-knowledge.
-    `Your rank: ${self.userType}`,
+    // Always emit the userType line. Agents need to know they're agents
+    // (and therefore can't create/cancel/reassign objectives) as
+    // explicitly as admins, operators, and lead-agents know their own
+    // userType. Absence of a line is not self-knowledge.
+    `Your userType: ${self.userType}`,
     ``,
     `Team: ${team.name}`,
     `Directive: ${team.directive}`,
@@ -98,7 +98,7 @@ function composeInstructions(self: User, selfRole: Role, team: Team, others: Tea
     `Your own sends are suppressed by the link — you will not see echoes of your own broadcasts or DMs on the live stream. \`recent\` still returns them in scrollback.`,
     ``,
     `── Objectives ──`,
-    `Objectives are the apex task primitive on the team. They are assigned TO you (never picked up) by a director or manager. Every objective has a required \`outcome\` — the tangible result that defines "done" — and that outcome is the contract you are executing against.`,
+    `Objectives are the apex task primitive on the team. They are assigned TO you (never picked up) by an admin, operator, or lead-agent. Every objective has a required \`outcome\` — the tangible result that defines "done" — and that outcome is the contract you are executing against.`,
     ``,
     `When an objective is assigned, a channel event arrives with kind="objective" and event="assigned". The event body carries the id, title, outcome, and originator so you can act on it immediately. Subsequent lifecycle events (blocked, unblocked, completed, cancelled, reassigned) land on the same channel with the same shape.`,
     ``,
@@ -110,7 +110,7 @@ function composeInstructions(self: User, selfRole: Role, team: Team, others: Tea
     ``,
     `The act of doing the work IS the update — the tools that do the work also touch the objective state. Do not wait for external permission to progress; own the execution and communicate via the objective's own surface.`,
     ``,
-    `Directors and managers create objectives; individual-contributors execute them. Use \`roster\` to see who's currently on the net and \`recent\` to pull scrollback.`,
+    `Admins, operators, and lead-agents create objectives; agents execute them. Use \`roster\` to see who's currently on the net and \`recent\` to pull scrollback.`,
   ];
 
   return parts.filter((p): p is string => typeof p === 'string').join('\n');

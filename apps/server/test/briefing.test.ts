@@ -61,10 +61,10 @@ describe('composeBriefing', () => {
       teammates: TEAMMATES,
       openObjectives: [],
     });
-    expect(briefing.instructions).toContain('Your rank: admin');
+    expect(briefing.instructions).toContain('Your userType: admin');
   });
 
-  it('always surfaces rank in the instructions, including for plain individual-contributors', () => {
+  it('always surfaces userType in the instructions, including for plain agents', () => {
     const briefing = composeBriefing({
       self: ALPHA_1,
       selfRole: IMPLEMENTER_ROLE,
@@ -72,10 +72,10 @@ describe('composeBriefing', () => {
       teammates: TEAMMATES,
       openObjectives: [],
     });
-    // Every agent should know its own rank explicitly — absence of
-    // a line is not self-knowledge. IndividualContributors need to see
-    // "Your rank: agent" as clearly as directors see theirs.
-    expect(briefing.instructions).toContain('Your rank: agent');
+    // Every user should know its own userType explicitly — absence
+    // of a line is not self-knowledge. Agents need to see "Your
+    // userType: agent" as clearly as admins see theirs.
+    expect(briefing.instructions).toContain('Your userType: agent');
   });
 
   it('renders complementary instructions that reference team context', () => {

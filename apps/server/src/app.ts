@@ -433,7 +433,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     return c.json({
       user: matchedName,
       role: matchedSlot.role,
-      authority: matchedSlot.userType,
+      userType: matchedSlot.userType,
       expiresAt: session.expiresAt,
     });
   });
@@ -459,7 +459,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     return c.json({
       user: user.name,
       role: user.role,
-      authority: user.userType,
+      userType: user.userType,
       expiresAt,
     });
   });
@@ -615,10 +615,10 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
 
   // ─── Objective endpoints ──────────────────────────────────────────
   // Registered iff an ObjectivesStore is provided — keeps chat-only
-  // tests clean. Permission guards enforce the authority matrix:
-  //   individual-contributor   — can see/update/complete objectives assigned to self
-  //   manager — individual-contributor + create + cancel own-originated + see team
-  //   director  — any mutation, see everything
+  // tests clean. Permission guards enforce the userType matrix:
+  //   agent                 — see/update/complete objectives assigned to self
+  //   operator / lead-agent — agent + create + cancel own-originated + see team
+  //   admin                 — any mutation, see everything
   //
   // All mutations publish an `ObjectiveEvent` through the broker on
   // thread key `obj:<id>` so web clients + the link can react in
@@ -627,13 +627,12 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
   if (objectives !== undefined) {
     /**
      * The set of names that belong to an objective's thread.
-     * Originator + assignee + explicit watchers + every user with
-     * director authority ("directors see everything in their
-     * team"). For a `reassigned` event, also include the previous
-     * assignee so they know the objective left their plate. For a
-     * `watcher_removed` event, also include the removed watcher so
-     * they get the exit notification before the next event skips
-     * them entirely.
+     * Originator + assignee + explicit watchers + every admin
+     * ("admins see everything in their team"). For a `reassigned`
+     * event, also include the previous assignee so they know the
+     * objective left their plate. For a `watcher_removed` event,
+     * also include the removed watcher so they get the exit
+     * notification before the next event skips them entirely.
      *
      * This function is reused by the lifecycle-event publisher, the
      * `/discuss` endpoint, and the `/watchers` endpoint so every
@@ -723,12 +722,13 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
 
     // GET /objectives?assignee=&status=
     //
-    // IndividualContributors see objectives they have any relationship with:
-    // assigned, originated, or watching. Manager+ see team-wide.
-    // When an individual-contributor passes an explicit `assignee` filter, it must
-    // match their own name — they can't fish for other individual-contributors'
-    // plates. The watching filter has no equivalent explicit param
-    // today; watched objectives appear in the default list.
+    // Agents see objectives they have any relationship with:
+    // assigned, originated, or watching. Admins / operators /
+    // lead-agents see team-wide. When an agent passes an explicit
+    // `assignee` filter, it must match their own name — they can't
+    // fish for other agents' plates. The watching filter has no
+    // equivalent explicit param today; watched objectives appear in
+    // the default list.
     app.get(PATHS.objectives, auth, (c) => {
       const user = c.get('user');
       const raw = {
@@ -744,11 +744,11 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       if (user.userType === 'agent') {
         if (filter.assignee && filter.assignee !== user.name) {
           return c.json(
-            { error: 'individual-contributors may only list their own objectives' },
+            { error: 'agents may only list their own objectives' },
             403,
           );
         }
-        // Default scope for an 'individual-contributor': assigned OR originated OR watching.
+        // Default scope for an agent: assigned OR originated OR watching.
         // App-level filter on the full list is fine at team scale
         // where objective counts are in the dozens, not thousands.
         const all = objectives.list(filter.status ? { status: filter.status } : {});
@@ -765,8 +765,9 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
 
     // GET /objectives/:id
     //
-    // An individual-contributor can view an objective if they're the assignee, the
-    // originator, or in the watcher list. Manager+ can view any.
+    // An agent can view an objective if they're the assignee, the
+    // originator, or in the watcher list. Admin / operator /
+    // lead-agent can view any.
     app.get(`${PATHS.objectives}/:id`, auth, (c) => {
       const user = c.get('user');
       const id = c.req.param('id');
@@ -781,7 +782,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         return c.json(
           {
             error:
-              'individual-contributors may only view objectives they are assigned, originated, or watching',
+              'agents may only view objectives they are assigned, originated, or watching',
           },
           403,
         );
@@ -789,11 +790,14 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       return c.json({ objective: obj, events: objectives.events(id) });
     });
 
-    // POST /objectives (manager+)
+    // POST /objectives (admin / operator / lead-agent)
     app.post(PATHS.objectives, auth, async (c) => {
       const user = c.get('user');
       if (user.userType === 'agent') {
-        return c.json({ error: 'creating objectives requires manager or director' }, 403);
+        return c.json(
+          { error: 'creating objectives requires admin, operator, or lead-agent userType' },
+          403,
+        );
       }
       const raw = await c.req.json().catch(() => null);
       const parsed = CreateObjectiveRequestSchema.safeParse(raw);
@@ -837,7 +841,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         });
         // Grant every initial thread member access to the attachments.
         // `objectiveThreadMembers` already knows the originator,
-        // assignee, explicit watchers, and all directors — so one
+        // assignee, explicit watchers, and all admins — so one
         // call covers everyone who should see these files.
         if (files && created.attachments.length > 0) {
           const members = objectiveThreadMembers(created);
@@ -861,14 +865,14 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
     });
 
-    // PATCH /objectives/:id (assignee OR director)
+    // PATCH /objectives/:id (assignee OR admin)
     app.patch(`${PATHS.objectives}/:id`, auth, async (c) => {
       const user = c.get('user');
       const id = c.req.param('id');
       const current = objectives.get(id);
       if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
       if (current.assignee !== user.name && user.userType !== 'admin') {
-        return c.json({ error: 'only the assignee or a director may update this objective' }, 403);
+        return c.json({ error: 'only the assignee or an admin may update this objective' }, 403);
       }
       const raw = await c.req.json().catch(() => null);
       const parsed = UpdateObjectiveRequestSchema.safeParse(raw);
@@ -923,18 +927,18 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
     });
 
-    // POST /objectives/:id/cancel (originator manager+ or director)
+    // POST /objectives/:id/cancel (originating operator/lead-agent or any admin)
     app.post(`${PATHS.objectives}/:id/cancel`, auth, async (c) => {
       const user = c.get('user');
       const id = c.req.param('id');
       const current = objectives.get(id);
       if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
       const isOriginator = current.originator === user.name;
-      const isDirector = user.userType === 'admin';
-      const isManager = (user.userType === 'operator' || user.userType === 'lead-agent');
-      if (!(isDirector || (isManager && isOriginator))) {
+      const isAdmin = user.userType === 'admin';
+      const isLeadLike = user.userType === 'operator' || user.userType === 'lead-agent';
+      if (!(isAdmin || (isLeadLike && isOriginator))) {
         return c.json(
-          { error: 'only the originating manager or a director may cancel this objective' },
+          { error: 'only the originating operator/lead-agent or an admin may cancel this objective' },
           403,
         );
       }
@@ -957,11 +961,11 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
     });
 
-    // POST /objectives/:id/reassign (director only)
+    // POST /objectives/:id/reassign (admin only)
     app.post(`${PATHS.objectives}/:id/reassign`, auth, async (c) => {
       const user = c.get('user');
       if (user.userType !== 'admin') {
-        return c.json({ error: 'only a director may reassign objectives' }, 403);
+        return c.json({ error: 'only an admin may reassign objectives' }, 403);
       }
       const id = c.req.param('id');
       const raw = await c.req.json().catch(() => null);
@@ -1001,10 +1005,11 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     // POST /objectives/:id/watchers
     //
     // Add and/or remove watchers on an objective. Permitted to:
-    //   - any director (team-wide admin)
-    //   - the originating manager (they own the objective they made)
-    // Every name in both `add` and `remove` must resolve to a
-    // known user. Watcher mutations produce `watcher_added` and
+    //   - any admin (team-wide)
+    //   - the originating operator / lead-agent (they own the
+    //     objective they made)
+    // Every name in both `add` and `remove` must resolve to a known
+    // user. Watcher mutations produce `watcher_added` and
     // `watcher_removed` audit events that fan out to the full
     // post-change thread membership (plus removed parties so they
     // get the exit notification).
@@ -1015,13 +1020,13 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
 
       const isOriginator = current.originator === user.name;
-      const isDirector = user.userType === 'admin';
-      const isManager = (user.userType === 'operator' || user.userType === 'lead-agent');
-      if (!(isDirector || (isManager && isOriginator))) {
+      const isAdmin = user.userType === 'admin';
+      const isLeadLike = user.userType === 'operator' || user.userType === 'lead-agent';
+      if (!(isAdmin || (isLeadLike && isOriginator))) {
         return c.json(
           {
             error:
-              'only a director or the originating manager may change watchers on this objective',
+              'only an admin or the originating operator/lead-agent may change watchers on this objective',
           },
           403,
         );
@@ -1324,15 +1329,15 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
   // The runner streams decoded HTTP exchanges + objective lifecycle
   // markers here as they happen. Three endpoints:
   //
-  //   POST /agents/:name/activity          — self upload only
-  //   GET  /agents/:name/activity          — self OR director
-  //   GET  /agents/:name/activity/stream   — SSE live tail, self OR director
+  //   POST /users/:name/activity          — self upload only
+  //   GET  /users/:name/activity          — self OR admin
+  //   GET  /users/:name/activity/stream   — SSE live tail, self OR admin
   //
   // The POST-self gate is strict: a user can only append its OWN
-  // activity, regardless of authority. Directors read via GET,
-  // they don't write on behalf of other slots. The GET gate
-  // allows self (so the user can introspect its own history) OR
-  // director (for team-wide observability).
+  // activity, regardless of userType. Admins read via GET; they
+  // don't write on behalf of other users. The GET gate allows
+  // self (so the user can introspect its own history) OR admin
+  // (for team-wide observability).
   if (activityStore) {
     // Note: `AGENT_PATHS.activity` URL-encodes its argument (for
     // SDK client use), so we can't call it with `:name` here
@@ -1389,9 +1394,9 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
       const name = parsedName.data;
       const isSelf = name === user.name;
-      const isDirector = user.userType === 'admin';
-      if (!isSelf && !isDirector) {
-        return c.json({ error: 'only the user itself or a director may read this activity' }, 403);
+      const isAdmin = user.userType === 'admin';
+      if (!isSelf && !isAdmin) {
+        return c.json({ error: 'only the user itself or an admin may read this activity' }, 403);
       }
       const fromRaw = c.req.query('from');
       const toRaw = c.req.query('to');
@@ -1443,10 +1448,10 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
       const name = parsedName.data;
       const isSelf = name === user.name;
-      const isDirector = user.userType === 'admin';
-      if (!isSelf && !isDirector) {
+      const isAdmin = user.userType === 'admin';
+      if (!isSelf && !isAdmin) {
         return c.json(
-          { error: 'only the user itself or a director may stream this activity' },
+          { error: 'only the user itself or an admin may stream this activity' },
           403,
         );
       }
@@ -2090,7 +2095,7 @@ function grantAttachmentsTo(
 
 /**
  * Project a LoadedUser onto the smaller shape the filesystem layer
- * consumes. The store only needs name + authority for permission
+ * consumes. The store only needs name + userType for permission
  * checks — keeping the surface lean makes it trivial to unit-test
  * without constructing a full user record.
  */

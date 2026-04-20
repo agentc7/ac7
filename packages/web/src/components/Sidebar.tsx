@@ -8,7 +8,7 @@
  *   ├───────────────────────┤
  *   │  ━━ TEAM          │
  *   │  Team Chat            │
- *   │  ● build-bot · D      │  presence dot + name + authority
+ *   │  ● build-bot · D      │  presence dot + name + userType tag
  *   │  ○ scout              │
  *   │  …                    │
  *   ├───────────────────────┤

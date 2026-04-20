@@ -16,7 +16,7 @@
  *                     someone else.
  *
  * Permissions:
- *   director          — full read/write/delete anywhere
+ *   admin             — full read/write/delete anywhere
  *   owner             — full read/write/delete under their home (first
  *                       path segment equals their user name)
  *   everyone else     — read-only, and only when they hold a grant for

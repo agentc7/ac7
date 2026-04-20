@@ -1,11 +1,10 @@
 /**
  * Team config loading for the ac7 server.
  *
- * A team config defines the directive, the roles, and the slots that
- * make up the team. A user is a reserved position — name + role +
- * authority tier + secret token that authenticates incoming requests.
- * The server is always one team (multi-team coordination lives
- * at the SaaS layer).
+ * A team config defines the directive, the roles, and the users that
+ * make up the team. A user is identified by name + role + userType +
+ * secret token that authenticates incoming requests. The server is
+ * always one team (multi-team coordination lives at the SaaS layer).
  *
  * On disk the config stores SHA-256 hashes, not plaintext secrets.
  * Humans editing the file by hand can paste a plaintext `token`; the
@@ -23,19 +22,19 @@
  *       "brief": "We own the full lifecycle..."
  *     },
  *     "roles": {
- *       "individual-contributor":    { "description": "...", "instructions": "..." },
+ *       "admin":       { "description": "...", "instructions": "..." },
  *       "implementer": { "description": "...", "instructions": "..." }
  *     },
- *     "slots": [
- *       { "name": "ACTUAL",  "role": "individual-contributor",    "authority": "director",  "tokenHash": "sha256:..." },
- *       { "name": "LT-ONE",  "role": "individual-contributor",    "authority": "manager", "tokenHash": "sha256:..." },
- *       { "name": "ALPHA-1", "role": "implementer",                             "token":     "ac7_plaintext_for_migration" }
+ *     "users": [
+ *       { "name": "ACTUAL",  "role": "admin",       "userType": "admin",    "tokenHash": "sha256:..." },
+ *       { "name": "LT-ONE",  "role": "admin",       "userType": "operator", "tokenHash": "sha256:..." },
+ *       { "name": "ALPHA-1", "role": "implementer", "userType": "agent",    "token":     "ac7_plaintext_for_migration" }
  *     ]
  *   }
  *
- * Missing `authority` defaults to `individual-contributor`. The file path defaults
- * to `./ac7.json` (relative to the server's working directory);
- * an explicit `--config-path` flag or `AC7_CONFIG_PATH` env var overrides.
+ * Missing `userType` defaults to `agent`. The file path defaults to
+ * `./ac7.json` (relative to the server's working directory); an
+ * explicit `--config-path` flag or `AC7_CONFIG_PATH` env var overrides.
  */
 
 import { createHash, randomBytes } from 'node:crypto';
@@ -579,8 +578,8 @@ export function loadTeamConfigFromFile(path: string): TeamConfig {
     }
   }
 
-  // At least one user must hold director authority so there's always
-  // someone who can edit the team config.
+  // At least one user must hold admin userType so there's always
+  // someone who can administer the team.
   const hasAdmin = result.data.users.some((s) => s.userType === 'admin');
   if (!hasAdmin) {
     throw new UserLoadError(
@@ -802,8 +801,8 @@ export function generateUserToken(): string {
  * Rotate the bearer token for `name`. Generates a fresh
  * cryptorandom plaintext token, hashes it, atomically rewrites the
  * config file, and returns the NEW PLAINTEXT so the caller can show
- * it to the individual-contributor once. The plaintext is never persisted; only
- * its hash lands on disk.
+ * it to the user once. The plaintext is never persisted; only its
+ * hash lands on disk.
  *
  * Safety posture:
  *   - Atomic: temp-file + rename inside the config directory.
@@ -811,7 +810,7 @@ export function generateUserToken(): string {
  *   - Defensive reload + re-parse of the file, so a concurrent hand
  *     edit elsewhere in the same file doesn't get trampled.
  *   - Preserves every other user's `totpSecret` / `totpLastCounter` /
- *     `authority` / `role` untouched.
+ *     `userType` / `role` untouched.
  */
 export function rotateUserToken(path: string, name: string): string {
   let raw: string;
@@ -1050,11 +1049,11 @@ export function teammatesFromUsers(store: UserStore): Teammate[] {
 }
 
 export const CONFIG_FILE_COMMENT =
-  'ac7 team config. Defines one team with a directive, roles, and slots. ' +
-  'Each user has { name, role, authority, tokenHash }. `authority` is one of ' +
-  '`director | manager | individual-contributor`, defaulting to `individual-contributor` when omitted. ' +
+  'ac7 team config. Defines one team with a directive, roles, and users. ' +
+  'Each user has { name, role, userType, tokenHash }. `userType` is one of ' +
+  '`admin | operator | lead-agent | agent`, defaulting to `agent` when omitted. ' +
   'At least one admin is required. To rotate or add a user by hand, add ' +
-  '{ "name": "...", "role": "...", "authority": "...", "token": "<plaintext>" } ' +
+  '{ "name": "...", "role": "...", "userType": "...", "token": "<plaintext>" } ' +
   'and the server will hash the token on next boot and rewrite this file.';
 
 export function exampleConfig(): string {
@@ -1066,13 +1065,13 @@ export function exampleConfig(): string {
     "brief": "Longer narrative about scope, constraints, operating window."
   },
   "roles": {
-    "individual-contributor": {
-      "description": "Human directs the team, makes go/no-go calls, handles escalations.",
-      "instructions": "The individual-contributor role directs activity in the team channel and handles escalations."
+    "admin": {
+      "description": "Leads the team, makes go/no-go calls, handles escalations.",
+      "instructions": "The admin role sets direction, assigns objectives, and handles escalations."
     },
     "implementer": {
       "description": "Writes and ships code changes.",
-      "instructions": "The implementer role writes and ships code, takes direction from the director, and reports progress."
+      "instructions": "The implementer role writes and ships code, takes direction from the admin, and reports progress."
     },
     "reviewer": {
       "description": "Reviews implementer work before it ships.",
@@ -1083,10 +1082,10 @@ export function exampleConfig(): string {
       "instructions": "The watcher role observes team activity and surfaces issues."
     }
   },
-  "slots": [
-    { "name": "ACTUAL",  "role": "individual-contributor",    "authority": "director",  "token": "ac7_change_me_to_a_real_secret" },
-    { "name": "LT-ONE",  "role": "individual-contributor",    "authority": "manager", "token": "ac7_change_me_to_another_real_secret" },
-    { "name": "ALPHA-1", "role": "implementer",                             "token": "ac7_change_me_to_another_real_secret" }
+  "users": [
+    { "name": "ACTUAL",  "role": "admin",       "userType": "admin",      "token": "ac7_change_me_to_a_real_secret" },
+    { "name": "LT-ONE",  "role": "admin",       "userType": "operator",   "token": "ac7_change_me_to_another_real_secret" },
+    { "name": "ALPHA-1", "role": "implementer", "userType": "agent",      "token": "ac7_change_me_to_another_real_secret" }
   ]
 }`;
 }

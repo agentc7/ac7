@@ -4,7 +4,7 @@
  * Three states:
  *   - `loading`                          — initial mount, haven't asked the server yet
  *   - `anonymous`                        — confirmed no valid session; show login
- *   - `{slot, role, authority, …}`       — authenticated; show the shell
+ *   - `{user, role, userType, …}`       — authenticated; show the shell
  *
  * Components read the signal via Preact's `.value`; writes always go
  * through `bootstrap`, `loginWithTotp`, or `logout` so the state

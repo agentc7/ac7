@@ -5,9 +5,10 @@
  *
  * Design notes:
  *
- * - **Push-assigned, single-assignee.** v1 objectives are created by a
- *   director or manager and immediately bound to one assignee. No
- *   unclaimed queue, no claim verb. Reassignment is a director action.
+ * - **Push-assigned, single-assignee.** v1 objectives are created by an
+ *   admin, operator, or lead-agent and immediately bound to one
+ *   assignee. No unclaimed queue, no claim verb. Reassignment is an
+ *   admin-only action.
  *
  * - **Four-state lifecycle.** `active | blocked | done | cancelled`.
  *   `done` and `cancelled` are terminal; `active ↔ blocked` is the only

@@ -26,9 +26,9 @@ export const objectives = signal<Objective[]>([]);
 export const objectivesLoaded = signal(false);
 
 /**
- * Full refresh of the caller-scoped objective list. IndividualContributors get
- * their own; manager+ get the team-wide list because the
- * server widens the scope for them.
+ * Full refresh of the caller-scoped objective list. Agents get only
+ * their own; admins / operators / lead-agents get the team-wide list
+ * because the server widens the scope for them.
  */
 export async function loadObjectives(): Promise<void> {
   const list = await getClient().listObjectives();

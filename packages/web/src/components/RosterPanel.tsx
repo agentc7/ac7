@@ -5,7 +5,7 @@
  *
  * Visual structure mirrors theme.css patterns:
  *   - .avatar for the name initial
- *   - .badge variants for authority tier
+ *   - .badge variants for userType
  *   - .dot for connection state
  */
 

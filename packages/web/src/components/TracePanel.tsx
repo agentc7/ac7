@@ -1,11 +1,11 @@
 /**
- * TracePanel — director-only view of captured LLM traces for an
+ * TracePanel — admin-only view of captured LLM traces for an
  * objective.
  *
  * In the activity-stream architecture, an "objective trace" is a
  * **time-range slice** of the assignee's agent activity stream
  * rather than a separately-stored table. We query
- * `GET /agents/<assignee>/activity` with:
+ * `GET /users/<assignee>/activity` with:
  *
  *   - `from = objective.createdAt`
  *   - `to   = objective.completedAt ?? now`
@@ -16,8 +16,8 @@
  * UserType gate is enforced in two places:
  *   - Client: the parent `ObjectiveDetail` only mounts us when
  *     `briefing.userType === 'admin'`.
- *   - Server: `GET /agents/:name/activity` returns 403 to any
- *     non-director reading another slot.
+ *   - Server: `GET /users/:name/activity` returns 403 to any
+ *     non-admin reading another user.
  *
  * The trace content is already redacted at runner upload time.
  */
