@@ -7,46 +7,54 @@
  */
 
 import {
-  AGENT_PATHS,
   AUTH_HEADER,
   FS_PATHS,
   OBJECTIVE_PATHS,
   PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
+  USER_PATHS,
 } from './protocol.js';
 import {
   BriefingResponseSchema,
+  CreateUserResponseSchema,
+  EnrollTotpResponseSchema,
   FsEntryResponseSchema,
   FsListResponseSchema,
   FsWriteResponseSchema,
   GetObjectiveResponseSchema,
   HealthResponseSchema,
   HistoryResponseSchema,
-  ListAgentActivityResponseSchema,
+  ListActivityResponseSchema,
   ListObjectivesResponseSchema,
+  ListUsersResponseSchema,
   MessageSchema,
   ObjectiveSchema,
   PushPayloadSchema,
   PushResultSchema,
   PushSubscriptionResponseSchema,
   RosterResponseSchema,
+  RotateTokenResponseSchema,
   SessionResponseSchema,
-  UploadAgentActivityResponseSchema,
+  TeammateSchema,
+  UploadActivityResponseSchema,
   VapidPublicKeyResponseSchema,
 } from './schemas.js';
 import type {
-  AgentActivityRow,
+  ActivityRow,
   BriefingResponse,
   CancelObjectiveRequest,
   CreateObjectiveRequest,
+  CreateUserRequest,
+  CreateUserResponse,
   DiscussObjectiveRequest,
+  EnrollTotpResponse,
   FsEntry,
   FsWriteResponse,
   GetObjectiveResponse,
   HealthResponse,
   HistoryQuery,
-  ListAgentActivityQuery,
+  ListActivityQuery,
   ListObjectivesQuery,
   Message,
   Objective,
@@ -56,12 +64,15 @@ import type {
   PushSubscriptionResponse,
   ReassignObjectiveRequest,
   RosterResponse,
+  RotateTokenResponse,
   SessionResponse,
+  Teammate,
   TotpLoginRequest,
   UpdateObjectiveRequest,
+  UpdateUserRequest,
   UpdateWatchersRequest,
-  UploadAgentActivityRequest,
-  UploadAgentActivityResponse,
+  UploadActivityRequest,
+  UploadActivityResponse,
   VapidPublicKeyResponse,
 } from './types.js';
 
@@ -412,39 +423,38 @@ export class Client {
   }
 
   /**
-   * Append agent activity events for `name`. Only the slot
-   * itself may POST its own activity (server returns 403 for any
-   * other caller). Used by the runner's streaming uploader to
-   * ship decoded HTTP exchanges + objective lifecycle markers to
-   * the broker in real time.
+   * Append activity events for `name`. Only the user itself may POST
+   * its own activity (server returns 403 for any other caller). Used
+   * by the agent runner's streaming uploader to ship decoded HTTP
+   * exchanges + objective lifecycle markers to the broker in real time.
    */
-  async uploadAgentActivity(
+  async uploadActivity(
     name: string,
-    payload: UploadAgentActivityRequest,
-  ): Promise<UploadAgentActivityResponse> {
-    const resp = await this.request(AGENT_PATHS.activity(name), {
+    payload: UploadActivityRequest,
+  ): Promise<UploadActivityResponse> {
+    const resp = await this.request(USER_PATHS.activity(name), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    return UploadAgentActivityResponseSchema.parse(await this.json(resp));
+    return UploadActivityResponseSchema.parse(await this.json(resp));
   }
 
   /**
-   * List agent activity events for `name`. Readable by the slot
-   * itself OR any director (non-directors reading other slots
-   * get 403). Supports range filtering by `from`/`to` timestamps
-   * and by kind. Returns newest-first up to `limit` rows.
+   * List activity events for `name`. Readable by the user itself OR
+   * any admin (other callers get 403). Supports range filtering by
+   * `from`/`to` timestamps and by kind. Returns newest-first up to
+   * `limit` rows.
    *
    * Objective traces are a view over this endpoint: query with
    * `from=objective.openedAt`, `to=objective.closedAt`, and
    * `kind=llm_exchange` to pull the LLM calls made during an
    * objective's lifetime.
    */
-  async listAgentActivity(
+  async listActivity(
     name: string,
-    query: ListAgentActivityQuery = {},
-  ): Promise<AgentActivityRow[]> {
+    query: ListActivityQuery = {},
+  ): Promise<ActivityRow[]> {
     const params = new URLSearchParams();
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
@@ -454,9 +464,81 @@ export class Client {
     }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const qs = params.toString();
-    const path = qs ? `${AGENT_PATHS.activity(name)}?${qs}` : AGENT_PATHS.activity(name);
+    const path = qs ? `${USER_PATHS.activity(name)}?${qs}` : USER_PATHS.activity(name);
     const resp = await this.request(path, { method: 'GET' });
-    return ListAgentActivityResponseSchema.parse(await this.json(resp)).activity;
+    return ListActivityResponseSchema.parse(await this.json(resp)).activity;
+  }
+
+  // ─────────────────────── Users ──────────────────────────────────
+
+  /**
+   * List all users on the team — names, roles, userTypes. Dual-auth
+   * (everyone sees the roster); identical payload to `roster()`
+   * without the presence data.
+   */
+  async listUsers(): Promise<Teammate[]> {
+    const resp = await this.request(PATHS.users, { method: 'GET' });
+    return ListUsersResponseSchema.parse(await this.json(resp)).users;
+  }
+
+  /**
+   * Create a new user. Admin-only. Returns the new user plus the
+   * plaintext bearer token (shown once); for humans also returns the
+   * TOTP secret + otpauth URI so the UI can render a QR.
+   */
+  async createUser(payload: CreateUserRequest): Promise<CreateUserResponse> {
+    const resp = await this.request(PATHS.users, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return CreateUserResponseSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * Update an existing user's userType or role. Admin-only. Enforces
+   * the "at least one admin must remain" invariant on demotion.
+   */
+  async updateUser(name: string, payload: UpdateUserRequest): Promise<Teammate> {
+    const resp = await this.request(USER_PATHS.one(name), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return TeammateSchema.parse(await this.json(resp));
+  }
+
+  /** Delete a user. Admin-only. Enforces the last-admin invariant. */
+  async deleteUser(name: string): Promise<void> {
+    const resp = await this.request(USER_PATHS.one(name), { method: 'DELETE' });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      throw new ClientError(
+        `deleteUser failed: ${resp.status} ${resp.statusText}`,
+        resp.status,
+        body,
+      );
+    }
+  }
+
+  /**
+   * Rotate a user's bearer token. Admin or self. Returns the new
+   * plaintext (shown once); the previous token is invalidated.
+   */
+  async rotateToken(name: string): Promise<RotateTokenResponse> {
+    const resp = await this.request(USER_PATHS.rotateToken(name), { method: 'POST' });
+    return RotateTokenResponseSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * (Re-)enroll a human user in TOTP. Admin or self. Agents (lead-agent,
+   * agent) are rejected with 409 — they authenticate via bearer token
+   * only. Returns a fresh secret + otpauth URI; any prior enrollment
+   * is replaced.
+   */
+  async enrollTotp(name: string): Promise<EnrollTotpResponse> {
+    const resp = await this.request(USER_PATHS.enrollTotp(name), { method: 'POST' });
+    return EnrollTotpResponseSchema.parse(await this.json(resp));
   }
 
   async history(query: HistoryQuery = {}): Promise<Message[]> {
@@ -601,12 +683,14 @@ export class Client {
   }
 
   /**
-   * Open a long-lived SSE subscription for `agentId` and yield messages as
-   * they arrive. Aborts cleanly when `signal` is triggered.
+   * Open a long-lived SSE subscription for the caller's user `name`
+   * and yield messages as they arrive. Aborts cleanly when `signal`
+   * is triggered. The server rejects `name` that doesn't match the
+   * authenticated identity with 403.
    */
-  async *subscribe(agentId: string, signal?: AbortSignal): AsyncIterable<Message> {
+  async *subscribe(name: string, signal?: AbortSignal): AsyncIterable<Message> {
     const url = new URL(PATHS.subscribe.replace(/^\//, ''), this.baseUrl);
-    url.searchParams.set('agentId', agentId);
+    url.searchParams.set('name', name);
 
     const headers = new Headers();
     headers.set(PROTOCOL_HEADER, String(PROTOCOL_VERSION));

@@ -14,7 +14,7 @@
  */
 
 import type {
-  AgentActivityRow,
+  ActivityRow,
   BriefingResponse,
   Objective,
   RosterResponse,
@@ -39,11 +39,11 @@ const originalFetch = globalThis.fetch;
 const COMMANDER_BRIEFING: BriefingResponse = {
   name: 'ACTUAL',
   role: 'individual-contributor',
-  authority: 'director',
+  userType: 'admin',
   team: { name: 'alpha-team', directive: 'Ship it', brief: '' },
   teammates: [
-    { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-    { name: 'ALPHA-1', role: 'implementer', authority: 'individual-contributor' },
+    { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' },
+    { name: 'ALPHA-1', role: 'implementer', userType: 'agent' },
   ],
   openObjectives: [],
   instructions: 'Lead the team.',
@@ -53,22 +53,22 @@ const OPERATOR_BRIEFING: BriefingResponse = {
   ...COMMANDER_BRIEFING,
   name: 'ALPHA-1',
   role: 'implementer',
-  authority: 'individual-contributor',
+  userType: 'agent',
 };
 
 const ROSTER: RosterResponse = {
   teammates: [
-    { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-    { name: 'ALPHA-1', role: 'implementer', authority: 'individual-contributor' },
+    { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' },
+    { name: 'ALPHA-1', role: 'implementer', userType: 'agent' },
   ],
   connected: [
     {
-      agentId: 'ALPHA-1',
+      name: 'ALPHA-1',
       connected: 1,
       createdAt: 1_700_000_000_000,
       lastSeen: 1_700_000_000_000,
       role: 'implementer',
-      authority: 'individual-contributor',
+      userType: 'agent',
     },
   ],
 };
@@ -90,9 +90,9 @@ const OBJECTIVE: Objective = {
   attachments: [],
 };
 
-const LLM_ROW: AgentActivityRow = {
+const LLM_ROW: ActivityRow = {
   id: 1,
-  slotName: 'ALPHA-1',
+  userName: 'ALPHA-1',
   createdAt: 1_700_000_000_500,
   event: {
     kind: 'llm_exchange',
@@ -126,9 +126,9 @@ const LLM_ROW: AgentActivityRow = {
   },
 };
 
-const OPAQUE_ROW: AgentActivityRow = {
+const OPAQUE_ROW: ActivityRow = {
   id: 2,
-  slotName: 'ALPHA-1',
+  userName: 'ALPHA-1',
   createdAt: 1_700_000_001_000,
   event: {
     kind: 'opaque_http',
@@ -150,16 +150,16 @@ const OPAQUE_ROW: AgentActivityRow = {
   },
 };
 
-const OPEN_ROW: AgentActivityRow = {
+const OPEN_ROW: ActivityRow = {
   id: 3,
-  slotName: 'ALPHA-1',
+  userName: 'ALPHA-1',
   createdAt: 1_700_000_002_000,
   event: { kind: 'objective_open', ts: 1_700_000_001_000, objectiveId: 'obj-1' },
 };
 
-const CLOSE_ROW: AgentActivityRow = {
+const CLOSE_ROW: ActivityRow = {
   id: 4,
-  slotName: 'ALPHA-1',
+  userName: 'ALPHA-1',
   createdAt: 1_700_000_003_000,
   event: {
     kind: 'objective_close',

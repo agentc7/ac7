@@ -4,11 +4,11 @@
  * Triggered when the server boots without a config file at the expected
  * path AND stdin is a TTY. Walks the individual-contributor through creating a
  * team (name, directive, brief) and its initial slots, generates
- * fresh random tokens per slot, optionally enrolls human-individual-contributor
+ * fresh random tokens per user, optionally enrolls human-individual-contributor
  * slots in TOTP for web-UI login, writes a hashed config to disk
  * (0o600), and returns the loaded `TeamConfig`.
  *
- * Authority model: the first slot is always a director (at least one
+ * UserType model: the first user is always a director (at least one
  * director is required). Subsequent slots prompt for their authority
  * tier (director / manager / individual-contributor) defaulting to individual-contributor.
  *
@@ -20,13 +20,13 @@
 
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
-import type { Authority, Role, Team } from '@agentc7/sdk/types';
+import type { UserType, Role, Team } from '@agentc7/sdk/types';
 // qrcode-terminal is CJS; default-import the namespace and destructure.
 import qrcodeTerminal from 'qrcode-terminal';
 import {
-  createSlotStore,
+  createUserStore,
   defaultHttpsConfig,
-  SlotLoadError,
+  UserLoadError,
   type TeamConfig,
   writeTeamConfig,
 } from './slots.js';
@@ -49,12 +49,12 @@ const TOKEN_PREFIX = 'ac7_';
 const TOTP_ISSUER = 'ac7';
 const TOTP_MAX_CONFIRM_ATTEMPTS = 3;
 
-interface WizardSlot {
+interface WizardUser {
   name: string;
   role: string;
-  authority: Authority;
+  userType: UserType;
   token: string;
-  /** Set when the user enrolls this slot in TOTP during the wizard. */
+  /** Set when the user enrolls in TOTP during the wizard. */
   totpSecret?: string | null;
 }
 
@@ -130,7 +130,7 @@ export const DEFAULT_ROLES: Record<string, Role> = {
 
 /**
  * Drive the wizard to completion, write the config file, and return
- * the loaded team config. Throws `SlotLoadError` if the IO is not
+ * the loaded team config. Throws `UserLoadError` if the IO is not
  * interactive — the CLI catches that and prints a friendly
  * non-interactive hint instead.
  */
@@ -142,7 +142,7 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Team
   const renderQr = options.qrRenderer ?? defaultQrRenderer;
 
   if (!io.isInteractive) {
-    throw new SlotLoadError(
+    throw new UserLoadError(
       `no config file at ${configPath} and stdin is not a TTY. ` +
         'Create the file manually, pass --config-path, or re-run interactively.',
     );
@@ -164,17 +164,17 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Team
   io.println('');
   io.println('-- slots --');
   io.println(`(built-in roles: ${Object.keys(DEFAULT_ROLES).join(', ')}; custom roles OK)`);
-  io.println(`(the first slot is the director — required for every team)`);
+  io.println(`(the first user is the director — required for every team)`);
 
-  const slots: WizardSlot[] = [];
+  const slots: WizardUser[] = [];
   const usedNames = new Set<string>();
 
   while (true) {
-    const slot = await collectSlot(io, usedNames, slots.length === 0, mintToken);
-    slots.push(slot);
-    usedNames.add(slot.name);
+    const user = await collectSlot(io, usedNames, slots.length === 0, mintToken);
+    slots.push(user);
+    usedNames.add(user.name);
 
-    const bannerLines = printTokenBanner(io, slot);
+    const bannerLines = printTokenBanner(io, user);
     await io.prompt('press enter once you have saved the token above ');
     io.redactLines?.(bannerLines + 1);
 
@@ -182,41 +182,41 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Team
     // (director + manager). Plain individual-contributors can still enroll later
     // via `ac7 enroll` — the wizard just defaults to "machine-plane
     // only" for the common case of AI-agent individual-contributor slots.
-    if (slot.authority !== 'individual-contributor') {
-      const totpSecret = await promptTotpEnrollment(io, slot, team, {
+    if (user.userType !== 'agent') {
+      const totpSecret = await promptTotpEnrollment(io, user, team, {
         mintTotpSecret,
         now: nowFn,
         renderQr,
       });
       if (totpSecret) {
-        slot.totpSecret = totpSecret;
+        user.totpSecret = totpSecret;
       }
     }
 
-    const more = (await io.prompt('add another slot? [y/N] ')).trim().toLowerCase();
+    const more = (await io.prompt('add another user? [y/N] ')).trim().toLowerCase();
     if (more !== 'y' && more !== 'yes') break;
   }
 
-  // Validate: at least one director. Since the first slot is always
+  // Validate: at least one admin. Since the first user is always
   // prompted with director as the default this is normally satisfied,
   // but a paranoid user could type `individual-contributor` — catch that here rather
   // than letting the loader reject the write.
-  const hasDirector = slots.some((s) => s.authority === 'director');
-  if (!hasDirector) {
-    throw new SlotLoadError(
-      'at least one slot must have authority=director. Re-run the wizard to set one.',
+  const hasAdmin = slots.some((s) => s.userType === 'admin');
+  if (!hasAdmin) {
+    throw new UserLoadError(
+      'at least one user must have userType=admin. Re-run the wizard to set one.',
     );
   }
 
   // Start from the 4 default roles, then auto-add a placeholder for
-  // any custom role a slot referenced.
+  // any custom role a user referenced.
   const roles: Record<string, Role> = { ...DEFAULT_ROLES };
-  for (const slot of slots) {
-    if (!Object.hasOwn(roles, slot.role)) {
-      roles[slot.role] = {
-        description: `(custom role defined by the wizard for ${slot.name}; edit me)`,
+  for (const user of slots) {
+    if (!Object.hasOwn(roles, user.role)) {
+      roles[user.role] = {
+        description: `(custom role defined by the wizard for ${user.name}; edit me)`,
         instructions:
-          `Custom role '${slot.role}' — replace this text with your own role notes. ` +
+          `Custom role '${user.role}' — replace this text with your own role notes. ` +
           'This is what the agent will see as its role-specific briefing.',
       };
     }
@@ -224,7 +224,7 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Team
   writeTeamConfig(configPath, team, roles, slots);
 
   io.println('');
-  io.println(`wrote team '${team.name}' with ${slots.length} slot(s) to`);
+  io.println(`wrote team '${team.name}' with ${slots.length} user(s) to`);
   io.println(`  ${configPath}`);
   io.println('file is chmod 600; tokens are stored as SHA-256 hashes only.');
   const enrolled = slots.filter((s) => s.totpSecret);
@@ -233,7 +233,7 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Team
   }
   io.println('');
 
-  const store = createSlotStore(slots);
+  const store = createUserStore(slots);
   return {
     team,
     roles,
@@ -282,34 +282,35 @@ async function collectSlot(
   usedNames: Set<string>,
   first: boolean,
   mintToken: () => string,
-): Promise<WizardSlot> {
+): Promise<WizardUser> {
   io.println(first ? '' : '');
   const name = await promptName(io, usedNames, first);
   const role = await promptRole(io, first);
-  const authority = await promptAuthority(io, first);
-  return { name, role, authority, token: mintToken() };
+  const userType = await promptUserType(io, first);
+  return { name, role, userType, token: mintToken() };
 }
 
-async function promptAuthority(io: WizardIO, first: boolean): Promise<Authority> {
-  // First slot defaults to director since every team must have
-  // at least one. Subsequent slots default to individual-contributor — the common
-  // case is AI-agent individual-contributors under a single human director.
-  const suggested: Authority = first ? 'director' : 'individual-contributor';
+async function promptUserType(io: WizardIO, first: boolean): Promise<UserType> {
+  // First user defaults to admin (every team needs at least one).
+  // Subsequent users default to agent — the common case is AI agents
+  // working under a single human admin.
+  const suggested: UserType = first ? 'admin' : 'agent';
   while (true) {
     const raw = (
-      await io.prompt(`authority [director | manager | individual-contributor] [${suggested}]: `)
+      await io.prompt(`userType [admin | operator | lead-agent | agent] [${suggested}]: `)
     )
       .trim()
       .toLowerCase();
     const candidate = raw.length === 0 ? suggested : raw;
     if (
-      candidate === 'director' ||
-      candidate === 'manager' ||
-      candidate === 'individual-contributor'
+      candidate === 'admin' ||
+      candidate === 'operator' ||
+      candidate === 'lead-agent' ||
+      candidate === 'agent'
     ) {
       return candidate;
     }
-    io.println('  authority must be one of: director, manager, individual-contributor');
+    io.println('  userType must be one of: admin, operator, lead-agent, agent');
   }
 }
 
@@ -373,14 +374,14 @@ async function promptRole(io: WizardIO, first: boolean): Promise<string> {
  * emitted. The caller passes the count to `redactLines` so the wipe
  * stays in sync with the banner if its shape is edited later.
  */
-function printTokenBanner(io: WizardIO, slot: WizardSlot): number {
+function printTokenBanner(io: WizardIO, user: WizardUser): number {
   const bar = '='.repeat(68);
   const lines = [
     '',
     bar,
-    `  ${slot.name} (${slot.role})`,
+    `  ${user.name} (${user.role})`,
     '',
-    `  ${slot.token}`,
+    `  ${user.token}`,
     bar,
     'save this token NOW — it will be hashed and removed from scrollback.',
   ];
@@ -389,7 +390,7 @@ function printTokenBanner(io: WizardIO, slot: WizardSlot): number {
 }
 
 /**
- * Offer TOTP enrollment for an editor-role slot. Returns the persisted
+ * Offer TOTP enrollment for an editor-role user. Returns the persisted
  * base32 secret on success, or `null` if the user declined.
  *
  * UX:
@@ -405,7 +406,7 @@ function printTokenBanner(io: WizardIO, slot: WizardSlot): number {
  */
 async function promptTotpEnrollment(
   io: WizardIO,
-  slot: WizardSlot,
+  user: WizardUser,
   _team: Team,
   deps: {
     mintTotpSecret: () => string;
@@ -415,12 +416,12 @@ async function promptTotpEnrollment(
 ): Promise<string | null> {
   // ── Visible header (stays on screen after enrollment) ───────────
   io.println('');
-  io.println(`-- web UI login for ${slot.name} --`);
+  io.println(`-- web UI login for ${user.name} --`);
   io.println('This role can sign into the browser UI with a 6-digit authenticator code.');
   io.println('Your bearer token stays as the recovery path if you skip this now.');
   const answer = (await io.prompt('enable web UI login? [Y/n] ')).trim().toLowerCase();
   if (answer === 'n' || answer === 'no') {
-    io.println(`  skipped — run \`ac7 enroll --slot ${slot.name}\` later to enable.`);
+    io.println(`  skipped — run \`ac7 enroll --user ${user.name}\` later to enable.`);
     return null;
   }
 
@@ -436,7 +437,7 @@ async function promptTotpEnrollment(
   const uri = otpauthUri({
     secret,
     issuer: TOTP_ISSUER,
-    label: `${TOTP_ISSUER}:${slot.name}`,
+    label: `${TOTP_ISSUER}:${user.name}`,
   });
   const qr = deps.renderQr(uri);
 
@@ -457,7 +458,7 @@ async function promptTotpEnrollment(
     // a single visual line.
     redactCount += 1;
     if (raw.length === 0) {
-      io.println(`  skipped — run \`ac7 enroll --slot ${slot.name}\` later to enable.`);
+      io.println(`  skipped — run \`ac7 enroll --user ${user.name}\` later to enable.`);
       redactCount += 1;
       io.redactLines?.(redactCount);
       return null;
@@ -474,7 +475,7 @@ async function promptTotpEnrollment(
   if (!confirmed) {
     io.println('  too many bad attempts — skipping web UI enrollment');
     redactCount += 1;
-    io.println(`  you can retry with \`ac7 enroll --slot ${slot.name}\` later`);
+    io.println(`  you can retry with \`ac7 enroll --user ${user.name}\` later`);
     redactCount += 1;
     io.redactLines?.(redactCount);
     return null;
@@ -485,7 +486,7 @@ async function promptTotpEnrollment(
   // prompt comes next. The visible header + Y/n answer stay put —
   // they're useful context, not sensitive.
   io.redactLines?.(redactCount);
-  io.println(`  ✓ enrollment confirmed for ${slot.name}`);
+  io.println(`  ✓ enrollment confirmed for ${user.name}`);
 
   return secret;
 }

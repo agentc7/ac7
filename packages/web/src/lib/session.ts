@@ -11,7 +11,7 @@
  * transitions stay auditable in one place.
  */
 
-import type { Authority, SessionResponse } from '@agentc7/sdk/types';
+import type { UserType, SessionResponse } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { getClient } from './client.js';
 
@@ -20,9 +20,9 @@ export type SessionState =
   | { status: 'anonymous' }
   | {
       status: 'authenticated';
-      slot: string;
+      user: string;
       role: string;
-      authority: Authority;
+      userType: UserType;
       expiresAt: number;
     };
 
@@ -106,13 +106,9 @@ export class LoginError extends Error {
 function authenticatedFrom(resp: SessionResponse): SessionState {
   return {
     status: 'authenticated',
-    slot: resp.slot,
+    user: resp.user,
     role: resp.role,
-    // Server always stamps an authority on the session response, but
-    // defend against an older server (or a malformed response) by
-    // falling back to the base tier — losing director/manager
-    // capabilities is safer than granting them implicitly.
-    authority: resp.authority ?? 'individual-contributor',
+    userType: resp.userType,
     expiresAt: resp.expiresAt,
   };
 }

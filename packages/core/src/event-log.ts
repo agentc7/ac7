@@ -18,9 +18,9 @@ export interface EventLogTailOptions {
 /**
  * Query filter for fetching thread history on behalf of a viewer.
  * Only rows "relevant to the viewer" are returned:
- *   - broadcasts (`agentId === null`), always
+ *   - broadcasts (`to === null`), always
  *   - DMs the viewer sent (`from === viewer`)
- *   - DMs addressed to the viewer (`agentId === viewer`)
+ *   - DMs addressed to the viewer (`to === viewer`)
  *
  * When `with` is set, the filter narrows to DMs between the viewer
  * and that other party (primary thread is excluded). Rows are
@@ -104,16 +104,16 @@ export class InMemoryEventLog implements EventLog {
 function matchesViewer(ev: Message, viewer: string, withOther?: string): boolean {
   if (withOther !== undefined) {
     // Narrowed DM view: only messages between `viewer` and `withOther`.
-    // A DM from viewer to withOther has from=viewer, agentId=withOther.
-    // A DM from withOther to viewer has from=withOther, agentId=viewer.
-    if (ev.agentId === null) return false;
-    if (ev.from === viewer && ev.agentId === withOther) return true;
-    if (ev.from === withOther && ev.agentId === viewer) return true;
+    // A DM from viewer to withOther has from=viewer, to=withOther.
+    // A DM from withOther to viewer has from=withOther, to=viewer.
+    if (ev.to === null) return false;
+    if (ev.from === viewer && ev.to === withOther) return true;
+    if (ev.from === withOther && ev.to === viewer) return true;
     return false;
   }
   // Default feed: broadcasts + any DM where viewer is either end.
-  if (ev.agentId === null) return true;
+  if (ev.to === null) return true;
   if (ev.from === viewer) return true;
-  if (ev.agentId === viewer) return true;
+  if (ev.to === viewer) return true;
   return false;
 }

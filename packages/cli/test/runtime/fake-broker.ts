@@ -11,7 +11,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import type { AddressInfo } from 'node:net';
 
 export interface FakeBrokerPush {
-  agentId?: string | null;
+  to?: string | null;
   title?: string | null;
   body: string;
   level?: string;
@@ -19,7 +19,7 @@ export interface FakeBrokerPush {
 }
 
 export interface SseSubscriber {
-  agentId: string;
+  name: string;
   write: (json: Record<string, unknown>) => void;
   close: () => void;
 }
@@ -29,7 +29,7 @@ export interface FakeBroker {
   url: string;
   pushes: FakeBrokerPush[];
   subscribers: SseSubscriber[];
-  waitForSubscriber: (agentId: string, timeoutMs?: number) => Promise<SseSubscriber>;
+  waitForSubscriber: (name: string, timeoutMs?: number) => Promise<SseSubscriber>;
   close: () => Promise<void>;
 }
 
@@ -86,7 +86,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
           // authority-gated tool surface (objectives_create /
           // _cancel / _reassign / _watchers). IndividualContributor-authority
           // behavior is tested at the unit level via defineTools.
-          authority: 'director',
+          userType: 'admin',
           team: {
             name: FAKE_BROKER_TEAM_NAME,
             directive: FAKE_BROKER_MISSION,
@@ -96,9 +96,9 @@ export async function startFakeBroker(): Promise<FakeBroker> {
             {
               name: FAKE_BROKER_NAME,
               role: 'implementer',
-              authority: 'individual-contributor',
+              userType: 'agent',
             },
-            { name: 'peer-1', role: 'reviewer', authority: 'individual-contributor' },
+            { name: 'peer-1', role: 'reviewer', userType: 'agent' },
           ],
           openObjectives: fakeBrokerObjectives,
           instructions:
@@ -118,18 +118,18 @@ export async function startFakeBroker(): Promise<FakeBroker> {
             {
               name: FAKE_BROKER_NAME,
               role: 'implementer',
-              authority: 'individual-contributor',
+              userType: 'agent',
             },
-            { name: 'peer-1', role: 'reviewer', authority: 'individual-contributor' },
+            { name: 'peer-1', role: 'reviewer', userType: 'agent' },
           ],
           connected: [
             {
-              agentId: 'peer-1',
+              name: 'peer-1',
               connected: 1,
               createdAt: 1_700_000_000_000,
               lastSeen: 1_700_000_000_000,
               role: 'reviewer',
-              authority: 'individual-contributor',
+              userType: 'agent',
             },
           ],
         }),
@@ -167,7 +167,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
           message: {
             id: `fake-${pushes.length}`,
             ts: Date.now(),
-            agentId: parsed.agentId ?? null,
+            to: parsed.to ?? null,
             from: FAKE_BROKER_NAME,
             title: parsed.title ?? null,
             body: parsed.body,
@@ -186,7 +186,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     }
 
     if (url.pathname === '/subscribe' && req.method === 'GET') {
-      const agentId = url.searchParams.get('agentId') ?? '';
+      const to = url.searchParams.get('name') ?? '';
       res.writeHead(200, {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
@@ -195,7 +195,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
       // Initial flush so the link's SSE parser has something to work with.
       res.write(': connected\n\n');
       const sub: SseSubscriber = {
-        agentId,
+        name: to,
         write: (json) => {
           res.write(`data: ${JSON.stringify(json)}\n\n`);
         },
@@ -223,14 +223,14 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     url: `http://127.0.0.1:${address.port}`,
     pushes,
     subscribers,
-    waitForSubscriber: async (agentId, timeoutMs = 3000) => {
+    waitForSubscriber: async (to, timeoutMs = 3000) => {
       const deadline = Date.now() + timeoutMs;
       while (Date.now() < deadline) {
-        const sub = subscribers.find((s) => s.agentId === agentId);
+        const sub = subscribers.find((s) => s.name === to);
         if (sub) return sub;
         await sleep(20);
       }
-      throw new Error(`timeout waiting for subscriber ${agentId}`);
+      throw new Error(`timeout waiting for subscriber ${to}`);
     },
     close: () =>
       new Promise((resolve) => {

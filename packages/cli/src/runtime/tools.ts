@@ -41,8 +41,8 @@ const MAX_RECENT_LIMIT = 500;
  * channel notifications, not baked into tool metadata.
  */
 export function defineTools(briefing: BriefingResponse): Tool[] {
-  const { name, role, authority, team, teammates } = briefing;
-  const identity = `${name} (role: ${role}, rank: ${authority})`;
+  const { name, role, userType, team, teammates } = briefing;
+  const identity = `${name} (role: ${role}, rank: ${userType})`;
   const others = teammates.filter((t) => t.name !== name);
   const teammateList =
     others.length > 0
@@ -259,7 +259,7 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
     // can see) or director authority. See `fs_shared` for a list of
     // files shared with you.
     ...buildFilesystemTools(name),
-    // ── Authority-gated tools ────────────────────────────────────────
+    // ── UserType-gated tools ────────────────────────────────────────
     //
     // These tools appear in the agent's toolbox only when their slot
     // holds the corresponding authority on the team. The server
@@ -416,8 +416,8 @@ function buildFilesystemTools(name: string): Tool[] {
 }
 
 function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
-  const { authority, team, name, teammates } = briefing;
-  if (authority === 'individual-contributor') return [];
+  const { userType, team, name, teammates } = briefing;
+  if (userType === 'agent') return [];
 
   const others = teammates.filter((t) => t.name !== name);
   const teammateList =
@@ -478,7 +478,7 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
 
   // objectives_cancel — director (any) or originating manager (own)
   const cancelScope =
-    authority === 'director'
+    userType === 'admin'
       ? 'You can cancel any non-terminal objective on the team.'
       : "You can cancel objectives you originated (created). Attempting to cancel someone else's objective will be refused by the server.";
   tools.push({
@@ -505,7 +505,7 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
 
   // objectives_watchers — director (any) or originating manager (own)
   const watchersScope =
-    authority === 'director'
+    userType === 'admin'
       ? 'You can manage watchers on any objective on the team.'
       : "You can manage watchers on objectives you originated. Attempting to modify watchers on someone else's objective will be refused by the server.";
   tools.push({
@@ -536,7 +536,7 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
   });
 
   // objectives_reassign — director only
-  if (authority === 'director') {
+  if (userType === 'admin') {
     tools.push({
       name: 'objectives_reassign',
       description:
@@ -634,7 +634,7 @@ async function handleRoster(
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
   const roster = await brokerClient.roster();
-  const connectedByName = new Map(roster.connected.map((a) => [a.agentId, a.connected]));
+  const connectedByName = new Map(roster.connected.map((a) => [a.name, a.connected]));
   if (roster.teammates.length === 0) {
     return textResult('team roster: (no slots defined)');
   }
@@ -642,7 +642,7 @@ async function handleRoster(
     const conn = connectedByName.get(t.name) ?? 0;
     const self = t.name === briefing.name ? ' (you)' : '';
     const state = conn > 0 ? `connected=${conn}` : 'offline';
-    const auth = t.authority !== 'individual-contributor' ? ` [${t.authority}]` : '';
+    const auth = t.userType !== 'agent' ? ` [${t.userType}]` : '';
     return `- ${t.name}${self} [${t.role}]${auth} ${state}`;
   });
   return textResult(`team ${briefing.team.name} roster:\n${lines.join('\n')}`);
@@ -686,7 +686,7 @@ async function handleSend(
   const attachments = await resolveAttachmentPaths(args.attachments, brokerClient);
   if ('error' in attachments) return errorResult(`send: ${attachments.error}`);
   const result = await brokerClient.push({
-    agentId: to,
+    to,
     body,
     title,
     level: levelResult.level,
@@ -893,7 +893,7 @@ async function handleObjectivesComplete(
   return textResult(`completed ${updated.id}. Result recorded and originator notified.`);
 }
 
-// ── Authority-gated handlers (defensive re-checks) ────────────────────
+// ── UserType-gated handlers (defensive re-checks) ────────────────────
 // The server is authoritative on permissions — if an individual-contributor somehow
 // invokes one of these tools we'll get a 403 at the broker. But a
 // fast local authority check gives a better error message and avoids
@@ -906,7 +906,7 @@ async function handleObjectivesCreate(
   brokerClient: BrokerClient,
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
-  if (briefing.authority !== 'director' && briefing.authority !== 'manager') {
+  if (briefing.userType !== 'admin' && (briefing.userType !== 'operator' && briefing.userType !== 'lead-agent')) {
     return errorResult('objectives_create: requires director or manager authority on the team');
   }
   const title = typeof args.title === 'string' ? args.title.trim() : '';
@@ -951,7 +951,7 @@ async function handleObjectivesCancel(
   brokerClient: BrokerClient,
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
-  if (briefing.authority !== 'director' && briefing.authority !== 'manager') {
+  if (briefing.userType !== 'admin' && (briefing.userType !== 'operator' && briefing.userType !== 'lead-agent')) {
     return errorResult('objectives_cancel: requires director or manager authority on the team');
   }
   const id = typeof args.id === 'string' ? args.id : '';
@@ -966,7 +966,7 @@ async function handleObjectivesWatchers(
   brokerClient: BrokerClient,
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
-  if (briefing.authority !== 'director' && briefing.authority !== 'manager') {
+  if (briefing.userType !== 'admin' && (briefing.userType !== 'operator' && briefing.userType !== 'lead-agent')) {
     return errorResult('objectives_watchers: requires director or manager authority on the team');
   }
   const id = typeof args.id === 'string' ? args.id : '';
@@ -996,7 +996,7 @@ async function handleObjectivesReassign(
   brokerClient: BrokerClient,
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
-  if (briefing.authority !== 'director') {
+  if (briefing.userType !== 'admin') {
     return errorResult('objectives_reassign: requires director authority on the team');
   }
   const id = typeof args.id === 'string' ? args.id : '';
@@ -1142,7 +1142,7 @@ async function handleFsShared(brokerClient: BrokerClient): Promise<CallToolResul
 function formatRecentLine(m: Message): string {
   const ts = formatAgentTimestamp(m.ts);
   const from = m.from ?? '?';
-  const target = m.agentId ? ` → ${m.agentId}` : '';
+  const target = m.to ? ` → ${m.to}` : '';
   const title = m.title ? ` [${m.title}]` : '';
   return `  ${ts} ${from}${target}${title}: ${m.body}`;
 }

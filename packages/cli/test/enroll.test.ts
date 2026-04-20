@@ -45,11 +45,11 @@ const VALID_CONFIG_JSON = JSON.stringify({
     'individual-contributor': { description: '', instructions: '' },
     implementer: { description: '', instructions: '' },
   },
-  slots: [
+  users: [
     {
       name: 'ACTUAL',
       role: 'individual-contributor',
-      authority: 'director',
+      userType: 'admin',
       tokenHash: `sha256:${'a'.repeat(64)}`,
     },
     { name: 'ALPHA-1', role: 'implementer', tokenHash: `sha256:${'b'.repeat(64)}` },

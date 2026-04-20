@@ -64,7 +64,7 @@ export async function runSetupCommand(
   } catch (err) {
     if (err instanceof UsageError) throw err;
     if (!(err instanceof server.ConfigNotFoundError)) {
-      if (err instanceof server.SlotLoadError) {
+      if (err instanceof server.UserLoadError) {
         throw new UsageError(`setup: existing config at ${configPath} is invalid: ${err.message}`);
       }
       throw err;
@@ -96,7 +96,7 @@ export async function runSetupCommand(
     stdout('  ac7 serve         # one-shot server run against this config');
     stdout('');
   } catch (err) {
-    if (err instanceof server.SlotLoadError) {
+    if (err instanceof server.UserLoadError) {
       throw new UsageError(`setup: ${err.message}`);
     }
     throw err;

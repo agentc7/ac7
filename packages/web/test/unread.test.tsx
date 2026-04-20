@@ -35,7 +35,7 @@ function mkMsg(overrides: Partial<Message> = {}): Message {
   return {
     id: 'm',
     ts: 1_700_000_000_000,
-    agentId: null,
+    to: null,
     from: 'przy-1',
     title: null,
     body: 'hello',
@@ -131,10 +131,10 @@ describe('markThreadRead', () => {
 describe('initializeLastReadFromStore', () => {
   it('seeds lastRead for every thread in the store to the latest ts', () => {
     appendMessages('me', [
-      mkMsg({ id: 'p1', ts: 10, agentId: null, from: 'other' }),
-      mkMsg({ id: 'p2', ts: 20, agentId: null, from: 'other' }),
-      mkMsg({ id: 'd1', ts: 50, agentId: 'build-bot', from: 'me' }),
-      mkMsg({ id: 'd2', ts: 60, agentId: 'build-bot', from: 'me' }),
+      mkMsg({ id: 'p1', ts: 10, to: null, from: 'other' }),
+      mkMsg({ id: 'p2', ts: 20, to: null, from: 'other' }),
+      mkMsg({ id: 'd1', ts: 50, to: 'build-bot', from: 'me' }),
+      mkMsg({ id: 'd2', ts: 60, to: 'build-bot', from: 'me' }),
     ]);
     initializeLastReadFromStore();
     expect(lastReadByThread.value.get('primary')).toBe(20);
@@ -155,8 +155,8 @@ describe('<Sidebar /> unread indicators', () => {
   function setRoster() {
     roster.value = {
       teammates: [
-        { name: 'me', role: 'individual-contributor', authority: 'director' },
-        { name: 'build-bot', role: 'implementer', authority: 'individual-contributor' },
+        { name: 'me', role: 'individual-contributor', userType: 'admin' },
+        { name: 'build-bot', role: 'implementer', userType: 'agent' },
       ],
       connected: [],
     };
@@ -164,7 +164,7 @@ describe('<Sidebar /> unread indicators', () => {
 
   it('shows no badge when everything is read', () => {
     setRoster();
-    appendMessages('me', [mkMsg({ id: 'a', ts: 10, agentId: null, from: 'other' })]);
+    appendMessages('me', [mkMsg({ id: 'a', ts: 10, to: null, from: 'other' })]);
     initializeLastReadFromStore();
     render(<Sidebar viewer="me" />);
     // No pill element visible (no text content that's just a digit).
@@ -173,7 +173,7 @@ describe('<Sidebar /> unread indicators', () => {
 
   it('shows a count badge on Team Chat for unread broadcasts', () => {
     setRoster();
-    appendMessages('me', [mkMsg({ id: 'a', ts: 10, agentId: null, from: 'other' })]);
+    appendMessages('me', [mkMsg({ id: 'a', ts: 10, to: null, from: 'other' })]);
     // Explicitly mark lastRead so it's clear this is unread territory.
     lastReadByThread.value = new Map([['primary', 5]]);
     // Navigate away from primary so the "active thread suppresses
@@ -186,8 +186,8 @@ describe('<Sidebar /> unread indicators', () => {
   it('shows a count badge on a teammate DM row for unread DMs', () => {
     setRoster();
     appendMessages('me', [
-      mkMsg({ id: 'a', ts: 10, agentId: 'me', from: 'build-bot' }),
-      mkMsg({ id: 'b', ts: 20, agentId: 'me', from: 'build-bot' }),
+      mkMsg({ id: 'a', ts: 10, to: 'me', from: 'build-bot' }),
+      mkMsg({ id: 'b', ts: 20, to: 'me', from: 'build-bot' }),
     ]);
     lastReadByThread.value = new Map([['dm:build-bot', 0]]);
     // Make sure we're NOT viewing that thread (otherwise auto-active suppresses it).
@@ -198,7 +198,7 @@ describe('<Sidebar /> unread indicators', () => {
 
   it('suppresses the badge on the currently-active thread', () => {
     setRoster();
-    appendMessages('me', [mkMsg({ id: 'a', ts: 10, agentId: 'me', from: 'build-bot' })]);
+    appendMessages('me', [mkMsg({ id: 'a', ts: 10, to: 'me', from: 'build-bot' })]);
     lastReadByThread.value = new Map([['dm:build-bot', 0]]);
     // Pretend the user is actively on the DM — the Shell's auto-read
     // effect would normally have bumped lastRead already. The
@@ -212,7 +212,7 @@ describe('<Sidebar /> unread indicators', () => {
 
   it('bolds the label text when a thread has unread messages', () => {
     setRoster();
-    appendMessages('me', [mkMsg({ id: 'a', ts: 10, agentId: 'me', from: 'build-bot' })]);
+    appendMessages('me', [mkMsg({ id: 'a', ts: 10, to: 'me', from: 'build-bot' })]);
     lastReadByThread.value = new Map([['dm:build-bot', 0]]);
     view.value = { kind: 'thread', key: 'primary' };
     render(<Sidebar viewer="me" />);
@@ -222,7 +222,7 @@ describe('<Sidebar /> unread indicators', () => {
 
   it('does NOT count self-sends as unread on Team Chat', () => {
     setRoster();
-    appendMessages('me', [mkMsg({ id: 'a', ts: 10, agentId: null, from: 'me' })]);
+    appendMessages('me', [mkMsg({ id: 'a', ts: 10, to: null, from: 'me' })]);
     lastReadByThread.value = new Map([['primary', 0]]);
     view.value = { kind: 'overview' };
     render(<Sidebar viewer="me" />);
@@ -235,7 +235,7 @@ describe('<Sidebar /> unread indicators', () => {
       mkMsg({
         id: `m${i}`,
         ts: i + 1,
-        agentId: null,
+        to: null,
         from: 'other',
       }),
     );
@@ -253,7 +253,7 @@ describe('<Sidebar /> unread indicators', () => {
     // Nothing yet.
     expect(screen.queryByText('1')).toBeNull();
     // Append a message then re-render via the signal path.
-    appendMessages('me', [mkMsg({ id: 'a', ts: 10, agentId: null, from: 'other' })]);
+    appendMessages('me', [mkMsg({ id: 'a', ts: 10, to: null, from: 'other' })]);
     lastReadByThread.value = new Map([['primary', 0]]);
     // Access the signal to force a subscription (the render already
     // read it, but a test-side read also triggers re-render on signal

@@ -10,7 +10,7 @@
  *   1. Load the team config at the resolved path.
  *   2. Error clearly if `--slot` is missing or the name isn't
  *      known.
- *   3. Call `rotateSlotToken` — atomic config rewrite at `0o600`
+ *   3. Call `rotateUserToken` — atomic config rewrite at `0o600`
  *      with a fresh `ac7_<base64url>` token; every other slot's
  *      state (authority, role, TOTP) is preserved byte-for-byte.
  *   4. Print the NEW plaintext token once with explicit save-now
@@ -61,8 +61,8 @@ export async function runRotateCommand(
   }
 
   // Defensive load — we want to fail fast with a useful error if the
-  // config is missing or invalid rather than let `rotateSlotToken`
-  // surface the SlotLoadError raw.
+  // config is missing or invalid rather than let `rotateUserToken`
+  // surface the UserLoadError raw.
   let config: Awaited<ReturnType<typeof server.loadTeamConfigFromFile>>;
   try {
     config = server.loadTeamConfigFromFile(configPath);
@@ -72,13 +72,13 @@ export async function runRotateCommand(
         `rotate: no config file at ${configPath}\n  Run \`ac7 setup\` first to create one.`,
       );
     }
-    if (err instanceof server.SlotLoadError) {
+    if (err instanceof server.UserLoadError) {
       throw new UsageError(`rotate: ${err.message}`);
     }
     throw err;
   }
 
-  if (!config.store.resolveByName(input.slot)) {
+  if (!config.store.findByName(input.slot)) {
     const known = config.store.names().join(', ');
     throw new UsageError(
       `rotate: no slot with name '${input.slot}' in ${configPath}\n` +
@@ -88,9 +88,9 @@ export async function runRotateCommand(
 
   let newToken: string;
   try {
-    newToken = server.rotateSlotToken(configPath, input.slot);
+    newToken = server.rotateUserToken(configPath, input.slot);
   } catch (err) {
-    if (err instanceof server.SlotLoadError) {
+    if (err instanceof server.UserLoadError) {
       throw new UsageError(`rotate: ${err.message}`);
     }
     throw err;

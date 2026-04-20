@@ -1,7 +1,7 @@
 /**
  * Streaming agent-activity uploader.
  *
- * Batches `AgentActivityEvent`s and ships them to the broker via
+ * Batches `ActivityEvent`s and ships them to the broker via
  * `POST /agents/:name/activity`. Fire-and-forget from the
  * caller's point of view: `enqueue(event)` returns immediately,
  * the uploader flushes on its own schedule.
@@ -28,7 +28,7 @@
  */
 
 import type { Client as BrokerClient } from '@agentc7/sdk/client';
-import type { AgentActivityEvent } from '@agentc7/sdk/types';
+import type { ActivityEvent } from '@agentc7/sdk/types';
 
 export interface ActivityUploaderOptions {
   brokerClient: BrokerClient;
@@ -55,7 +55,7 @@ const BACKOFF_START_MS = 200;
 const BACKOFF_MAX_MS = 30_000;
 
 interface QueuedEvent {
-  event: AgentActivityEvent;
+  event: ActivityEvent;
   bytes: number;
 }
 
@@ -92,7 +92,7 @@ export class ActivityUploader {
    * Add an event to the outbound queue. Non-blocking. If the queue
    * is at its hard cap, the oldest event is dropped first.
    */
-  enqueue(event: AgentActivityEvent): void {
+  enqueue(event: ActivityEvent): void {
     if (this.closed) {
       this.log('activity-uploader: dropping event on closed uploader', { kind: event.kind });
       return;
@@ -212,7 +212,7 @@ export class ActivityUploader {
 
     const events = batch.map((q) => q.event);
     try {
-      const result = await this.brokerClient.uploadAgentActivity(this.name, { events });
+      const result = await this.brokerClient.uploadActivity(this.name, { events });
       this.log('activity-uploader: flushed', {
         accepted: result.accepted,
         remaining: this.queue.length,

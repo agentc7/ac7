@@ -9,7 +9,7 @@
  *   - .dot for connection state
  */
 
-import type { Agent } from '@agentc7/sdk/types';
+import type { Presence } from '@agentc7/sdk/types';
 import { briefing } from '../lib/briefing.js';
 import { roster } from '../lib/roster.js';
 import { senderTextClass } from '../lib/theme.js';
@@ -49,8 +49,8 @@ export function RosterPanel({ viewer }: RosterPanelProps) {
       </div>
     );
   }
-  const connectedByName = new Map<string, Agent>(r.connected.map((a) => [a.agentId, a]));
-  const isDirector = b?.authority === 'director';
+  const connectedByName = new Map<string, Presence>(r.connected.map((a) => [a.name, a]));
+  const isDirector = b?.userType === 'admin';
 
   return (
     <div
@@ -111,8 +111,8 @@ export function RosterPanel({ viewer }: RosterPanelProps) {
                         (you)
                       </span>
                     )}
-                    <span class={authorityBadgeClass(t.authority)}>
-                      {formatAuthority(t.authority)}
+                    <span class={authorityBadgeClass(t.userType)}>
+                      {formatAuthority(t.userType)}
                     </span>
                   </div>
                   <div style="font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase">
@@ -166,7 +166,7 @@ export function RosterPanel({ viewer }: RosterPanelProps) {
                     class="row-action flex-shrink-0"
                     style="padding:10px 16px;font-family:var(--f-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-top:1px solid var(--rule);text-align:left"
                   >
-                    → Agent
+                    → Presence
                   </button>
                 )}
               </li>

@@ -85,14 +85,14 @@ export function Header() {
           class="font-display truncate"
           style="font-weight:700;font-size:18px;letter-spacing:-0.01em;color:var(--ink);line-height:1"
         >
-          {s.slot}
+          {s.user}
         </span>
 
-        {/* Authority pill — `.badge` from theme.css with state variants */}
+        {/* UserType pill — `.badge` from theme.css with state variants */}
         <span
-          class={`badge ${s.authority === 'director' ? 'solid' : s.authority === 'manager' ? 'ember' : 'soft'} hidden sm:inline-flex flex-shrink-0`}
+          class={`badge ${s.userType === 'admin' ? 'solid' : s.userType === 'operator' || s.userType === 'lead-agent' ? 'ember' : 'soft'} hidden sm:inline-flex flex-shrink-0`}
         >
-          {formatAuthority(s.authority)}
+          {formatAuthority(s.userType)}
         </span>
 
         {b && (
@@ -127,7 +127,7 @@ export function Header() {
   );
 }
 
-function formatAuthority(authority: string): string {
-  if (authority === 'individual-contributor') return 'IC';
-  return authority;
+function formatAuthority(userType: string): string {
+  if (userType === "agent") return 'IC';
+  return userType;
 }

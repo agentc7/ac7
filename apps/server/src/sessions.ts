@@ -3,8 +3,8 @@
  *
  * A session is a server-issued capability: after a human completes
  * TOTP verification, we mint a random `id`, store a row binding that
- * id to a slot name, and return it as an HttpOnly cookie. Every
- * subsequent request presenting the cookie resolves back to the slot
+ * id to a user name, and return it as an HttpOnly cookie. Every
+ * subsequent request presenting the cookie resolves back to the user
  * via the dual-auth middleware, same as a bearer-token request.
  *
  * Lifetime: sliding 7-day TTL. Every `touch()` bumps `last_seen` and
@@ -42,7 +42,7 @@ const CREATE_SCHEMA = `
 
 export interface SessionRow {
   id: string;
-  slotName: string;
+  userName: string;
   createdAt: number;
   expiresAt: number;
   lastSeen: number;
@@ -61,7 +61,7 @@ interface RawRow {
 function rowToSession(row: RawRow): SessionRow {
   return {
     id: row.id,
-    slotName: row.slot_callsign,
+    userName: row.slot_callsign,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     lastSeen: row.last_seen,
@@ -96,18 +96,18 @@ export class SessionStore {
   }
 
   /**
-   * Mint a fresh session for `slotName`. Returns the row so the
+   * Mint a fresh session for `userName`. Returns the row so the
    * caller can put the `id` in a Set-Cookie header and return the
    * `expiresAt` to the SPA.
    */
-  create(slotName: string, userAgent: string | null): SessionRow {
+  create(userName: string, userAgent: string | null): SessionRow {
     const id = randomBytes(SESSION_ID_BYTES).toString('base64url');
     const now = this.now();
     const expiresAt = now + SESSION_TTL_MS;
-    this.insertStmt.run(id, slotName, now, expiresAt, now, userAgent);
+    this.insertStmt.run(id, userName, now, expiresAt, now, userAgent);
     return {
       id,
-      slotName,
+      userName,
       createdAt: now,
       expiresAt,
       lastSeen: now,

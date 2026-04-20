@@ -1,7 +1,7 @@
 /**
  * Team briefing composition.
  *
- * Turns the raw team config + a specific slot into a `BriefingResponse`
+ * Turns the raw team config + a specific user into a `BriefingResponse`
  * with a pre-composed `instructions` string ready for the MCP link to
  * hand to `new Server({instructions})`.
  *
@@ -24,10 +24,10 @@
  * description build), but no longer rendered into the prose.
  */
 
-import type { BriefingResponse, Role, Slot, Team, Teammate } from '@agentc7/sdk/types';
+import type { BriefingResponse, Role, User, Team, Teammate } from '@agentc7/sdk/types';
 
 export interface ComposeBriefingInput {
-  self: Slot;
+  self: User;
   selfRole: Role;
   team: Team;
   /** Every teammate on the team, including the caller. */
@@ -43,7 +43,7 @@ export interface ComposeBriefingInput {
 }
 
 /**
- * Compose the briefing response for a slot. Returns the structured
+ * Compose the briefing response for a user. Returns the structured
  * data plus the pre-rendered `instructions` string.
  */
 export function composeBriefing(input: ComposeBriefingInput): BriefingResponse {
@@ -54,7 +54,7 @@ export function composeBriefing(input: ComposeBriefingInput): BriefingResponse {
   return {
     name: self.name,
     role: self.role,
-    authority: self.authority,
+    userType: self.userType,
     team,
     teammates,
     openObjectives,
@@ -62,12 +62,12 @@ export function composeBriefing(input: ComposeBriefingInput): BriefingResponse {
   };
 }
 
-function composeInstructions(self: Slot, selfRole: Role, team: Team, others: Teammate[]): string {
+function composeInstructions(self: User, selfRole: Role, team: Team, others: Teammate[]): string {
   const longestName = others.reduce((max, t) => Math.max(max, t.name.length), 0);
   const teammateLines = others.map(
     (t) =>
       `  ${t.name.padEnd(longestName)} — ${t.role}${
-        t.authority !== 'individual-contributor' ? ` [${t.authority}]` : ''
+        t.userType !== 'agent' ? ` [${t.userType}]` : ''
       }`,
   );
 
@@ -78,7 +78,7 @@ function composeInstructions(self: Slot, selfRole: Role, team: Team, others: Tea
     // they're individual-contributors (and therefore can't create/cancel/reassign
     // objectives) as explicitly as directors and managers know
     // their own rank. Absence of a line is not self-knowledge.
-    `Your rank: ${self.authority}`,
+    `Your rank: ${self.userType}`,
     ``,
     `Team: ${team.name}`,
     `Directive: ${team.directive}`,

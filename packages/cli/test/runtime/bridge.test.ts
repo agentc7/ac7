@@ -267,7 +267,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     sub.write({
       id: 'msg-forwarded',
       ts: 1_700_000_001_000,
-      agentId: AGENT_ID,
+      to: AGENT_ID,
       from: 'alice',
       title: 'build broken',
       body: 'ci failed on main',
@@ -301,7 +301,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     sub.write({
       id: 'msg-self-echo',
       ts: 1_700_000_003_000,
-      agentId: null,
+      to: null,
       from: AGENT_ID,
       title: null,
       body: 'this is my own broadcast — should be dropped',
@@ -311,7 +311,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     sub.write({
       id: 'msg-post-echo',
       ts: 1_700_000_003_500,
-      agentId: null,
+      to: null,
       from: 'alice',
       title: null,
       body: 'real message after the self-echo',
@@ -340,7 +340,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     sub.write({
       id: 'msg-spoof',
       ts: 1_700_000_002_000,
-      agentId: AGENT_ID,
+      to: AGENT_ID,
       from: 'alice',
       title: 'genuine title',
       body: 'real body',

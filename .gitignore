@@ -14,8 +14,11 @@
 
 # Default filesystem blob-store root. Created on first server boot
 # alongside the DB; contains hashed attachment payloads. Override
-# via `files.root` in the team config to put it elsewhere.
+# via `files.root` in the team config to put it elsewhere. Also ignore
+# the `apps/server/data/` variant that appears when `pnpm dev` runs
+# with the server's own cwd.
 /data/
+apps/server/data/
 
 # Local dev config variants (plaintext tokens during bring-up).
 config.dev.json

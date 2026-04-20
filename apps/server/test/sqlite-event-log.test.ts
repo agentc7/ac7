@@ -40,7 +40,7 @@ describe('SqliteEventLog', () => {
     const m1: Message = {
       id: 'a',
       ts: 1,
-      agentId: 'x',
+      to: 'x',
       from: 'alice',
       title: 'hi',
       body: 'hello',
@@ -59,7 +59,7 @@ describe('SqliteEventLog', () => {
     const m: Message = {
       id: 'legacy',
       ts: 5,
-      agentId: null,
+      to: null,
       from: null,
       title: null,
       body: 'no sender known',
@@ -78,7 +78,7 @@ describe('SqliteEventLog', () => {
       await log.append({
         id: `m${i}`,
         ts: i,
-        agentId: null,
+        to: null,
         from: null,
         title: null,
         body: `msg ${i}`,
@@ -101,7 +101,7 @@ describe('SqliteEventLog', () => {
     await first.append({
       id: 'persist',
       ts: 10,
-      agentId: 'a1',
+      to: 'a1',
       from: 'alice',
       title: null,
       body: 'survive',

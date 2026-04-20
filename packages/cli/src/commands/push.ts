@@ -16,7 +16,7 @@ const VALID_LEVELS: readonly LogLevel[] = [
 ];
 
 export interface PushCommandInput {
-  agentId?: string;
+  to?: string;
   body: string;
   title?: string;
   level?: string;
@@ -30,10 +30,10 @@ export function buildPushPayload(input: PushCommandInput): PushPayload {
   if (!input.body || input.body.length === 0) {
     throw new UsageError('push: --body is required');
   }
-  if (!input.broadcast && !input.agentId) {
+  if (!input.broadcast && !input.to) {
     throw new UsageError('push: either --agent <id> or --broadcast is required');
   }
-  if (input.broadcast && input.agentId) {
+  if (input.broadcast && input.to) {
     throw new UsageError('push: --broadcast and --agent are mutually exclusive');
   }
 
@@ -48,7 +48,7 @@ export function buildPushPayload(input: PushCommandInput): PushPayload {
   }
 
   return {
-    agentId: input.broadcast ? null : input.agentId,
+    to: input.broadcast ? null : input.to,
     title: input.title ?? null,
     body: input.body,
     level,
@@ -59,7 +59,7 @@ export function buildPushPayload(input: PushCommandInput): PushPayload {
 export async function runPushCommand(input: PushCommandInput, client: Client): Promise<string> {
   const payload = buildPushPayload(input);
   const result = await client.push(payload);
-  const target = payload.agentId ?? '*broadcast*';
+  const target = payload.to ?? '*broadcast*';
   return (
     `delivered to ${target}\n` +
     `  message_id: ${result.message.id}\n` +

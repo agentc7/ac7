@@ -98,7 +98,7 @@ export function ObjectiveCreate() {
   const r = roster.value;
   const teammates = r?.teammates ?? [];
   const sess = session.value;
-  const viewer = sess.status === 'authenticated' ? sess.slot : '';
+  const viewer = sess.status === 'authenticated' ? sess.user : '';
   const uploads = attachmentUploads.value;
   const anyUploading = uploads.some((u) => u.status === 'uploading');
   const readyAttachments = uploads

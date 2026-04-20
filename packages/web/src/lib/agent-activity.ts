@@ -1,5 +1,5 @@
 /**
- * Agent activity stream — hydration + live SSE tailing for a single
+ * Presence activity stream — hydration + live SSE tailing for a single
  * slot's `/agents/:name/activity` timeline.
  *
  * There's exactly one active subscription at a time — a new call
@@ -8,13 +8,13 @@
  * the AgentPage component mounts/unmounts across navigation.
  *
  * On open:
- *   1. Hydrate via `listAgentActivity(name)` — the server
+ *   1. Hydrate via `listActivity(name)` — the server
  *      returns up to 200 most-recent rows newest-first. We flip
  *      them into oldest-first order so the UI can prepend newer
  *      events naturally at the top.
  *   2. Open the EventSource at `/agents/:name/activity/stream`.
  *   3. Every incoming `message` event is a JSON-encoded
- *      `AgentActivityRow`. Append to the head of the list
+ *      `ActivityRow`. Append to the head of the list
  *      (newest-first), de-duping by `id` so a backfill
  *      immediately after a reconnect doesn't double-render.
  *
@@ -24,8 +24,8 @@
  * pagination.
  */
 
-import { AgentActivityRowSchema } from '@agentc7/sdk/schemas';
-import type { AgentActivityRow } from '@agentc7/sdk/types';
+import { ActivityRowSchema } from '@agentc7/sdk/schemas';
+import type { ActivityRow } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { getClient } from './client.js';
 
@@ -36,7 +36,7 @@ const MAX_ROWS = 500;
  * Rows for the currently-subscribed agent, **newest-first**. Empty
  * when no subscription is active or before hydration completes.
  */
-export const agentActivityRows = signal<AgentActivityRow[]>([]);
+export const agentActivityRows = signal<ActivityRow[]>([]);
 
 /** True while the SSE connection is live. False before open / after drop. */
 export const agentActivityConnected = signal(false);
@@ -89,7 +89,7 @@ export function startAgentActivitySubscribe(options: StartAgentActivityOptions):
 
   const hydrate = async (): Promise<void> => {
     try {
-      const rows = await getClient().listAgentActivity(name, { limit: hydrationLimit });
+      const rows = await getClient().listActivity(name, { limit: hydrationLimit });
       if (cancelled) return;
       // Server returns newest-first; we keep that ordering in the
       // signal (render reads left-to-right as newest-first).
@@ -124,7 +124,7 @@ export function startAgentActivitySubscribe(options: StartAgentActivityOptions):
     source.addEventListener('message', (event) => {
       if (!event.data) return;
       try {
-        const row = AgentActivityRowSchema.parse(JSON.parse(event.data));
+        const row = ActivityRowSchema.parse(JSON.parse(event.data));
         mergeRow(row);
       } catch (err) {
         onError?.(err);
@@ -161,7 +161,7 @@ export function startAgentActivitySubscribe(options: StartAgentActivityOptions):
  * we leave the list alone. Inserts new rows at the head and
  * enforces the `MAX_ROWS` cap on the tail.
  */
-function mergeRow(row: AgentActivityRow): void {
+function mergeRow(row: ActivityRow): void {
   const existing = agentActivityRows.value;
   if (existing.some((r) => r.id === row.id)) return;
   // Insert in ts-descending position. The common case is that the
@@ -197,7 +197,7 @@ export async function loadOlderAgentActivity(limit = 100): Promise<void> {
   agentActivityLoading.value = true;
   try {
     // `to = oldest.ts - 1` so we don't re-fetch the oldest row.
-    const older = await getClient().listAgentActivity(name, {
+    const older = await getClient().listActivity(name, {
       to: oldest.event.ts - 1,
       limit,
     });
@@ -208,7 +208,7 @@ export async function loadOlderAgentActivity(limit = 100): Promise<void> {
     const merged = [...rows, ...older];
     // Dedup by id as a safety net against concurrent inserts.
     const seen = new Set<number>();
-    const deduped: AgentActivityRow[] = [];
+    const deduped: ActivityRow[] = [];
     for (const r of merged) {
       if (seen.has(r.id)) continue;
       seen.add(r.id);

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Authority } from '@agentc7/sdk/types';
+import type { UserType } from '@agentc7/sdk/types';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type DatabaseSyncInstance, openDatabase } from '../../src/db.js';
 import { LocalBlobStore } from '../../src/files/blob-store.js';
@@ -11,8 +11,8 @@ import {
   type ViewerContext,
 } from '../../src/files/filesystem-store.js';
 
-function viewer(name: string, authority: Authority = 'individual-contributor'): ViewerContext {
-  return { name, authority };
+function viewer(name: string, userType: UserType = 'agent'): ViewerContext {
+  return { name, userType };
 }
 
 describe('SqliteFilesystemStore', () => {
@@ -74,7 +74,7 @@ describe('SqliteFilesystemStore', () => {
       const result = await store.writeFile({
         path: '/alice/from-director.txt',
         mimeType: 'text/plain',
-        writer: viewer('diana', 'director'),
+        writer: viewer('diana', 'admin'),
         source: Buffer.from('hello'),
       });
       expect(result.entry.owner).toBe('alice');
@@ -187,7 +187,7 @@ describe('SqliteFilesystemStore', () => {
         writer: viewer('alice'),
         source: Buffer.from('vault'),
       });
-      const diana = viewer('diana', 'director');
+      const diana = viewer('diana', 'admin');
       expect(store.stat('/alice/vault.txt', diana)?.size).toBe(5);
       expect(store.list('/alice', diana).map((e) => e.name)).toContain('vault.txt');
     });
@@ -212,7 +212,7 @@ describe('SqliteFilesystemStore', () => {
       });
       expect(store.list('/', alice).map((e) => e.name)).toEqual(['alice']);
       expect(store.list('/', bob).map((e) => e.name)).toEqual(['bob']);
-      expect(store.list('/', viewer('diana', 'director')).map((e) => e.name).sort()).toEqual([
+      expect(store.list('/', viewer('diana', 'admin')).map((e) => e.name).sort()).toEqual([
         'alice',
         'bob',
       ]);

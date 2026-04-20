@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { Broker } from '@agentc7/core';
 import type { Role, Team } from '@agentc7/sdk/types';
 import { serve } from '@hono/node-server';
-import { type AgentActivityStore, createSqliteAgentActivityStore } from './agent-activity.js';
+import { type ActivityStore, createSqliteActivityStore } from './agent-activity.js';
 import { createApp } from './app.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
 import { createHttp2ServerFactory } from './https/server.js';
@@ -44,7 +44,7 @@ import { SessionStore } from './sessions.js';
 import {
   defaultHttpsConfig,
   type HttpsConfig,
-  type SlotStore,
+  type UserStore,
   type WebPushConfig,
   writeWebPushConfig,
 } from './slots.js';
@@ -52,8 +52,8 @@ import { SqliteEventLog } from './sqlite-event-log.js';
 import { SERVER_VERSION } from './version.js';
 
 export {
-  type AgentActivityStore,
-  createSqliteAgentActivityStore,
+  type ActivityStore,
+  createSqliteActivityStore,
   parseDurationMs,
   pruneActivityDb,
 } from './agent-activity.js';
@@ -75,22 +75,22 @@ export { SESSION_COOKIE_NAME, SESSION_TTL_MS, SessionStore } from './sessions.js
 export {
   CONFIG_FILE_COMMENT,
   ConfigNotFoundError,
-  createSlotStore,
+  createUserStore,
   defaultConfigPath,
   defaultHttpsConfig,
-  enrollSlotTotp,
+  enrollUserTotp,
   exampleConfig,
-  generateSlotToken,
+  generateUserToken,
   type HttpsConfig,
   hashToken,
-  type LoadedSlot,
+  type LoadedUser,
   loadTeamConfigFromFile,
-  rotateSlotToken,
-  SlotLoadError,
-  type SlotStore,
+  rotateUserToken,
+  UserLoadError,
+  type UserStore,
   setKek,
   type TeamConfig,
-  teammatesFromStore,
+  teammatesFromUsers,
   writeTeamConfig,
 } from './slots.js';
 export {
@@ -108,8 +108,8 @@ export {
 export { SERVER_VERSION };
 
 export interface RunServerOptions {
-  /** Fully-loaded slot store — the caller is responsible for building this. */
-  slots: SlotStore;
+  /** Fully-loaded user store — the caller is responsible for building this. */
+  slots: UserStore;
   /** Team config (name, directive, brief). */
   team: Team;
   /** Role definitions keyed by role name. */
@@ -277,7 +277,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // derivation rules.
   const activityDbPath = options.activityDbPath ?? defaultActivityDbPath(dbPath);
   const activityDb: DatabaseSyncInstance = openDatabase(activityDbPath);
-  const agentActivityStore: AgentActivityStore = createSqliteAgentActivityStore(activityDb);
+  const activityStore: ActivityStore = createSqliteActivityStore(activityDb);
 
   // Virtual filesystem for file attachments. Blob store holds
   // content-addressed bytes on disk; the filesystem store holds path
@@ -325,7 +325,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
       error: (msg, ctx) => log.error(msg, ctx),
     },
   });
-  broker.seedSlots(options.slots.slots());
+  broker.seedUsers(options.slots.slots());
 
   // Shutdown fan-out: when stop() is called, abort this controller;
   // every open SSE stream listens and tears down. Without this, idle
@@ -368,14 +368,14 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   /**
    * Liveness lookup for the push policy — a name is "live" if
    * the broker registry reports at least one connected subscriber.
-   * `broker.listAgents()` is a cheap snapshot; we call it once per
+   * `broker.listPresences()` is a cheap snapshot; we call it once per
    * push dispatch (not per recipient) in practice, since dispatch
    * builds its own view.
    */
   const isLive = (name: string): boolean => {
-    const agents = broker.listAgents();
+    const agents = broker.listPresences();
     for (const a of agents) {
-      if (a.agentId === name) return a.connected > 0;
+      if (a.name === name) return a.connected > 0;
     }
     return false;
   };
@@ -407,7 +407,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     team: options.team,
     roles: options.roles,
     objectives: objectivesStore,
-    agentActivity: agentActivityStore,
+    activityStore: activityStore,
     files: filesStore,
     ...(options.maxFileSize !== undefined ? { maxFileSize: options.maxFileSize } : {}),
     version: SERVER_VERSION,

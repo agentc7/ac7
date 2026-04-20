@@ -1,21 +1,26 @@
 /**
  * Broker — the runtime-agnostic core of ac7.
  *
- * Ties the agent registry to an event log and handles the push fanout.
- * Knows nothing about HTTP, MCP, or persistence; runtime adapters layer
- * those on top.
+ * Ties the presence registry to an event log and handles the push
+ * fanout. Knows nothing about HTTP, MCP, or persistence; runtime
+ * adapters layer those on top.
  *
- * Identity model: every authenticated caller occupies a slot with a
- * unique `name`. The broker enforces `agentId === name` on
- * register and subscribe, so a slot can only act on its own agent.
- * DMs go to the target agent and also fan out to the sender's agent
- * (if registered), which keeps multiple live sessions of the same
- * slot in sync with zero client-side bookkeeping.
+ * Identity model: every authenticated caller is a user with a unique
+ * `name`. The broker enforces `name === context.name` on register
+ * and subscribe, so a user can only act on their own connection. DMs
+ * go to the target user and also fan out to the sender's own
+ * connection (if registered), which keeps multiple live sessions of
+ * the same user in sync with zero client-side bookkeeping.
  */
 
-import type { Agent, Message, PushPayload, PushResult, Slot } from '@agentc7/sdk/types';
+import type { Message, Presence, PushPayload, PushResult, User } from '@agentc7/sdk/types';
 import type { EventLog } from './event-log.js';
-import { AgentIdentityError, AgentRegistry, type AgentState, type Subscriber } from './registry.js';
+import {
+  PresenceIdentityError,
+  PresenceRegistry,
+  type PresenceState,
+  type Subscriber,
+} from './registry.js';
 
 export interface BrokerLogger {
   warn(message: string, context?: Record<string, unknown>): void;
@@ -47,7 +52,7 @@ export interface BrokerOptions {
 
 /**
  * Per-push context supplied by the runtime adapter. `from` is the
- * authenticated slot's name; the broker stamps it onto
+ * authenticated user's name; the broker stamps it onto
  * `message.from` verbatim and never reads sender identity from the
  * payload. Pass `from: null` for unauthenticated / system-originated
  * pushes (tests, internal fanout).
@@ -58,10 +63,10 @@ export interface PushContext {
 
 /**
  * Per-register / per-subscribe context. `name` is the caller's
- * authenticated identity — the broker checks it matches the
- * `agentId` being registered/subscribed. Pass `name: null` to
- * skip the check (tests, in-process core usage without a runtime).
- * `role` is cosmetic and surfaces on the agent's roster entry.
+ * authenticated identity — the broker checks it matches the target
+ * name being registered/subscribed. Pass `name: null` to skip the
+ * check (tests, in-process core usage without a runtime). `role` is
+ * cosmetic and surfaces on the user's presence entry.
  */
 export interface IdentityContext {
   name?: string | null;
@@ -69,7 +74,7 @@ export interface IdentityContext {
 }
 
 export interface RegistrationResult {
-  agentId: string;
+  name: string;
   registeredAt: number;
 }
 
@@ -139,7 +144,7 @@ async function boundedParallel<T>(
 }
 
 export class Broker {
-  private readonly registry = new AgentRegistry();
+  private readonly registry = new PresenceRegistry();
   private readonly eventLog: EventLog;
   private readonly now: () => number;
   private readonly idFactory: () => string;
@@ -162,55 +167,54 @@ export class Broker {
   }
 
   /**
-   * Explicitly register an agent so it shows up in listAgents(). If
-   * `context.name` is supplied it must equal `agentId`; any
-   * mismatch throws `AgentIdentityError`. Core tests skip the check
-   * by passing no context.
+   * Explicitly register a user's presence so it shows up in
+   * listPresences(). If `context.name` is supplied it must equal
+   * `name`; any mismatch throws `PresenceIdentityError`. Core tests
+   * skip the check by passing no context.
    */
   async register(
-    agentId: string,
+    name: string,
     context: IdentityContext = EMPTY_IDENTITY,
   ): Promise<RegistrationResult> {
-    this.assertIdentity(agentId, context.name);
-    const state = this.registry.registerOrGet(agentId, this.now(), context.role ?? null);
+    this.assertIdentity(name, context.name);
+    const state = this.registry.registerOrGet(name, this.now(), context.role ?? null);
     return {
-      agentId: state.agent.agentId,
-      registeredAt: state.agent.createdAt,
+      name: state.presence.name,
+      registeredAt: state.presence.createdAt,
     };
   }
 
   /**
-   * Pre-populate the registry with every slot defined in the team
+   * Pre-populate the registry with every user defined in the team
    * config. Called once at server boot so the roster shows the full
-   * team structure even before anyone has connected. Connection state
-   * is still tracked live via SSE subscribers; seeding only creates
-   * the zero-subscriber AgentState entry.
+   * team structure even before anyone has connected. Connection
+   * state is still tracked live via SSE subscribers; seeding only
+   * creates the zero-subscriber PresenceState entry.
    */
-  seedSlots(slots: Iterable<Slot>): void {
+  seedUsers(users: Iterable<User>): void {
     const ts = this.now();
-    for (const slot of slots) {
-      this.registry.registerOrGet(slot.name, ts, slot.role, slot.authority);
+    for (const u of users) {
+      this.registry.registerOrGet(u.name, ts, u.role, u.userType);
     }
   }
 
   /**
-   * Push a message to one agent (if `payload.agentId` is set) or
-   * broadcast to all registered agents. Always writes to the event
-   * log. Always returns the constructed Message so callers can
-   * surface IDs.
+   * Push a message to one user (if `payload.to` is set) or broadcast
+   * to every registered user. Always writes to the event log.
+   * Always returns the constructed Message so callers can surface IDs.
    *
    * For targeted pushes, the message also fans out to the sender's
-   * own agent if one is registered — multi-device sync, free of
+   * own presence if one is registered — multi-device sync, free of
    * charge. The sender-fanout does not count toward `delivery.targets`
    * (which still reports the primary recipient count).
    */
   async push(payload: PushPayload, context: PushContext = { from: null }): Promise<PushResult> {
     const ts = this.now();
-    const targetId = payload.agentId ?? null;
+    const targetName = payload.to ?? null;
     const message: Message = {
       id: this.idFactory(),
       ts,
-      agentId: targetId,
+      to: targetName,
       from: context.from,
       title: payload.title ?? null,
       body: payload.body,
@@ -221,11 +225,11 @@ export class Broker {
 
     await this.eventLog.append(message);
 
-    const recipients = new Set<AgentState>();
-    if (targetId) {
-      const target = this.registry.get(targetId);
+    const recipients = new Set<PresenceState>();
+    if (targetName) {
+      const target = this.registry.get(targetName);
       if (target) recipients.add(target);
-      if (context.from && context.from !== targetId) {
+      if (context.from && context.from !== targetName) {
         const sender = this.registry.get(context.from);
         if (sender) recipients.add(sender);
       }
@@ -238,16 +242,16 @@ export class Broker {
 
     // Flatten (state, subscriber) pairs once so one bounded-concurrency
     // sweep covers every subscriber across every recipient. With the
-    // old nested serial await, one slow SSE writer on agent A would
-    // head-of-line-block delivery to agent B — fine at 1–3 subscribers
-    // per slot in v0 tests, visibly broken at team scale under
+    // old nested serial await, one slow SSE writer on user A would
+    // head-of-line-block delivery to user B — fine at 1–3 subscribers
+    // per user in v0 tests, visibly broken at team scale under
     // backpressure. See `fanoutConcurrency` in BrokerOptions for the
     // tunable; default 32 stays well above real-world subscriber
     // counts while bounding pathological broadcast cases.
-    type FanoutTask = { state: AgentState; sub: Subscriber };
+    type FanoutTask = { state: PresenceState; sub: Subscriber };
     const tasks: FanoutTask[] = [];
     for (const state of targetStates) {
-      state.agent.lastSeen = ts;
+      state.presence.lastSeen = ts;
       // Snapshot subscribers before collecting — a subscriber callback
       // is allowed to mutate the Set (e.g. self-unsubscribe, or trigger
       // cleanup that removes another subscriber). Iterating a live
@@ -267,7 +271,7 @@ export class Broker {
       },
       ({ state }, err) => {
         this.logger.warn('subscriber threw during delivery', {
-          agentId: state.agent.agentId,
+          name: state.presence.name,
           messageId: message.id,
           error: err instanceof Error ? err.message : String(err),
         });
@@ -277,48 +281,48 @@ export class Broker {
     return {
       delivery: {
         sse,
-        targets: targetId ? (this.registry.has(targetId) ? 1 : 0) : targetStates.length,
+        targets: targetName ? (this.registry.has(targetName) ? 1 : 0) : targetStates.length,
       },
       message,
     };
   }
 
   /**
-   * Attach a subscriber. The agent is auto-registered if unknown so
+   * Attach a subscriber. The user is auto-registered if unknown so
    * callers don't have to make a separate register() call. Identity
    * is checked the same way as `register` — a mismatched name
-   * throws `AgentIdentityError`.
+   * throws `PresenceIdentityError`.
    */
   subscribe(
-    agentId: string,
+    name: string,
     callback: Subscriber,
     context: IdentityContext = EMPTY_IDENTITY,
   ): () => void {
-    this.assertIdentity(agentId, context.name);
-    const state = this.registry.registerOrGet(agentId, this.now(), context.role ?? null);
+    this.assertIdentity(name, context.name);
+    const state = this.registry.registerOrGet(name, this.now(), context.role ?? null);
     state.subscribers.add(callback);
     return () => {
-      const current = this.registry.get(agentId);
+      const current = this.registry.get(name);
       current?.subscribers.delete(callback);
     };
   }
 
-  listAgents(): Agent[] {
+  listPresences(): Presence[] {
     return this.registry.list();
   }
 
-  hasAgent(agentId: string): boolean {
-    return this.registry.has(agentId);
+  hasUser(name: string): boolean {
+    return this.registry.has(name);
   }
 
   getEventLog(): EventLog {
     return this.eventLog;
   }
 
-  private assertIdentity(agentId: string, name: string | null | undefined): void {
+  private assertIdentity(target: string, name: string | null | undefined): void {
     if (name == null) return;
-    if (name !== agentId) {
-      throw new AgentIdentityError(agentId, name);
+    if (name !== target) {
+      throw new PresenceIdentityError(target, name);
     }
   }
 }

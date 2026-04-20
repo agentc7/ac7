@@ -1,5 +1,5 @@
 import { Client } from '@agentc7/sdk/client';
-import type { Agent, Message, PushResult, Teammate } from '@agentc7/sdk/types';
+import type { Presence, Message, PushResult, Teammate } from '@agentc7/sdk/types';
 import { describe, expect, it } from 'vitest';
 import { buildPushPayload, runPushCommand, UsageError } from '../src/commands/push.js';
 import { runRosterCommand } from '../src/commands/roster.js';
@@ -20,7 +20,7 @@ function jsonResponse(body: unknown): Response {
 
 describe('buildPushPayload', () => {
   it('rejects missing body', () => {
-    expect(() => buildPushPayload({ body: '', agentId: 'a' })).toThrow(UsageError);
+    expect(() => buildPushPayload({ body: '', to: 'a' })).toThrow(UsageError);
   });
 
   it('rejects when neither --agent nor --broadcast is set', () => {
@@ -28,20 +28,20 @@ describe('buildPushPayload', () => {
   });
 
   it('rejects when both --agent and --broadcast are set', () => {
-    expect(() => buildPushPayload({ body: 'hi', agentId: 'a', broadcast: true })).toThrow(
+    expect(() => buildPushPayload({ body: 'hi', to: 'a', broadcast: true })).toThrow(
       UsageError,
     );
   });
 
   it('rejects an invalid --level', () => {
-    expect(() => buildPushPayload({ body: 'hi', agentId: 'a', level: 'bogus' })).toThrow(
+    expect(() => buildPushPayload({ body: 'hi', to: 'a', level: 'bogus' })).toThrow(
       UsageError,
     );
   });
 
   it('targeted push produces an agentId payload', () => {
-    const p = buildPushPayload({ body: 'hi', agentId: 'a1', title: 't' });
-    expect(p.agentId).toBe('a1');
+    const p = buildPushPayload({ body: 'hi', to: 'a1', title: 't' });
+    expect(p.to).toBe('a1');
     expect(p.body).toBe('hi');
     expect(p.title).toBe('t');
     expect(p.level).toBe('info');
@@ -49,7 +49,7 @@ describe('buildPushPayload', () => {
 
   it('broadcast produces a null agentId payload', () => {
     const p = buildPushPayload({ body: 'hi', broadcast: true });
-    expect(p.agentId).toBe(null);
+    expect(p.to).toBe(null);
   });
 
   it('honors a valid --level', () => {
@@ -63,7 +63,7 @@ describe('runPushCommand', () => {
     const fakeMessage: Message = {
       id: 'msg-x',
       ts: 1,
-      agentId: 'a1',
+      to: 'a1',
       from: 'alice',
       title: null,
       body: 'hi',
@@ -88,7 +88,7 @@ describe('runPushCommand', () => {
         return jsonResponse(fakeResult);
       }),
     });
-    const out = await runPushCommand({ agentId: 'a1', body: 'hi' }, client);
+    const out = await runPushCommand({ to: 'a1', body: 'hi' }, client);
     expect(captured.method).toBe('POST');
     expect(captured.path).toBe('/push');
     expect(out).toContain('delivered to a1');
@@ -101,17 +101,17 @@ describe('runPushCommand', () => {
 describe('runRosterCommand', () => {
   it('renders a formatted table when teammates exist', async () => {
     const teammates: Teammate[] = [
-      { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-      { name: 'ALPHA-1', role: 'implementer', authority: 'individual-contributor' },
+      { name: 'ACTUAL', role: 'agent', userType: 'admin' },
+      { name: 'ALPHA-1', role: 'implementer', userType: 'agent' },
     ];
-    const connected: Agent[] = [
+    const connected: Presence[] = [
       {
-        agentId: 'ACTUAL',
+        name: 'ACTUAL',
         connected: 1,
         createdAt: 1_700_000_000_000,
         lastSeen: 1_700_000_100_000,
-        role: 'individual-contributor',
-        authority: 'director',
+        role: 'agent',
+        userType: 'admin',
       },
     ];
     const client = new Client({
@@ -123,7 +123,7 @@ describe('runRosterCommand', () => {
     expect(out).toContain('name');
     expect(out).toContain('ACTUAL');
     expect(out).toContain('ALPHA-1');
-    expect(out).toContain('individual-contributor');
+    expect(out).toContain('agent');
     expect(out).toContain('implementer');
   });
 

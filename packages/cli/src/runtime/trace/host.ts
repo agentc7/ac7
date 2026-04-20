@@ -24,7 +24,7 @@ import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Client as BrokerClient } from '@agentc7/sdk/client';
-import type { AgentActivityEvent, TraceEntry } from '@agentc7/sdk/types';
+import type { ActivityEvent, TraceEntry } from '@agentc7/sdk/types';
 import { ActivityUploader } from './activity-uploader.js';
 import { extractEntries, type HttpExchange } from './anthropic.js';
 import { type Http1Exchange, Http1Reassembler } from './http1-reassembler.js';
@@ -208,12 +208,12 @@ export async function startTraceHost(options: TraceHostOptions): Promise<TraceHo
 
 /**
  * Turn a raw HTTP/1.1 exchange from the reassembler into an
- * `AgentActivityEvent` the uploader can ship. This runs the
+ * `ActivityEvent` the uploader can ship. This runs the
  * existing anthropic extractor + redaction pipeline on each
  * exchange individually, so secrets are scrubbed before any bytes
  * leave the runner process.
  */
-function exchangeToActivity(exchange: Http1Exchange): AgentActivityEvent | null {
+function exchangeToActivity(exchange: Http1Exchange): ActivityEvent | null {
   const httpExchange: HttpExchange = {
     request: {
       method: exchange.request.method,

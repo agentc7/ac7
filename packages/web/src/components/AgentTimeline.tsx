@@ -25,12 +25,12 @@
  */
 
 import type {
-  AgentActivityEvent,
-  AgentActivityLlmExchange,
-  AgentActivityObjectiveClose,
-  AgentActivityObjectiveOpen,
-  AgentActivityOpaqueHttp,
-  AgentActivityRow,
+  ActivityEvent,
+  ActivityLlmExchange,
+  ActivityObjectiveClose,
+  ActivityObjectiveOpen,
+  ActivityOpaqueHttp,
+  ActivityRow,
   AnthropicContentBlock,
   AnthropicMessagesEntry,
 } from '@agentc7/sdk/types';
@@ -45,7 +45,7 @@ import {
 import { highlightXmlTags } from '../lib/channel-highlight.js';
 import { selectObjectiveDetail } from '../lib/view.js';
 
-type KindFilter = Record<AgentActivityEvent['kind'], boolean>;
+type KindFilter = Record<ActivityEvent['kind'], boolean>;
 
 const DEFAULT_FILTERS: KindFilter = {
   objective_open: true,
@@ -116,7 +116,7 @@ export function AgentTimeline() {
 }
 
 function FilterBar({ filters }: { filters: KindFilter }) {
-  const kinds: Array<{ key: AgentActivityEvent['kind']; label: string }> = [
+  const kinds: Array<{ key: ActivityEvent['kind']; label: string }> = [
     { key: 'llm_exchange', label: 'LLM' },
     { key: 'opaque_http', label: 'HTTP' },
     { key: 'objective_open', label: 'obj open' },
@@ -144,7 +144,7 @@ function FilterBar({ filters }: { filters: KindFilter }) {
   );
 }
 
-function RowRenderer({ row }: { row: AgentActivityRow }) {
+function RowRenderer({ row }: { row: ActivityRow }) {
   const event = row.event;
   switch (event.kind) {
     case 'objective_open':
@@ -158,7 +158,7 @@ function RowRenderer({ row }: { row: AgentActivityRow }) {
   }
 }
 
-function ObjectiveOpenRow({ event }: { event: AgentActivityObjectiveOpen }) {
+function ObjectiveOpenRow({ event }: { event: ActivityObjectiveOpen }) {
   return (
     <div
       class="flex items-center gap-3"
@@ -178,7 +178,7 @@ function ObjectiveOpenRow({ event }: { event: AgentActivityObjectiveOpen }) {
   );
 }
 
-function ObjectiveCloseRow({ event }: { event: AgentActivityObjectiveClose }) {
+function ObjectiveCloseRow({ event }: { event: ActivityObjectiveClose }) {
   return (
     <div
       class="flex items-center gap-3"
@@ -198,7 +198,7 @@ function ObjectiveCloseRow({ event }: { event: AgentActivityObjectiveClose }) {
   );
 }
 
-function LlmExchangeRow({ event }: { event: AgentActivityLlmExchange }) {
+function LlmExchangeRow({ event }: { event: ActivityLlmExchange }) {
   const usage = event.entry.response?.usage;
   return (
     <div style="border:1px solid var(--rule);border-radius:var(--r-sm);background:var(--ice);padding:12px">
@@ -231,7 +231,7 @@ function LlmExchangeRow({ event }: { event: AgentActivityLlmExchange }) {
   );
 }
 
-function OpaqueHttpRow({ event }: { event: AgentActivityOpaqueHttp }) {
+function OpaqueHttpRow({ event }: { event: ActivityOpaqueHttp }) {
   const entry = event.entry;
   return (
     <div style="font-family:var(--f-mono);font-size:12px;border-left:2px solid var(--rule-strong);padding:6px 12px">

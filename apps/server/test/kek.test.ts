@@ -139,7 +139,7 @@ describe('resolveKek', () => {
  * Regression: every server entry point that loads or writes the
  * team config MUST install the KEK first, or
  * `loadTeamConfigFromFile` will return `enc-v1:...` ciphertext
- * in the in-memory `LoadedSlot.totpSecret` field and TOTP login
+ * in the in-memory `LoadedUser.totpSecret` field and TOTP login
  * silently rejects every code (since `Secret.fromBase32` can't parse
  * the ciphertext).
  *

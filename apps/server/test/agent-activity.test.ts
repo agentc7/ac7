@@ -2,8 +2,8 @@
  * Agent activity endpoint tests.
  *
  * Covers the full permission matrix and query surface for
- * `POST /agents/:name/activity` and
- * `GET /agents/:name/activity`:
+ * `POST /users/:name/activity` and
+ * `GET /users/:name/activity`:
  *
  *   POST: only the slot itself may upload. Directors reading
  *         someone else's activity is fine; directors WRITING
@@ -22,14 +22,14 @@
  */
 
 import { Broker, InMemoryEventLog } from '@agentc7/core';
-import { AGENT_PATHS } from '@agentc7/sdk/protocol';
-import type { AgentActivityEvent, ListAgentActivityResponse, Role, Team } from '@agentc7/sdk/types';
+import { USER_PATHS } from '@agentc7/sdk/protocol';
+import type { ActivityEvent, ListActivityResponse, Role, Team } from '@agentc7/sdk/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSqliteAgentActivityStore } from '../src/agent-activity.js';
+import { createSqliteActivityStore } from '../src/agent-activity.js';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { SessionStore } from '../src/sessions.js';
-import { createSlotStore } from '../src/slots.js';
+import { createUserStore } from '../src/slots.js';
 
 const CMD_TOKEN = 'ac7_test_director';
 const ASSIGNEE_TOKEN = 'ac7_test_assignee';
@@ -52,18 +52,18 @@ function makeApp() {
     now: () => 1_700_000_000_000,
     idFactory: () => 'msg-fixed',
   });
-  const slots = createSlotStore([
-    { name: 'ACTUAL', role: 'individual-contributor', authority: 'director', token: CMD_TOKEN },
+  const slots = createUserStore([
+    { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin', token: CMD_TOKEN },
     { name: 'ALPHA-1', role: 'implementer', token: ASSIGNEE_TOKEN },
     { name: 'BRAVO-1', role: 'implementer', token: OTHER_TOKEN },
   ]);
   const db = openDatabase(':memory:');
-  const agentActivity = createSqliteAgentActivityStore(db);
+  const activityStore = createSqliteActivityStore(db);
   const app = createApp({
     broker,
     slots,
     sessions: new SessionStore(db),
-    agentActivity,
+    activityStore,
     team: TEAM,
     roles: ROLES,
     version: '0.0.0',
@@ -74,7 +74,7 @@ function makeApp() {
       error: vi.fn(),
     },
   });
-  return { app, agentActivity, db };
+  return { app, activityStore, db };
 }
 
 function bearer(token: string): RequestInit {
@@ -95,7 +95,7 @@ function post(token: string, body: unknown): RequestInit {
 function sampleEvent(
   ts: number,
   kind: 'llm_exchange' | 'opaque_http' = 'llm_exchange',
-): AgentActivityEvent {
+): ActivityEvent {
   if (kind === 'llm_exchange') {
     return {
       kind: 'llm_exchange',
@@ -148,7 +148,7 @@ function sampleEvent(
   };
 }
 
-describe('POST /agents/:name/activity', () => {
+describe('POST /users/:name/activity', () => {
   let app: ReturnType<typeof makeApp>['app'];
 
   beforeEach(() => {
@@ -157,7 +157,7 @@ describe('POST /agents/:name/activity', () => {
 
   it('accepts events from the slot itself and returns the count', async () => {
     const res = await app.request(
-      AGENT_PATHS.activity('ALPHA-1'),
+      USER_PATHS.activity('ALPHA-1'),
       post(ASSIGNEE_TOKEN, { events: [sampleEvent(1_700_000_000_000)] }),
     );
     expect(res.status).toBe(201);
@@ -167,7 +167,7 @@ describe('POST /agents/:name/activity', () => {
 
   it('rejects uploads targeting another slot (even from a director)', async () => {
     const res = await app.request(
-      AGENT_PATHS.activity('ALPHA-1'),
+      USER_PATHS.activity('ALPHA-1'),
       post(CMD_TOKEN, { events: [sampleEvent(1_700_000_000_000)] }),
     );
     expect(res.status).toBe(403);
@@ -175,7 +175,7 @@ describe('POST /agents/:name/activity', () => {
 
   it('rejects uploads from an unrelated teammate', async () => {
     const res = await app.request(
-      AGENT_PATHS.activity('ALPHA-1'),
+      USER_PATHS.activity('ALPHA-1'),
       post(OTHER_TOKEN, { events: [sampleEvent(1_700_000_000_000)] }),
     );
     expect(res.status).toBe(403);
@@ -183,7 +183,7 @@ describe('POST /agents/:name/activity', () => {
 
   it('rejects malformed event payloads', async () => {
     const res = await app.request(
-      AGENT_PATHS.activity('ALPHA-1'),
+      USER_PATHS.activity('ALPHA-1'),
       post(ASSIGNEE_TOKEN, { events: [{ kind: 'bogus', ts: 1 }] }),
     );
     expect(res.status).toBe(400);
@@ -191,24 +191,24 @@ describe('POST /agents/:name/activity', () => {
 
   it('rejects empty event lists (schema requires at least one)', async () => {
     const res = await app.request(
-      AGENT_PATHS.activity('ALPHA-1'),
+      USER_PATHS.activity('ALPHA-1'),
       post(ASSIGNEE_TOKEN, { events: [] }),
     );
     expect(res.status).toBe(400);
   });
 });
 
-describe('GET /agents/:name/activity', () => {
+describe('GET /users/:name/activity', () => {
   let app: ReturnType<typeof makeApp>['app'];
-  let agentActivity: ReturnType<typeof makeApp>['agentActivity'];
+  let activityStore: ReturnType<typeof makeApp>['activityStore'];
 
   beforeEach(() => {
     const fixture = makeApp();
     app = fixture.app;
-    agentActivity = fixture.agentActivity;
+    activityStore = fixture.activityStore;
 
     // Seed three events at different timestamps + kinds.
-    agentActivity.append('ALPHA-1', [
+    activityStore.append('ALPHA-1', [
       sampleEvent(1_000, 'llm_exchange'),
       sampleEvent(2_000, 'opaque_http'),
       sampleEvent(3_000, 'llm_exchange'),
@@ -216,42 +216,42 @@ describe('GET /agents/:name/activity', () => {
   });
 
   it('returns all events for the slot itself', async () => {
-    const res = await app.request(AGENT_PATHS.activity('ALPHA-1'), bearer(ASSIGNEE_TOKEN));
+    const res = await app.request(USER_PATHS.activity('ALPHA-1'), bearer(ASSIGNEE_TOKEN));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as ListAgentActivityResponse;
+    const body = (await res.json()) as ListActivityResponse;
     expect(body.activity).toHaveLength(3);
   });
 
   it('returns all events to a director reading another slot', async () => {
-    const res = await app.request(AGENT_PATHS.activity('ALPHA-1'), bearer(CMD_TOKEN));
+    const res = await app.request(USER_PATHS.activity('ALPHA-1'), bearer(CMD_TOKEN));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as ListAgentActivityResponse;
+    const body = (await res.json()) as ListActivityResponse;
     expect(body.activity).toHaveLength(3);
   });
 
   it('rejects a non-director reading another slot', async () => {
-    const res = await app.request(AGENT_PATHS.activity('ALPHA-1'), bearer(OTHER_TOKEN));
+    const res = await app.request(USER_PATHS.activity('ALPHA-1'), bearer(OTHER_TOKEN));
     expect(res.status).toBe(403);
   });
 
   it('filters by ts range', async () => {
     const res = await app.request(
-      `${AGENT_PATHS.activity('ALPHA-1')}?from=1500&to=2500`,
+      `${USER_PATHS.activity('ALPHA-1')}?from=1500&to=2500`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as ListAgentActivityResponse;
+    const body = (await res.json()) as ListActivityResponse;
     expect(body.activity).toHaveLength(1);
     expect(body.activity[0]?.event.ts).toBe(2_000);
   });
 
   it('filters by single kind', async () => {
     const res = await app.request(
-      `${AGENT_PATHS.activity('ALPHA-1')}?kind=llm_exchange`,
+      `${USER_PATHS.activity('ALPHA-1')}?kind=llm_exchange`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as ListAgentActivityResponse;
+    const body = (await res.json()) as ListActivityResponse;
     expect(body.activity).toHaveLength(2);
     for (const row of body.activity) {
       expect(row.event.kind).toBe('llm_exchange');
@@ -260,17 +260,17 @@ describe('GET /agents/:name/activity', () => {
 
   it('filters by multiple kinds (?kind=llm_exchange&kind=opaque_http)', async () => {
     const res = await app.request(
-      `${AGENT_PATHS.activity('ALPHA-1')}?kind=llm_exchange&kind=opaque_http`,
+      `${USER_PATHS.activity('ALPHA-1')}?kind=llm_exchange&kind=opaque_http`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as ListAgentActivityResponse;
+    const body = (await res.json()) as ListActivityResponse;
     expect(body.activity).toHaveLength(3);
   });
 
   it('rejects an unknown kind', async () => {
     const res = await app.request(
-      `${AGENT_PATHS.activity('ALPHA-1')}?kind=nope`,
+      `${USER_PATHS.activity('ALPHA-1')}?kind=nope`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(400);
@@ -278,11 +278,11 @@ describe('GET /agents/:name/activity', () => {
 
   it('honors limit and returns newest-first', async () => {
     const res = await app.request(
-      `${AGENT_PATHS.activity('ALPHA-1')}?limit=2`,
+      `${USER_PATHS.activity('ALPHA-1')}?limit=2`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(200);
-    const body = (await res.json()) as ListAgentActivityResponse;
+    const body = (await res.json()) as ListActivityResponse;
     expect(body.activity).toHaveLength(2);
     // Newest first.
     expect(body.activity[0]?.event.ts).toBe(3_000);
@@ -293,9 +293,9 @@ describe('GET /agents/:name/activity', () => {
     // We don't gate GET on name existence — an unknown slot
     // just has no rows. 403 would leak whether the slot exists;
     // empty list is the correct shape.
-    const res = await app.request(AGENT_PATHS.activity('UNKNOWN'), bearer(CMD_TOKEN));
+    const res = await app.request(USER_PATHS.activity('UNKNOWN'), bearer(CMD_TOKEN));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as ListAgentActivityResponse;
+    const body = (await res.json()) as ListActivityResponse;
     expect(body.activity).toHaveLength(0);
   });
 });
@@ -303,7 +303,7 @@ describe('GET /agents/:name/activity', () => {
 describe('agent activity store directly', () => {
   it('subscribe fires synchronously on append', () => {
     const db = openDatabase(':memory:');
-    const store = createSqliteAgentActivityStore(db);
+    const store = createSqliteActivityStore(db);
     const received: number[] = [];
     const unsubscribe = store.subscribe('ALPHA-1', (row) => {
       received.push(row.event.ts);
@@ -318,7 +318,7 @@ describe('agent activity store directly', () => {
 
   it('subscribe is keyed per name', () => {
     const db = openDatabase(':memory:');
-    const store = createSqliteAgentActivityStore(db);
+    const store = createSqliteActivityStore(db);
     const alphaRows: number[] = [];
     const bravoRows: number[] = [];
     store.subscribe('ALPHA-1', (row) => alphaRows.push(row.event.ts));

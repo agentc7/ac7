@@ -13,7 +13,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { SESSION_COOKIE_NAME, SessionStore } from '../src/sessions.js';
-import { createSlotStore } from '../src/slots.js';
+import { createUserStore } from '../src/slots.js';
 import { currentCode, generateSecret, verifyCode } from '../src/totp.js';
 
 const OP_TOKEN = 'ac7_auth_test_operator_token';
@@ -44,11 +44,11 @@ function makeApp(options: { now?: () => number; totpSecret?: string } = {}) {
     now: () => 1_700_000_000_000,
     idFactory: () => 'msg-fixed',
   });
-  const slots = createSlotStore([
+  const slots = createUserStore([
     {
       name: 'ACTUAL',
       role: 'individual-contributor',
-      authority: 'director',
+      userType: 'admin',
       token: OP_TOKEN,
       totpSecret: secret,
     },
@@ -144,10 +144,10 @@ describe('SessionStore', () => {
     const db = openDatabase(':memory:');
     const store = new SessionStore(db);
     const created = store.create('ACTUAL', 'test-ua');
-    expect(created.slotName).toBe('ACTUAL');
+    expect(created.userName).toBe('ACTUAL');
 
     const found = store.get(created.id);
-    expect(found?.slotName).toBe('ACTUAL');
+    expect(found?.userName).toBe('ACTUAL');
 
     store.touch(created.id);
     const touched = store.get(created.id);
@@ -181,12 +181,12 @@ describe('POST /session/totp', () => {
     const res = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'ACTUAL', code }),
+      body: JSON.stringify({ user: 'ACTUAL', code }),
     });
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as SessionResponse;
-    expect(body.slot).toBe('ACTUAL');
+    expect(body.user).toBe('ACTUAL');
     expect(body.role).toBe('individual-contributor');
     expect(body.expiresAt).toBeGreaterThan(now);
 
@@ -209,14 +209,14 @@ describe('POST /session/totp', () => {
     const first = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'ACTUAL', code }),
+      body: JSON.stringify({ user: 'ACTUAL', code }),
     });
     expect(first.status).toBe(200);
 
     const second = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'ACTUAL', code }),
+      body: JSON.stringify({ user: 'ACTUAL', code }),
     });
     expect(second.status).toBe(401);
   });
@@ -230,7 +230,7 @@ describe('POST /session/totp', () => {
     const botRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'build-bot', code: '000000' }),
+      body: JSON.stringify({ user: 'build-bot', code: '000000' }),
     });
     const ghostRes = await app.request('/session/totp', {
       method: 'POST',
@@ -249,7 +249,7 @@ describe('POST /session/totp', () => {
     const res = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'ACTUAL', code: 'abc' }),
+      body: JSON.stringify({ user: 'ACTUAL', code: 'abc' }),
     });
     expect(res.status).toBe(400);
   });
@@ -262,7 +262,7 @@ describe('POST /session/totp', () => {
       const res = await app.request('/session/totp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slot: 'ACTUAL', code: '000000' }),
+        body: JSON.stringify({ user: 'ACTUAL', code: '000000' }),
       });
       expect(res.status).toBe(401);
     }
@@ -271,7 +271,7 @@ describe('POST /session/totp', () => {
     const lockedRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'ACTUAL', code: currentCode(secret, clock) }),
+      body: JSON.stringify({ user: 'ACTUAL', code: currentCode(secret, clock) }),
     });
     expect(lockedRes.status).toBe(429);
 
@@ -280,7 +280,7 @@ describe('POST /session/totp', () => {
     const recoveredRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'ACTUAL', code: currentCode(secret, clock) }),
+      body: JSON.stringify({ user: 'ACTUAL', code: currentCode(secret, clock) }),
     });
     expect(recoveredRes.status).toBe(200);
   });
@@ -297,7 +297,7 @@ describe('session lifecycle', () => {
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'ACTUAL', code }),
+      body: JSON.stringify({ user: 'ACTUAL', code }),
     });
     const cookie = cookieFrom(loginRes);
     expect(cookie).toBeTruthy();
@@ -322,7 +322,7 @@ describe('session lifecycle', () => {
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'ACTUAL', code: currentCode(secret, now) }),
+      body: JSON.stringify({ user: 'ACTUAL', code: currentCode(secret, now) }),
     });
     const cookie = cookieFrom(loginRes);
     if (!cookie) return;
@@ -332,7 +332,7 @@ describe('session lifecycle', () => {
     });
     expect(sessionRes.status).toBe(200);
     const body = (await sessionRes.json()) as SessionResponse;
-    expect(body.slot).toBe('ACTUAL');
+    expect(body.user).toBe('ACTUAL');
     expect(body.role).toBe('individual-contributor');
     expect(body.expiresAt).toBeGreaterThan(now);
   });
@@ -355,7 +355,7 @@ describe('dual auth (bearer OR cookie)', () => {
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'ACTUAL', code: currentCode(secret, now) }),
+      body: JSON.stringify({ user: 'ACTUAL', code: currentCode(secret, now) }),
     });
     const cookie = cookieFrom(loginRes);
     if (!cookie) return;
@@ -379,7 +379,7 @@ describe('dual auth (bearer OR cookie)', () => {
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'ACTUAL', code: currentCode(secret, now) }),
+      body: JSON.stringify({ user: 'ACTUAL', code: currentCode(secret, now) }),
     });
     const cookie = cookieFrom(loginRes);
     if (!cookie) return;
@@ -397,18 +397,18 @@ describe('dual auth (bearer OR cookie)', () => {
     expect(body.error).toBe('session expired');
   });
 
-  it('cookie-auth on /subscribe still enforces agentId === name', async () => {
+  it('cookie-auth on /subscribe still enforces to === name', async () => {
     const now = 1_700_000_000_000;
     const { app, secret } = makeApp({ now: () => now });
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'ACTUAL', code: currentCode(secret, now) }),
+      body: JSON.stringify({ user: 'ACTUAL', code: currentCode(secret, now) }),
     });
     const cookie = cookieFrom(loginRes);
     if (!cookie) return;
 
-    const res = await app.request('/subscribe?agentId=build-bot', {
+    const res = await app.request('/subscribe?name=build-bot', {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${cookie}` },
     });
     expect(res.status).toBe(403);

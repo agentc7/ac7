@@ -21,7 +21,7 @@ import {
   exampleConfig,
   type HttpsConfig,
   loadTeamConfigFromFile,
-  SlotLoadError,
+  UserLoadError,
   setKek,
   type TeamConfig,
 } from './slots.js';
@@ -88,7 +88,7 @@ async function loadOrCreateTeamConfig(configPath: string): Promise<TeamConfig> {
     if (err instanceof ConfigNotFoundError) {
       return runWizardOrFail(configPath);
     }
-    if (err instanceof SlotLoadError) {
+    if (err instanceof UserLoadError) {
       process.stderr.write(`ac7-server: ${err.message}\n`);
       process.exit(1);
     }
@@ -111,7 +111,7 @@ async function runWizardOrFail(configPath: string): Promise<TeamConfig> {
   try {
     return await runFirstRunWizard({ configPath, io });
   } catch (err) {
-    if (err instanceof SlotLoadError) {
+    if (err instanceof UserLoadError) {
       process.stderr.write(`ac7-server: ${err.message}\n`);
       process.exit(1);
     }

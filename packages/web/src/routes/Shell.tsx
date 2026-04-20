@@ -60,7 +60,7 @@ export function Shell() {
 
   useEffect(() => {
     if (s.status !== 'authenticated') return;
-    const name = s.slot;
+    const name = s.user;
     let disposeSubscribe: (() => void) | null = null;
     let disposeRoster: (() => void) | null = null;
     let disposeAutoRead: (() => void) | null = null;
@@ -184,7 +184,7 @@ export function Shell() {
     };
     // We only want this effect firing when the authenticated slot
     // actually changes (logout → login as a different slot).
-  }, [s.status === 'authenticated' ? s.slot : null]);
+  }, [s.status === 'authenticated' ? s.user : null]);
 
   if (s.status !== 'authenticated') return null;
 
@@ -220,8 +220,8 @@ export function Shell() {
           </div>
         )}
         <div class="flex flex-1 min-h-0 overflow-hidden">
-          <Sidebar viewer={s.slot} />
-          <section class="flex-1 flex flex-col min-w-0 min-h-0">{renderView(v, s.slot)}</section>
+          <Sidebar viewer={s.user} />
+          <section class="flex-1 flex flex-col min-w-0 min-h-0">{renderView(v, s.user)}</section>
         </div>
       </main>
     </>

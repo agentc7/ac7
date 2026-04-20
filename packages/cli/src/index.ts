@@ -272,7 +272,7 @@ async function handlePush(args: string[]): Promise<void> {
   }
 
   const input: PushCommandInput = {
-    agentId: getString(values, 'agent'),
+    to: getString(values, 'agent'),
     body: getString(values, 'body') ?? '',
     title: getString(values, 'title'),
     level: getString(values, 'level'),

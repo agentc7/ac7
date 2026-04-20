@@ -1,4 +1,4 @@
-import type { Role, Slot, Team, Teammate } from '@agentc7/sdk/types';
+import type { Role, User, Team, Teammate } from '@agentc7/sdk/types';
 import { describe, expect, it } from 'vitest';
 import { composeBriefing } from '../src/briefing.js';
 
@@ -18,26 +18,26 @@ const IMPLEMENTER_ROLE: Role = {
   instructions: 'Take direction from command, ship code, report progress.',
 };
 
-const ACTUAL: Slot = { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' };
-const ALPHA_1: Slot = {
+const ACTUAL: User = { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' };
+const ALPHA_1: User = {
   name: 'ALPHA-1',
   role: 'implementer',
-  authority: 'individual-contributor',
+  userType: 'agent',
 };
-const SIERRA: Slot = {
+const SIERRA: User = {
   name: 'SIERRA',
   role: 'implementer',
-  authority: 'individual-contributor',
+  userType: 'agent',
 };
 
 const TEAMMATES: Teammate[] = [
-  { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-  { name: 'ALPHA-1', role: 'implementer', authority: 'individual-contributor' },
-  { name: 'SIERRA', role: 'implementer', authority: 'individual-contributor' },
+  { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' },
+  { name: 'ALPHA-1', role: 'implementer', userType: 'agent' },
+  { name: 'SIERRA', role: 'implementer', userType: 'agent' },
 ];
 
 describe('composeBriefing', () => {
-  it('includes name, role, authority, team, and teammates', () => {
+  it('includes name, role, userType, team, and teammates', () => {
     const briefing = composeBriefing({
       self: ACTUAL,
       selfRole: OPERATOR_ROLE,
@@ -47,13 +47,13 @@ describe('composeBriefing', () => {
     });
     expect(briefing.name).toBe('ACTUAL');
     expect(briefing.role).toBe('individual-contributor');
-    expect(briefing.authority).toBe('director');
+    expect(briefing.userType).toBe('admin');
     expect(briefing.team).toEqual(TEAM);
     expect(briefing.teammates).toEqual(TEAMMATES);
     expect(briefing.openObjectives).toEqual([]);
   });
 
-  it('surfaces authority in the instructions when elevated', () => {
+  it('surfaces userType in the instructions when elevated', () => {
     const briefing = composeBriefing({
       self: ACTUAL,
       selfRole: OPERATOR_ROLE,
@@ -61,7 +61,7 @@ describe('composeBriefing', () => {
       teammates: TEAMMATES,
       openObjectives: [],
     });
-    expect(briefing.instructions).toContain('Your rank: director');
+    expect(briefing.instructions).toContain('Your rank: admin');
   });
 
   it('always surfaces rank in the instructions, including for plain individual-contributors', () => {
@@ -74,8 +74,8 @@ describe('composeBriefing', () => {
     });
     // Every agent should know its own rank explicitly — absence of
     // a line is not self-knowledge. IndividualContributors need to see
-    // "Your rank: individual-contributor" as clearly as directors see theirs.
-    expect(briefing.instructions).toContain('Your rank: individual-contributor');
+    // "Your rank: agent" as clearly as directors see theirs.
+    expect(briefing.instructions).toContain('Your rank: agent');
   });
 
   it('renders complementary instructions that reference team context', () => {

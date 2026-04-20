@@ -4,8 +4,8 @@
  * Enter sends (without shift), Shift+Enter inserts a newline. Sends
  * route to /push with `agentId` derived from the current view:
  *   - primary thread → agentId omitted (broadcast)
- *   - dm:<other>     → agentId: other
- *   - dm:self        → agentId: viewer (self-DM)
+ *   - dm:<other>     → to: other
+ *   - dm:self        → to: viewer (self-DM)
  *
  * File attachments:
  *   - A paperclip button opens a multi-file picker; drag-and-drop
@@ -155,7 +155,7 @@ export function Composer({ viewer }: ComposerProps) {
       {
         id: optimisticId,
         ts: Date.now(),
-        agentId: agentId ?? null,
+        to: agentId ?? null,
         from: viewer,
         title: null,
         body: effectiveBody,
@@ -174,7 +174,7 @@ export function Composer({ viewer }: ComposerProps) {
     try {
       const result = await getClient().push({
         body: effectiveBody,
-        ...(agentId !== undefined ? { agentId } : {}),
+        ...(agentId !== undefined ? { to: agentId } : {}),
         ...(readyAttachments.length > 0 ? { attachments: readyAttachments } : {}),
       });
       pruneOptimistic(threadKey, optimisticId);

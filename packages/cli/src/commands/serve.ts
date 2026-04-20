@@ -100,7 +100,7 @@ async function loadOrCreateTeamConfig(
     if (err instanceof server.ConfigNotFoundError) {
       return runWizardOrFail(server, configPath);
     }
-    if (err instanceof server.SlotLoadError) {
+    if (err instanceof server.UserLoadError) {
       throw new UsageError(`serve: ${err.message}`);
     }
     throw err;
@@ -124,7 +124,7 @@ async function runWizardOrFail(
   try {
     return await server.runFirstRunWizard({ configPath, io });
   } catch (err) {
-    if (err instanceof server.SlotLoadError) {
+    if (err instanceof server.UserLoadError) {
       throw new UsageError(`serve: ${err.message}`);
     }
     throw err;

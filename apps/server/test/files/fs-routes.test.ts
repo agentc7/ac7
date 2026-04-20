@@ -17,7 +17,7 @@ import { createApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { SessionStore } from '../../src/sessions.js';
-import { createSlotStore } from '../../src/slots.js';
+import { createUserStore } from '../../src/slots.js';
 
 const ALICE_TOKEN = 'ac7_test_alice_secret';
 const BOB_TOKEN = 'ac7_test_bob_secret';
@@ -47,14 +47,14 @@ function makeApp() {
     now: () => 1_700_000_000_000,
     idFactory: () => 'msg-fixed',
   });
-  const slots = createSlotStore([
+  const slots = createUserStore([
     { name: 'alice', role: 'worker', token: ALICE_TOKEN },
     { name: 'bob', role: 'worker', token: BOB_TOKEN },
-    { name: 'diana', role: 'worker', authority: 'director', token: DIRECTOR_TOKEN },
+    { name: 'diana', role: 'worker', userType: 'admin', token: DIRECTOR_TOKEN },
   ]);
   // Pre-seed the broker with every slot so targeted pushes (bob is the
-  // agentId on the attachment-grant test) don't 404 on `broker.hasAgent`.
-  broker.seedSlots(slots.slots());
+  // to on the attachment-grant test) don't 404 on `broker.hasUser`.
+  broker.seedUsers(slots.slots());
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db);
   const blobDir = mkdtempSync(join(tmpdir(), 'ac7-fsroute-'));
@@ -250,7 +250,7 @@ describe('/push with attachments', () => {
       method: 'POST',
       headers: { ...authed(ALICE_TOKEN), 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        agentId: 'bob',
+        to: 'bob',
         body: 'here is the file',
         attachments: [
           { path: '/alice/share.txt', name: 'share.txt', size: 7, mimeType: 'text/plain' },

@@ -43,7 +43,7 @@ export function ObjectivesPanel({ viewer }: ObjectivesPanelProps) {
     }
   }, [loaded]);
 
-  const canCreate = b !== null && (b.authority === 'director' || b.authority === 'manager');
+  const canCreate = b !== null && (b.userType === 'admin' || b.userType === 'operator' || b.userType === 'lead-agent');
 
   if (!loaded && err === null) {
     return (

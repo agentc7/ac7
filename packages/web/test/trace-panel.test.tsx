@@ -16,7 +16,7 @@
  * for the gate.
  */
 
-import type { AgentActivityRow, ListAgentActivityResponse, Objective } from '@agentc7/sdk/types';
+import type { ActivityRow, ListActivityResponse, Objective } from '@agentc7/sdk/types';
 import { cleanup, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TracePanel } from '../src/components/TracePanel.js';
@@ -34,7 +34,7 @@ afterEach(() => {
 });
 
 function stubActivity(
-  body: ListAgentActivityResponse | Record<string, unknown>,
+  body: ListActivityResponse | Record<string, unknown>,
   status = 200,
 ): void {
   globalThis.fetch = (() =>
@@ -63,9 +63,9 @@ const objective: Objective = {
   attachments: [],
 };
 
-const llmRow: AgentActivityRow = {
+const llmRow: ActivityRow = {
   id: 1,
-  slotName: 'ALPHA-1',
+  userName: 'ALPHA-1',
   createdAt: 1_700_000_000_500,
   event: {
     kind: 'llm_exchange',

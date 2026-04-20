@@ -19,7 +19,7 @@ import { createHttp2ServerFactory } from '../src/https/server.js';
 import { HttpsConfigError, loadCustomCert, loadOrGenerateSelfSigned } from '../src/https/store.js';
 import { type RunningServer, runServer } from '../src/run.js';
 import { SessionStore } from '../src/sessions.js';
-import { createSlotStore } from '../src/slots.js';
+import { createUserStore } from '../src/slots.js';
 
 const OP_TOKEN = 'ac7_https_test_operator_token';
 
@@ -223,11 +223,11 @@ describe('createHttp2ServerFactory', () => {
 
 describe('secureCookies option', () => {
   it('sets Secure on session cookies when enabled', async () => {
-    const slots = createSlotStore([
+    const slots = createUserStore([
       {
         name: 'ACTUAL',
         role: 'individual-contributor',
-        authority: 'director',
+        userType: 'admin',
         token: OP_TOKEN,
         totpSecret: 'JBSWY3DPEHPK3PXP',
       },
@@ -275,11 +275,11 @@ describe('secureCookies option', () => {
 describe('runServer with self-signed HTTPS', () => {
   it('boots on HTTP/2 and responds to /healthz', async () => {
     const configDir = tmpDir();
-    const slots = createSlotStore([
+    const slots = createUserStore([
       {
         name: 'ACTUAL',
         role: 'individual-contributor',
-        authority: 'director',
+        userType: 'admin',
         token: OP_TOKEN,
       },
     ]);
@@ -336,11 +336,11 @@ describe('runServer with self-signed HTTPS', () => {
 
     // First boot: generates + persists.
     const r1 = await runServer({
-      slots: createSlotStore([
+      slots: createUserStore([
         {
           name: 'ACTUAL',
           role: 'individual-contributor',
-          authority: 'director',
+          userType: 'admin',
           token: OP_TOKEN,
         },
       ]),
@@ -366,11 +366,11 @@ describe('runServer with self-signed HTTPS', () => {
 
     // Second boot: reuses.
     const r2 = await runServer({
-      slots: createSlotStore([
+      slots: createUserStore([
         {
           name: 'ACTUAL',
           role: 'individual-contributor',
-          authority: 'director',
+          userType: 'admin',
           token: OP_TOKEN,
         },
       ]),

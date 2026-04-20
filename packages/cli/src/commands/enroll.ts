@@ -22,7 +22,7 @@
  *   5. Render a QR to the terminal and print the base32 fallback.
  *   6. Prompt for a live 6-digit confirmation code; retry on errors
  *      up to 3 times; empty input = abort with the config untouched.
- *   7. On success, call `enrollSlotTotp` to atomically rewrite the
+ *   7. On success, call `enrollUserTotp` to atomically rewrite the
  *      config with the new secret (and reset the replay counter).
  *
  * We duplicate the wizard's QR/verify loop here rather than
@@ -72,7 +72,7 @@ export async function runEnrollCommand(
   }
 
   // Load the existing config. Any failure here (missing, invalid)
-  // gets mapped to a user-facing UsageError so the raw SlotLoadError
+  // gets mapped to a user-facing UsageError so the raw UserLoadError
   // stack doesn't surface.
   let config: Awaited<ReturnType<typeof server.loadTeamConfigFromFile>>;
   try {
@@ -84,13 +84,13 @@ export async function runEnrollCommand(
           '  Run `pnpm wizard` (or `ac7 setup`) first to create one.',
       );
     }
-    if (err instanceof server.SlotLoadError) {
+    if (err instanceof server.UserLoadError) {
       throw new UsageError(`enroll: ${err.message}`);
     }
     throw err;
   }
 
-  const targetSlot = config.store.resolveByName(input.slot);
+  const targetSlot = config.store.findByName(input.slot);
   if (!targetSlot) {
     const known = config.store.names().join(', ');
     throw new UsageError(
@@ -169,11 +169,11 @@ export async function runEnrollCommand(
       throw new UsageError('enroll: too many bad attempts — no changes written to the config.');
     }
 
-    // Persist the new secret. enrollSlotTotp reloads the config file
+    // Persist the new secret. enrollUserTotp reloads the config file
     // defensively, patches the target slot, and rewrites atomically
     // at 0o600, so a concurrent edit elsewhere in the file doesn't
     // get trampled.
-    server.enrollSlotTotp(configPath, input.slot, secret);
+    server.enrollUserTotp(configPath, input.slot, secret);
 
     stdout('');
     stdout(`✓ ${alreadyEnrolled ? 're-enrolled' : 'enrolled'} '${input.slot}' for web UI login`);

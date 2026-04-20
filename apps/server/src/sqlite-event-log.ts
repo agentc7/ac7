@@ -36,7 +36,7 @@ import type { DatabaseSyncInstance, StatementInstance } from './db.js';
 interface EventRow {
   id: string;
   ts: number;
-  agent_id: string | null;
+  to_name: string | null;
   from_name: string | null;
   title: string | null;
   body: string;
@@ -49,7 +49,7 @@ const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
     ts INTEGER NOT NULL,
-    agent_id TEXT,
+    to_name TEXT,
     from_name TEXT,
     title TEXT,
     body TEXT NOT NULL,
@@ -91,26 +91,26 @@ export class SqliteEventLog implements EventLog {
       }
     }
     this.insertStmt = this.db.prepare(
-      'INSERT INTO events (id, ts, agent_id, from_name, title, body, level, data, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO events (id, ts, to_name, from_name, title, body, level, data, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     );
     this.tailSinceStmt = this.db.prepare(
-      'SELECT id, ts, agent_id, from_name, title, body, level, data, attachments FROM events WHERE ts >= ? ORDER BY ts DESC LIMIT ?',
+      'SELECT id, ts, to_name, from_name, title, body, level, data, attachments FROM events WHERE ts >= ? ORDER BY ts DESC LIMIT ?',
     );
     this.queryFeedStmt = this.db.prepare(
-      `SELECT id, ts, agent_id, from_name, title, body, level, data, attachments
+      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
        FROM events
        WHERE ts < ?
-         AND (agent_id IS NULL OR from_name = ? OR agent_id = ?)
+         AND (to_name IS NULL OR from_name = ? OR to_name = ?)
        ORDER BY ts DESC LIMIT ?`,
     );
     this.queryDmStmt = this.db.prepare(
-      `SELECT id, ts, agent_id, from_name, title, body, level, data, attachments
+      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
        FROM events
        WHERE ts < ?
-         AND agent_id IS NOT NULL
+         AND to_name IS NOT NULL
          AND (
-           (from_name = ? AND agent_id = ?)
-           OR (from_name = ? AND agent_id = ?)
+           (from_name = ? AND to_name = ?)
+           OR (from_name = ? AND to_name = ?)
          )
        ORDER BY ts DESC LIMIT ?`,
     );
@@ -120,7 +120,7 @@ export class SqliteEventLog implements EventLog {
     this.insertStmt.run(
       message.id,
       message.ts,
-      message.agentId,
+      message.to,
       message.from,
       message.title,
       message.body,
@@ -192,7 +192,7 @@ function rowToMessage(row: EventRow): Message {
   return {
     id: row.id,
     ts: row.ts,
-    agentId: row.agent_id,
+    to: row.to_name,
     from: row.from_name,
     title: row.title,
     body: row.body,

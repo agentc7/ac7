@@ -19,7 +19,7 @@ describe('InMemorySessionStore.create', () => {
     });
     const row = await store.create('alpha', 'curl/8.1.0');
     expect(row.id).toBe('sid-fixed');
-    expect(row.slotName).toBe('alpha');
+    expect(row.userName).toBe('alpha');
     expect(row.createdAt).toBe(5_000);
     expect(row.expiresAt).toBe(5_000 + SESSION_TTL_MS);
     expect(row.lastSeen).toBe(5_000);

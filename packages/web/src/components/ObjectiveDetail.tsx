@@ -162,8 +162,8 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
 
   const isAssignee = current.assignee === viewer;
   const isOriginator = current.originator === viewer;
-  const isDirector = b.authority === 'director';
-  const isManager = b.authority === 'manager';
+  const isDirector = b.userType === 'admin';
+  const isManager = b.userType === 'operator' || b.userType === 'lead-agent';
   const isWatching = current.watchers.includes(viewer);
   const isTerminal = current.status === 'done' || current.status === 'cancelled';
   const canUpdateStatus = !isTerminal && (isAssignee || isDirector);

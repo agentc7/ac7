@@ -1,7 +1,7 @@
 /**
  * Agent activity stream store.
  *
- * Append-only timeline per slot, capturing everything the slot's
+ * Append-only timeline per user, capturing everything the user's
  * runner observed: LLM exchanges through the MITM proxy, opaque
  * HTTP calls to non-Anthropic endpoints, and objective lifecycle
  * markers (`objective_open` / `objective_close`). Objective traces
@@ -27,8 +27,8 @@ import type {
   ActivityStore as CoreActivityStore,
   ListActivityFilter as CoreListActivityFilter,
 } from '@agentc7/core';
-import { AgentActivityEventSchema } from '@agentc7/sdk/schemas';
-import type { AgentActivityEvent, AgentActivityRow } from '@agentc7/sdk/types';
+import { ActivityEventSchema } from '@agentc7/sdk/schemas';
+import type { ActivityEvent, ActivityRow } from '@agentc7/sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
 
 const CREATE_SCHEMA = `
@@ -46,7 +46,7 @@ const CREATE_SCHEMA = `
     ON agent_activity (slot_callsign, kind, ts);
 `;
 
-interface AgentActivityRowRaw {
+interface ActivityRowRaw {
   id: number;
   slot_callsign: string;
   ts: number;
@@ -55,10 +55,10 @@ interface AgentActivityRowRaw {
   created_at: number;
 }
 
-function rowToActivity(row: AgentActivityRowRaw): AgentActivityRow {
-  let event: AgentActivityEvent;
+function rowToActivity(row: ActivityRowRaw): ActivityRow {
+  let event: ActivityEvent;
   try {
-    event = AgentActivityEventSchema.parse(JSON.parse(row.event_json));
+    event = ActivityEventSchema.parse(JSON.parse(row.event_json));
   } catch {
     // Malformed row — shouldn't happen since the app layer validates
     // on write, but degrade gracefully with a placeholder rather
@@ -84,7 +84,7 @@ function rowToActivity(row: AgentActivityRowRaw): AgentActivityRow {
   }
   return {
     id: row.id,
-    slotName: row.slot_callsign,
+    userName: row.slot_callsign,
     event,
     createdAt: row.created_at,
   };
@@ -104,12 +104,12 @@ export type ListActivityFilter = CoreListActivityFilter;
  * migration PR moves the rest of the codebase onto the core import
  * directly.
  */
-export type AgentActivityStore = CoreActivityStore;
+export type ActivityStore = CoreActivityStore;
 
 const DEFAULT_LIMIT = 200;
 const MAX_LIMIT = 1000;
 
-class SqliteAgentActivityStore implements CoreActivityStore {
+class SqliteActivityStore implements CoreActivityStore {
   private readonly db: DatabaseSyncInstance;
   private readonly insertStmt: StatementInstance;
   private readonly emitter = new EventEmitter();
@@ -124,15 +124,15 @@ class SqliteAgentActivityStore implements CoreActivityStore {
        VALUES (?, ?, ?, ?, ?)`,
     );
     // EventEmitter's default max listeners is 10; a director with
-    // the web UI open + the slot itself tailing its own stream
-    // could realistically hit 2-3 per slot, so bump to 50 to be safe.
+    // the web UI open + the user itself tailing its own stream
+    // could realistically hit 2-3 per user, so bump to 50 to be safe.
     this.emitter.setMaxListeners(50);
   }
 
-  append(slotName: string, events: readonly AgentActivityEvent[]): AgentActivityRow[] {
+  append(userName: string, events: readonly ActivityEvent[]): ActivityRow[] {
     if (events.length === 0) return [];
     const now = Date.now();
-    const inserted: AgentActivityRow[] = [];
+    const inserted: ActivityRow[] = [];
 
     // Transaction: either all rows land or none. node:sqlite doesn't
     // expose a high-level transaction API; BEGIN/COMMIT via exec is
@@ -141,7 +141,7 @@ class SqliteAgentActivityStore implements CoreActivityStore {
     try {
       for (const event of events) {
         const result = this.insertStmt.run(
-          slotName,
+          userName,
           event.ts,
           event.kind,
           JSON.stringify(event),
@@ -150,7 +150,7 @@ class SqliteAgentActivityStore implements CoreActivityStore {
         const id = Number(result.lastInsertRowid ?? 0);
         inserted.push({
           id,
-          slotName,
+          userName,
           event,
           createdAt: now,
         });
@@ -170,16 +170,16 @@ class SqliteAgentActivityStore implements CoreActivityStore {
     // behavior propagate (which at this point is harmless since
     // the write already committed).
     for (const row of inserted) {
-      this.emitter.emit(`row:${slotName}`, row);
+      this.emitter.emit(`row:${userName}`, row);
     }
 
     return inserted;
   }
 
-  list(filter: ListActivityFilter): AgentActivityRow[] {
+  list(filter: ListActivityFilter): ActivityRow[] {
     const limit = Math.min(filter.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
     const conditions: string[] = ['slot_callsign = ?'];
-    const params: Array<string | number> = [filter.slotName];
+    const params: Array<string | number> = [filter.userName];
     if (filter.from !== undefined) {
       conditions.push('ts >= ?');
       params.push(filter.from);
@@ -198,12 +198,12 @@ class SqliteAgentActivityStore implements CoreActivityStore {
       `ORDER BY ts DESC, id DESC LIMIT ?`;
     params.push(limit);
     const stmt = this.db.prepare(sql);
-    const rows = stmt.all(...params) as unknown as AgentActivityRowRaw[];
+    const rows = stmt.all(...params) as unknown as ActivityRowRaw[];
     return rows.map(rowToActivity);
   }
 
-  subscribe(slotName: string, listener: ActivityListener): () => void {
-    const key = `row:${slotName}`;
+  subscribe(userName: string, listener: ActivityListener): () => void {
+    const key = `row:${userName}`;
     this.emitter.on(key, listener);
     return () => {
       this.emitter.off(key, listener);
@@ -230,12 +230,12 @@ class SqliteAgentActivityStore implements CoreActivityStore {
  * method without casting. The core `ActivityStore` interface covers
  * the append/list/subscribe surface.
  */
-export type SqliteAgentActivityStoreHandle = SqliteAgentActivityStore;
+export type SqliteActivityStoreHandle = SqliteActivityStore;
 
-export function createSqliteAgentActivityStore(
+export function createSqliteActivityStore(
   db: DatabaseSyncInstance,
-): SqliteAgentActivityStoreHandle {
-  return new SqliteAgentActivityStore(db);
+): SqliteActivityStoreHandle {
+  return new SqliteActivityStore(db);
 }
 
 /**

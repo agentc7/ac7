@@ -17,7 +17,7 @@ function msg(overrides: Partial<Message>): Message {
   return {
     id: 'm1',
     ts: 1,
-    agentId: null,
+    to: null,
     from: 'ACTUAL',
     title: null,
     body: 'hi',
@@ -34,23 +34,23 @@ beforeEach(() => {
 
 describe('threadKeyOf', () => {
   it('maps broadcasts to primary', () => {
-    expect(threadKeyOf(msg({ agentId: null }), 'ACTUAL')).toBe(PRIMARY_THREAD);
+    expect(threadKeyOf(msg({ to: null }), 'ACTUAL')).toBe(PRIMARY_THREAD);
   });
 
   it('inbound DM is keyed by the sender name', () => {
-    expect(threadKeyOf(msg({ agentId: 'ACTUAL', from: 'build-bot' }), 'ACTUAL')).toBe(
+    expect(threadKeyOf(msg({ to: 'ACTUAL', from: 'build-bot' }), 'ACTUAL')).toBe(
       'dm:build-bot',
     );
   });
 
   it('outbound DM is keyed by the recipient name', () => {
-    expect(threadKeyOf(msg({ agentId: 'build-bot', from: 'ACTUAL' }), 'ACTUAL')).toBe(
+    expect(threadKeyOf(msg({ to: 'build-bot', from: 'ACTUAL' }), 'ACTUAL')).toBe(
       'dm:build-bot',
     );
   });
 
   it('self-DM gets its own key', () => {
-    expect(threadKeyOf(msg({ agentId: 'ACTUAL', from: 'ACTUAL' }), 'ACTUAL')).toBe('dm:self');
+    expect(threadKeyOf(msg({ to: 'ACTUAL', from: 'ACTUAL' }), 'ACTUAL')).toBe('dm:self');
   });
 });
 
@@ -69,8 +69,8 @@ describe('appendMessages', () => {
 
   it('routes DMs and broadcasts into separate buckets', () => {
     appendMessages('ACTUAL', [
-      msg({ id: 'p1', ts: 1, agentId: null, body: 'team' }),
-      msg({ id: 'd1', ts: 2, agentId: 'build-bot', from: 'ACTUAL', body: 'dm' }),
+      msg({ id: 'p1', ts: 1, to: null, body: 'team' }),
+      msg({ id: 'd1', ts: 2, to: 'build-bot', from: 'ACTUAL', body: 'dm' }),
     ]);
     expect(threadMessages(PRIMARY_THREAD)).toHaveLength(1);
     expect(threadMessages('dm:build-bot')).toHaveLength(1);
@@ -80,8 +80,8 @@ describe('appendMessages', () => {
 describe('threadKeys', () => {
   it('always includes primary and sorts DMs alphabetically', () => {
     appendMessages('ACTUAL', [
-      msg({ id: 'd1', ts: 1, agentId: 'zebra', from: 'ACTUAL' }),
-      msg({ id: 'd2', ts: 2, agentId: 'alpha', from: 'ACTUAL' }),
+      msg({ id: 'd1', ts: 1, to: 'zebra', from: 'ACTUAL' }),
+      msg({ id: 'd2', ts: 2, to: 'alpha', from: 'ACTUAL' }),
     ]);
     expect(threadKeys()).toEqual([PRIMARY_THREAD, 'dm:alpha', 'dm:zebra']);
   });

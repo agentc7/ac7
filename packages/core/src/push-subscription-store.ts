@@ -4,7 +4,7 @@
  * A push subscription is a capability URL + crypto keys the browser
  * hands the server after `pushManager.subscribe()`. Treat the endpoint
  * like a session token: anyone holding it can push to the device. The
- * store holds one row per (slotName, endpoint) pair — the same
+ * store holds one row per (userName, endpoint) pair — the same
  * human can have many devices enrolled.
  *
  * Dead-subscription lifecycle: when the web-push dispatch layer
@@ -20,7 +20,7 @@
 
 export interface PushSubscriptionRow {
   id: number;
-  slotName: string;
+  userName: string;
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -32,7 +32,7 @@ export interface PushSubscriptionRow {
 }
 
 export interface PushSubscriptionInput {
-  slotName: string;
+  userName: string;
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -48,8 +48,8 @@ export interface PushSubscriptionStore {
    */
   upsert(input: PushSubscriptionInput): Promise<PushSubscriptionRow>;
 
-  /** List every subscription owned by `slotName`. */
-  listForSlot(slotName: string): Promise<PushSubscriptionRow[]>;
+  /** List every subscription owned by `userName`. */
+  listForUser(userName: string): Promise<PushSubscriptionRow[]>;
 
   /** Look up a row by the unique `endpoint` URL. */
   findByEndpoint(endpoint: string): Promise<PushSubscriptionRow | null>;
@@ -60,7 +60,7 @@ export interface PushSubscriptionStore {
    * guessed id. No-op if the row doesn't exist or belongs to another
    * slot.
    */
-  deleteForSlot(id: number, slotName: string): Promise<void>;
+  deleteForUser(id: number, userName: string): Promise<void>;
 
   /**
    * Delete by endpoint — used by the dispatch path when a push attempt
@@ -109,7 +109,7 @@ export class InMemoryPushSubscriptionStore implements PushSubscriptionStore {
     if (current !== undefined) {
       const replaced: PushSubscriptionRow = {
         ...current,
-        slotName: input.slotName,
+        userName: input.userName,
         p256dh: input.p256dh,
         auth: input.auth,
         userAgent: input.userAgent,
@@ -122,7 +122,7 @@ export class InMemoryPushSubscriptionStore implements PushSubscriptionStore {
     }
     const row: PushSubscriptionRow = {
       id: this.nextId++,
-      slotName: input.slotName,
+      userName: input.userName,
       endpoint: input.endpoint,
       p256dh: input.p256dh,
       auth: input.auth,
@@ -136,16 +136,16 @@ export class InMemoryPushSubscriptionStore implements PushSubscriptionStore {
     return row;
   }
 
-  async listForSlot(slotName: string): Promise<PushSubscriptionRow[]> {
-    return this.rows.filter((r) => r.slotName === slotName);
+  async listForUser(userName: string): Promise<PushSubscriptionRow[]> {
+    return this.rows.filter((r) => r.userName === userName);
   }
 
   async findByEndpoint(endpoint: string): Promise<PushSubscriptionRow | null> {
     return this.rows.find((r) => r.endpoint === endpoint) ?? null;
   }
 
-  async deleteForSlot(id: number, slotName: string): Promise<void> {
-    const idx = this.rows.findIndex((r) => r.id === id && r.slotName === slotName);
+  async deleteForUser(id: number, userName: string): Promise<void> {
+    const idx = this.rows.findIndex((r) => r.id === id && r.userName === userName);
     if (idx >= 0) this.rows.splice(idx, 1);
   }
 

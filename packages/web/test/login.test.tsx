@@ -111,9 +111,9 @@ describe('<Login />', () => {
       '/session/totp': () => ({
         status: 200,
         body: {
-          slot: 'ACTUAL',
+          user: 'ACTUAL',
           role: 'individual-contributor',
-          authority: 'director',
+          userType: 'admin',
           expiresAt: 9_999_999_999_999,
         },
       }),
@@ -128,9 +128,9 @@ describe('<Login />', () => {
       expect(session.value.status).toBe('authenticated');
     });
     if (session.value.status === 'authenticated') {
-      expect(session.value.slot).toBe('ACTUAL');
+      expect(session.value.user).toBe('ACTUAL');
       expect(session.value.role).toBe('individual-contributor');
-      expect(session.value.authority).toBe('director');
+      expect(session.value.userType).toBe('admin');
     }
   });
 });
@@ -164,9 +164,9 @@ describe('<App /> auth gate', () => {
       '/session': () => ({
         status: 200,
         body: {
-          slot: 'ACTUAL',
+          user: 'ACTUAL',
           role: 'individual-contributor',
-          authority: 'director',
+          userType: 'admin',
           expiresAt: 9_999_999_999_999,
         },
       }),
@@ -178,7 +178,7 @@ describe('<App /> auth gate', () => {
       expect(screen.getByText('ACTUAL')).toBeTruthy();
       // Header now surfaces rank (authority), not role — director
       // was stamped on the session above, so that's what renders.
-      expect(screen.getByText('director')).toBeTruthy();
+      expect(screen.getByText('admin')).toBeTruthy();
       expect(screen.getByRole('button', { name: /sign out/i })).toBeTruthy();
     });
   });

@@ -4,7 +4,7 @@
  * A "push subscription" is a capability URL + crypto keys the browser
  * hands us after `pushManager.subscribe()`. Treat the endpoint like a
  * session token: anyone holding it can push to the device. We store
- * one row per (slot, endpoint) pair; the same human can have many
+ * one row per (user, endpoint) pair; the same human can have many
  * devices enrolled.
  *
  * Dead-subscription cleanup: when web-push returns 404 or 410 we mark
@@ -33,7 +33,7 @@ const CREATE_SCHEMA = `
 
 export interface PushSubscriptionRow {
   id: number;
-  slotName: string;
+  userName: string;
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -60,7 +60,7 @@ interface RawRow {
 function rowToSub(row: RawRow): PushSubscriptionRow {
   return {
     id: row.id,
-    slotName: row.slot_callsign,
+    userName: row.slot_callsign,
     endpoint: row.endpoint,
     p256dh: row.p256dh,
     auth: row.auth,
@@ -73,7 +73,7 @@ function rowToSub(row: RawRow): PushSubscriptionRow {
 }
 
 export interface PushSubscriptionInput {
-  slotName: string;
+  userName: string;
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -137,14 +137,14 @@ export class PushSubscriptionStore {
   }
 
   /**
-   * Register (or refresh) a push subscription for a slot. Returns
+   * Register (or refresh) a push subscription for a user. Returns
    * the persisted row. Idempotent on endpoint — calling twice with
    * the same endpoint replaces the row rather than duplicating.
    */
   upsert(input: PushSubscriptionInput): PushSubscriptionRow {
     const now = this.now();
     this.upsertStmt.run(
-      input.slotName,
+      input.userName,
       input.endpoint,
       input.p256dh,
       input.auth,
@@ -160,7 +160,7 @@ export class PushSubscriptionStore {
     return rowToSub(row);
   }
 
-  listForSlot(name: string): PushSubscriptionRow[] {
+  listForUser(name: string): PushSubscriptionRow[] {
     const rows = this.selectBySlotStmt.all(name) as unknown as RawRow[];
     return rows.map(rowToSub);
   }
@@ -171,12 +171,12 @@ export class PushSubscriptionStore {
   }
 
   /**
-   * Delete a subscription the given slot owns. Scoped by name
+   * Delete a subscription the given user owns. Scoped by name
    * so a session can't delete other users' subscriptions even with
    * a guessed id.
    */
-  deleteForSlot(id: number, slotName: string): void {
-    this.deleteByIdStmt.run(id, slotName);
+  deleteForUser(id: number, userName: string): void {
+    this.deleteByIdStmt.run(id, userName);
   }
 
   /**

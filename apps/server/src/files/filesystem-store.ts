@@ -18,7 +18,7 @@
  * Permissions:
  *   director          — full read/write/delete anywhere
  *   owner             — full read/write/delete under their home (first
- *                       path segment equals their slot name)
+ *                       path segment equals their user name)
  *   everyone else     — read-only, and only when they hold a grant for
  *                       the specific path (exact match, not prefix)
  *
@@ -27,7 +27,7 @@
  * as directories if they don't exist yet.
  */
 
-import type { Authority, FsEntry } from '@agentc7/sdk/types';
+import type { UserType, FsEntry } from '@agentc7/sdk/types';
 import type { Readable } from 'node:stream';
 import type { DatabaseSyncInstance, StatementInstance } from '../db.js';
 import type { BlobStore } from './blob-store.js';
@@ -110,7 +110,7 @@ function rowToEntry(row: FsEntryRow): FsEntry {
 
 export interface ViewerContext {
   name: string;
-  authority: Authority;
+  userType: UserType;
 }
 
 export type WriteCollisionStrategy = 'error' | 'overwrite' | 'suffix';
@@ -154,7 +154,7 @@ export interface FilesystemStore {
   hasGrant(path: string, viewer: string): boolean;
 
   /**
-   * Create a slot's home directory if missing. Safe to call repeatedly;
+   * Create a user's home directory if missing. Safe to call repeatedly;
    * a no-op when the directory already exists.
    */
   ensureHome(slotName: string, now?: number): void;
@@ -247,13 +247,13 @@ class SqliteFilesystemStore implements FilesystemStore {
   }
 
   private canRead(path: string, viewer: ViewerContext): boolean {
-    if (viewer.authority === 'director') return true;
+    if (viewer.userType === 'admin') return true;
     if (this.ownsPath(path, viewer)) return true;
     return this.hasGrant(path, viewer.name);
   }
 
   private canWrite(path: string, viewer: ViewerContext): boolean {
-    if (viewer.authority === 'director') return true;
+    if (viewer.userType === 'admin') return true;
     return this.ownsPath(path, viewer);
   }
 
@@ -277,21 +277,21 @@ class SqliteFilesystemStore implements FilesystemStore {
     if (normalized === ROOT_PATH) {
       // Root listing: directors see every home; everyone else sees only
       // their own. We query all top-level directories and filter rather
-      // than eagerly materializing homes for every slot on the team.
+      // than eagerly materializing homes for every user on the team.
       const rows = this.listHomesStmt.all() as unknown as FsEntryRow[];
-      if (viewer.authority === 'director') return rows.map(rowToEntry);
+      if (viewer.userType === 'admin') return rows.map(rowToEntry);
       return rows
         .filter((r) => r.owner === viewer.name)
         .map(rowToEntry);
     }
 
-    if (viewer.authority !== 'director' && !this.ownsPath(normalized, viewer)) {
+    if (viewer.userType !== 'admin' && !this.ownsPath(normalized, viewer)) {
       throw new FsError('forbidden', `cannot list ${normalized}`);
     }
     const target = this.getEntryStmt.get(normalized) as FsEntryRow | undefined;
     if (!target) {
       // Owner listing their own non-existent home is fine — return empty.
-      if (this.ownsPath(normalized, viewer) || viewer.authority === 'director') {
+      if (this.ownsPath(normalized, viewer) || viewer.userType === 'admin') {
         return [];
       }
       throw new FsError('not_found', `no such path: ${normalized}`);

@@ -19,7 +19,7 @@
  * dot is the canonical .dot pattern. Unread badge is .badge.solid.
  */
 
-import type { Authority, Teammate } from '@agentc7/sdk/types';
+import type { UserType, Teammate } from '@agentc7/sdk/types';
 import type { ComponentChildren } from 'preact';
 import { briefing } from '../lib/briefing.js';
 import { dmThreadKey, messagesByThread, PRIMARY_THREAD } from '../lib/messages.js';
@@ -56,10 +56,11 @@ function UnreadBadge({ count }: { count: number }) {
   );
 }
 
-/** One-letter authority marker for the teammate row. IC has no glyph. */
-function authorityBadge(authority: Authority): string | null {
-  if (authority === 'director') return 'D';
-  if (authority === 'manager') return 'M';
+/** Short tag for the teammate row. Plain agents have no tag. */
+function userTypeBadge(userType: UserType): string | null {
+  if (userType === 'admin') return 'A';
+  if (userType === 'operator') return 'OP';
+  if (userType === 'lead-agent') return 'LEAD';
   return null;
 }
 
@@ -75,7 +76,7 @@ export function Sidebar({ viewer }: SidebarProps) {
 
   const onlineByName = new Map<string, number>();
   if (r) {
-    for (const a of r.connected) onlineByName.set(a.agentId, a.connected);
+    for (const a of r.connected) onlineByName.set(a.name, a.connected);
   }
 
   const overviewActive = v.kind === 'overview';
@@ -171,7 +172,7 @@ export function Sidebar({ viewer }: SidebarProps) {
             const online = connected > 0;
             const active = v.kind === 'thread' && v.key === dmThreadKey(t.name);
             const unread = unreadCount(dmThreadKey(t.name), viewer, lastRead, msgMap);
-            const auth = authorityBadge(t.authority);
+            const auth = userTypeBadge(t.userType);
             return (
               <li key={t.name}>
                 <button
@@ -182,7 +183,7 @@ export function Sidebar({ viewer }: SidebarProps) {
                       ? `Message ${t.name} (${online ? 'online' : 'offline'}, ${unread} unread)`
                       : `Message ${t.name} (${online ? 'online' : 'offline'})`
                   }
-                  title={`${t.name} · ${online ? 'online' : 'offline'} · ${t.role} · ${t.authority}`}
+                  title={`${t.name} · ${online ? 'online' : 'offline'} · ${t.role} · ${t.userType}`}
                   class={`navitem w-full${active ? ' active' : ''}`}
                   style={`text-align:left;font-weight:${active ? 700 : 500}`}
                 >

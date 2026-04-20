@@ -282,7 +282,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     socketPath,
     name: briefing.name,
     role: briefing.role,
-    authority: briefing.authority,
+    authority: briefing.userType,
     openObjectives: briefing.openObjectives.length,
     version: CLI_VERSION,
   });

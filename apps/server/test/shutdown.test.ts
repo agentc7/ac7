@@ -17,7 +17,7 @@ import { Client } from '@agentc7/sdk/client';
 import type { Role, Team } from '@agentc7/sdk/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type RunningServer, runServer } from '../src/run.js';
-import { createSlotStore } from '../src/slots.js';
+import { createUserStore } from '../src/slots.js';
 
 const OP_TOKEN = 'ac7_shutdown_test_op';
 const TEAM: Team = {
@@ -34,11 +34,11 @@ describe('runServer shutdown with live SSE subscriber', () => {
   let client: Client;
 
   beforeAll(async () => {
-    const slots = createSlotStore([
+    const slots = createUserStore([
       {
         name: 'ACTUAL',
         role: 'individual-contributor',
-        authority: 'director',
+        userType: 'admin',
         token: OP_TOKEN,
       },
     ]);

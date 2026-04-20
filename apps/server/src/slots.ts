@@ -2,7 +2,7 @@
  * Team config loading for the ac7 server.
  *
  * A team config defines the directive, the roles, and the slots that
- * make up the team. A slot is a reserved position — name + role +
+ * make up the team. A user is a reserved position — name + role +
  * authority tier + secret token that authenticates incoming requests.
  * The server is always one team (multi-team coordination lives
  * at the SaaS layer).
@@ -51,7 +51,7 @@ import {
   writeSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { Authority, Role, Slot, Team, Teammate } from '@agentc7/sdk/types';
+import type { Role, Team, Teammate, User, UserType } from '@agentc7/sdk/types';
 import { z } from 'zod';
 import { decryptField, ENCRYPTED_FIELD_PREFIX, encryptField } from './kek.js';
 
@@ -61,7 +61,7 @@ const DEFAULT_CONFIG_FILENAME = 'ac7.json';
 /**
  * Process-wide KEK for TOTP secret + VAPID private key encryption
  * at rest. Set once at server boot via `setKek` (called from
- * `runServer`), read by the slot writers/loaders.
+ * `runServer`), read by the user writers/loaders.
  *
  * Null means encryption is disabled — legacy behavior for tests and
  * for runtime environments that haven't called `setKek` yet. When
@@ -103,11 +103,11 @@ export function hashToken(rawToken: string): string {
 }
 
 /**
- * A slot materialized in memory once hashes are known. Extends the
- * wire `Slot` with server-only fields — TOTP enrollment and replay
+ * A user materialized in memory once hashes are known. Extends the
+ * wire `User` with server-only fields — TOTP enrollment and replay
  * guard state. These never cross the network.
  */
-export interface LoadedSlot extends Slot {
+export interface LoadedUser extends User {
   totpSecret?: string | null;
   totpLastCounter?: number;
 }
@@ -126,7 +126,7 @@ const RoleSchema = z.object({
   instructions: z.string().max(8192).default(''),
 });
 
-const AuthoritySchema = z.enum(['director', 'manager', 'individual-contributor']);
+const UserTypeSchema = z.enum(['admin', 'operator', 'lead-agent', 'agent']);
 
 // Base32 alphabet (RFC 4648) — plaintext TOTP secrets from `otpauth` use this.
 // When at-rest encryption is enabled, the stored value instead has the
@@ -136,7 +136,7 @@ const AuthoritySchema = z.enum(['director', 'manager', 'individual-contributor']
 // decrypt or treat as legacy plaintext.
 const TOTP_SECRET_REGEX = /^(?:[A-Z2-7]+=*|enc-v1:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+)$/;
 
-const SlotEntrySchema = z
+const UserEntrySchema = z
   .object({
     name: z
       .string()
@@ -148,7 +148,7 @@ const SlotEntrySchema = z
       .min(1)
       .max(64)
       .regex(ROLE_KEY_REGEX, 'role must be alphanumeric with . _ - allowed'),
-    authority: AuthoritySchema.default('individual-contributor'),
+    userType: UserTypeSchema.default('agent'),
     token: z.string().min(8, 'token must be at least 8 characters').optional(),
     tokenHash: z
       .string()
@@ -213,7 +213,7 @@ const TeamConfigSchema = z.object({
   _comment: z.unknown().optional(),
   team: TeamSchema,
   roles: z.record(z.string().min(1).max(64), RoleSchema),
-  slots: z.array(SlotEntrySchema).min(1, 'slots must contain at least one entry'),
+  users: z.array(UserEntrySchema).min(1, 'slots must contain at least one entry'),
   https: HttpsConfigSchema.optional(),
   webPush: WebPushConfigSchema.optional(),
   files: FilesConfigSchema.optional(),
@@ -223,10 +223,10 @@ export type HttpsConfig = z.infer<typeof HttpsConfigSchema>;
 export type WebPushConfig = z.infer<typeof WebPushConfigSchema>;
 export type FilesConfig = z.infer<typeof FilesConfigSchema>;
 
-export class SlotLoadError extends Error {
+export class UserLoadError extends Error {
   constructor(message: string) {
     super(message);
-    this.name = 'SlotLoadError';
+    this.name = 'UserLoadError';
   }
 }
 
@@ -239,52 +239,52 @@ export class ConfigNotFoundError extends Error {
   }
 }
 
-export interface SlotStore {
-  resolve(rawToken: string): LoadedSlot | null;
-  resolveByName(name: string): LoadedSlot | null;
-  recordTotpAccept(name: string, counter: number): LoadedSlot | null;
+export interface UserStore {
+  resolve(rawToken: string): LoadedUser | null;
+  findByName(name: string): LoadedUser | null;
+  recordTotpAccept(name: string, counter: number): LoadedUser | null;
   size(): number;
-  slots(): LoadedSlot[];
+  slots(): LoadedUser[];
   names(): string[];
 }
 
-class MapSlotStore implements SlotStore {
-  private readonly byHash = new Map<string, LoadedSlot>();
-  private readonly byName = new Map<string, LoadedSlot>();
-  private readonly order: LoadedSlot[] = [];
+class MapUserStore implements UserStore {
+  private readonly byHash = new Map<string, LoadedUser>();
+  private readonly byName = new Map<string, LoadedUser>();
+  private readonly order: LoadedUser[] = [];
 
-  addHashed(tokenHash: string, slot: LoadedSlot): void {
+  addHashed(tokenHash: string, user: LoadedUser): void {
     if (this.byHash.has(tokenHash)) {
-      throw new SlotLoadError(`duplicate token detected for slot '${slot.name}'`);
+      throw new UserLoadError(`duplicate token detected for user '${user.name}'`);
     }
-    if (this.byName.has(slot.name)) {
-      throw new SlotLoadError(`duplicate name '${slot.name}'`);
+    if (this.byName.has(user.name)) {
+      throw new UserLoadError(`duplicate name '${user.name}'`);
     }
-    this.byHash.set(tokenHash, slot);
-    this.byName.set(slot.name, slot);
-    this.order.push(slot);
+    this.byHash.set(tokenHash, user);
+    this.byName.set(user.name, user);
+    this.order.push(user);
   }
 
-  resolve(rawToken: string): LoadedSlot | null {
+  resolve(rawToken: string): LoadedUser | null {
     return this.byHash.get(hashToken(rawToken)) ?? null;
   }
 
-  resolveByName(name: string): LoadedSlot | null {
+  findByName(name: string): LoadedUser | null {
     return this.byName.get(name) ?? null;
   }
 
-  recordTotpAccept(name: string, counter: number): LoadedSlot | null {
-    const slot = this.byName.get(name);
-    if (!slot) return null;
-    slot.totpLastCounter = counter;
-    return slot;
+  recordTotpAccept(name: string, counter: number): LoadedUser | null {
+    const user = this.byName.get(name);
+    if (!user) return null;
+    user.totpLastCounter = counter;
+    return user;
   }
 
   size(): number {
     return this.byHash.size;
   }
 
-  slots(): LoadedSlot[] {
+  slots(): LoadedUser[] {
     return [...this.order];
   }
 
@@ -294,33 +294,33 @@ class MapSlotStore implements SlotStore {
 }
 
 /**
- * Build a slot store programmatically from plaintext entries. Used by
+ * Build a user store programmatically from plaintext entries. Used by
  * tests and by alternate runtimes. Tokens are hashed before storage.
  */
-export function createSlotStore(
+export function createUserStore(
   entries: Array<{
     name: string;
     role: string;
-    authority?: Authority;
+    userType?: UserType;
     token: string;
     totpSecret?: string | null;
     totpLastCounter?: number;
   }>,
-): SlotStore {
+): UserStore {
   if (entries.length === 0) {
-    throw new SlotLoadError('createSlotStore: at least one entry is required');
+    throw new UserLoadError('createUserStore: at least one entry is required');
   }
-  const store = new MapSlotStore();
+  const store = new MapUserStore();
   const seen = new Set<string>();
   for (const entry of entries) {
     if (seen.has(entry.name)) {
-      throw new SlotLoadError(`duplicate name '${entry.name}'`);
+      throw new UserLoadError(`duplicate name '${entry.name}'`);
     }
     seen.add(entry.name);
     store.addHashed(hashToken(entry.token), {
       name: entry.name,
       role: entry.role,
-      authority: entry.authority ?? 'individual-contributor',
+      userType: entry.userType ?? 'agent',
       totpSecret: entry.totpSecret ?? null,
       totpLastCounter: entry.totpLastCounter ?? 0,
     });
@@ -341,7 +341,7 @@ export function defaultConfigPath(
 export interface TeamConfig {
   team: Team;
   roles: Record<string, Role>;
-  store: SlotStore;
+  store: UserStore;
   https: HttpsConfig;
   webPush: WebPushConfig | null;
   files: FilesConfig | null;
@@ -369,8 +369,8 @@ export function defaultHttpsConfig(): HttpsConfig {
 
 /**
  * Read, validate, and optionally rewrite the config file at `path`.
- * Throws `ConfigNotFoundError` on ENOENT and `SlotLoadError` on
- * everything else. If any slot carried a plaintext `token`, the file
+ * Throws `ConfigNotFoundError` on ENOENT and `UserLoadError` on
+ * everything else. If any user carried a plaintext `token`, the file
  * is rewritten with `tokenHash` and chmod 0o600 before returning.
  */
 export function loadTeamConfigFromFile(path: string): TeamConfig {
@@ -380,20 +380,20 @@ export function loadTeamConfigFromFile(path: string): TeamConfig {
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') throw new ConfigNotFoundError(path);
-    throw new SlotLoadError(`failed to read config file at ${path}: ${(err as Error).message}`);
+    throw new UserLoadError(`failed to read config file at ${path}: ${(err as Error).message}`);
   }
 
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new SlotLoadError(`config file at ${path} is not valid JSON: ${(err as Error).message}`);
+    throw new UserLoadError(`config file at ${path} is not valid JSON: ${(err as Error).message}`);
   }
 
   // Legacy schema detection — the pre-rename `team` schema is
   // gracefully rejected with a pointer at the current `team` shape.
   if (parsed && typeof parsed === 'object' && 'team' in parsed && !('team' in parsed)) {
-    throw new SlotLoadError(
+    throw new UserLoadError(
       `config file at ${path} uses the legacy \`team\` schema.\n` +
         `ac7 now uses a team/roles/slots schema. Rename \`team\` → \`team\`,\n` +
         `\`directive\` → \`directive\`, and \`name\` → \`name\`. See\n` +
@@ -409,7 +409,7 @@ export function loadTeamConfigFromFile(path: string): TeamConfig {
     !('team' in parsed) &&
     !('slots' in parsed)
   ) {
-    throw new SlotLoadError(
+    throw new UserLoadError(
       `config file at ${path} uses the legacy \`tokens\` schema.\n` +
         `ac7 now uses a team/roles/slots schema. See apps/server/config.example.json\n` +
         `for the new format, or delete this file and re-run to launch the setup wizard.`,
@@ -424,40 +424,40 @@ export function loadTeamConfigFromFile(path: string): TeamConfig {
           `  - ${issue.path.join('.') || '(root)'}: ${issue.message}`,
       )
       .join('\n');
-    throw new SlotLoadError(`config file at ${path} is invalid:\n${issues}`);
+    throw new UserLoadError(`config file at ${path} is invalid:\n${issues}`);
   }
 
   const team: Team = result.data.team;
   const roles: Record<string, Role> = result.data.roles;
 
-  // Every slot's role must reference a known role key.
-  for (const slot of result.data.slots) {
-    if (!Object.hasOwn(roles, slot.role)) {
-      throw new SlotLoadError(
-        `slot '${slot.name}' references unknown role '${slot.role}' in ${path}. ` +
+  // Every user's role must reference a known role key.
+  for (const user of result.data.users) {
+    if (!Object.hasOwn(roles, user.role)) {
+      throw new UserLoadError(
+        `user '${user.name}' references unknown role '${user.role}' in ${path}. ` +
           `Known roles: ${Object.keys(roles).join(', ') || '(none)'}`,
       );
     }
   }
 
-  // At least one slot must hold director authority so there's always
+  // At least one user must hold director authority so there's always
   // someone who can edit the team config.
-  const hasDirector = result.data.slots.some((s) => s.authority === 'director');
-  if (!hasDirector) {
-    throw new SlotLoadError(
-      `team config at ${path} has no slot with authority='director'. ` +
-        `At least one director is required to administer the team.`,
+  const hasAdmin = result.data.users.some((s) => s.userType === 'admin');
+  if (!hasAdmin) {
+    throw new UserLoadError(
+      `team config at ${path} has no user with userType='admin'. ` +
+        `At least one admin is required to administer the team.`,
     );
   }
 
-  const store = new MapSlotStore();
+  const store = new MapUserStore();
   const seen = new Set<string>();
-  const onDisk: SlotOnDisk[] = [];
+  const onDisk: UserOnDisk[] = [];
   let migrated = 0;
 
-  for (const entry of result.data.slots) {
+  for (const entry of result.data.users) {
     if (seen.has(entry.name)) {
-      throw new SlotLoadError(`duplicate name '${entry.name}' in ${path}`);
+      throw new UserLoadError(`duplicate name '${entry.name}' in ${path}`);
     }
     seen.add(entry.name);
 
@@ -468,8 +468,8 @@ export function loadTeamConfigFromFile(path: string): TeamConfig {
       tokenHash = hashToken(entry.token);
       migrated++;
     } else {
-      throw new SlotLoadError(
-        `slot entry '${entry.name}' in ${path} has neither token nor tokenHash`,
+      throw new UserLoadError(
+        `user entry '${entry.name}' in ${path} has neither token nor tokenHash`,
       );
     }
 
@@ -477,7 +477,7 @@ export function loadTeamConfigFromFile(path: string): TeamConfig {
 
     // TOTP secret handling. When a KEK is active:
     //   - enc-v1 values are decrypted to plaintext for the in-memory
-    //     LoadedSlot (so verifyTotpCode has a usable secret).
+    //     LoadedUser (so verifyTotpCode has a usable secret).
     //   - plaintext values (legacy / hand-edited) flow through as-is,
     //     bump `migrated`, and land as plaintext in `onDisk` — the
     //     writer encrypts them on the migration rewrite.
@@ -498,14 +498,14 @@ export function loadTeamConfigFromFile(path: string): TeamConfig {
     store.addHashed(tokenHash, {
       name: entry.name,
       role: entry.role,
-      authority: entry.authority,
+      userType: entry.userType,
       totpSecret: totpSecretPlaintext,
       totpLastCounter,
     });
     onDisk.push({
       name: entry.name,
       role: entry.role,
-      authority: entry.authority,
+      userType: entry.userType,
       tokenHash,
       // onDisk always holds plaintext; writer encrypts when KEK is active.
       totpSecret: totpSecretPlaintext,
@@ -523,7 +523,7 @@ export function loadTeamConfigFromFile(path: string): TeamConfig {
     if (webPush.vapidPrivateKey.startsWith(ENCRYPTED_FIELD_PREFIX)) {
       const decrypted = decryptField(webPush.vapidPrivateKey, activeKek);
       if (decrypted === null) {
-        throw new SlotLoadError(
+        throw new UserLoadError(
           `webPush.vapidPrivateKey in ${path} decrypted to null (should not happen)`,
         );
       }
@@ -545,11 +545,11 @@ export function loadTeamConfigFromFile(path: string): TeamConfig {
   return { team, roles, store, https, webPush, files, migrated };
 }
 
-/** Shape persisted to disk for a single slot entry. */
-interface SlotOnDisk {
+/** Shape persisted to disk for a single user entry. */
+interface UserOnDisk {
   name: string;
   role: string;
-  authority: Authority;
+  userType: UserType;
   tokenHash: string;
   totpSecret?: string | null;
   totpLastCounter?: number;
@@ -566,7 +566,7 @@ export function writeTeamConfig(
   slotsWithTokens: Array<{
     name: string;
     role: string;
-    authority?: Authority;
+    userType?: UserType;
     token: string;
     totpSecret?: string | null;
     totpLastCounter?: number;
@@ -574,10 +574,10 @@ export function writeTeamConfig(
   https?: HttpsConfig,
   webPush?: WebPushConfig | null,
 ): void {
-  const onDisk: SlotOnDisk[] = slotsWithTokens.map((s) => ({
+  const onDisk: UserOnDisk[] = slotsWithTokens.map((s) => ({
     name: s.name,
     role: s.role,
-    authority: s.authority ?? 'individual-contributor',
+    userType: s.userType ?? 'agent',
     tokenHash: hashToken(s.token),
     totpSecret: s.totpSecret ?? null,
     totpLastCounter: s.totpLastCounter ?? 0,
@@ -593,10 +593,10 @@ export function writeWebPushConfig(path: string, webPush: WebPushConfig): void {
   const raw = readFileSync(path, 'utf8');
   const parsed = TeamConfigSchema.parse(JSON.parse(raw));
   const topComment = typeof parsed._comment === 'string' ? parsed._comment : CONFIG_FILE_COMMENT;
-  const onDisk: SlotOnDisk[] = parsed.slots.map((s) => ({
+  const onDisk: UserOnDisk[] = parsed.users.map((s) => ({
     name: s.name,
     role: s.role,
-    authority: s.authority,
+    userType: s.userType,
     tokenHash: s.tokenHash ?? hashToken(s.token as string),
     totpSecret: s.totpSecret ?? null,
     totpLastCounter: s.totpLastCounter ?? 0,
@@ -609,7 +609,7 @@ export function writeWebPushConfig(path: string, webPush: WebPushConfig): void {
  * `ac7_<base64url>` format the wizard uses. 32 raw bytes → 43-char
  * base64url payload (~256 bits of entropy).
  */
-export function generateSlotToken(): string {
+export function generateUserToken(): string {
   return `ac7_${randomBytes(32).toString('base64url')}`;
 }
 
@@ -625,42 +625,42 @@ export function generateSlotToken(): string {
  *   - 0o600 on the result (same as writeTeamConfig).
  *   - Defensive reload + re-parse of the file, so a concurrent hand
  *     edit elsewhere in the same file doesn't get trampled.
- *   - Preserves every other slot's `totpSecret` / `totpLastCounter` /
+ *   - Preserves every other user's `totpSecret` / `totpLastCounter` /
  *     `authority` / `role` untouched.
  */
-export function rotateSlotToken(path: string, name: string): string {
+export function rotateUserToken(path: string, name: string): string {
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') throw new ConfigNotFoundError(path);
-    throw new SlotLoadError(`failed to read config file at ${path}: ${(err as Error).message}`);
+    throw new UserLoadError(`failed to read config file at ${path}: ${(err as Error).message}`);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new SlotLoadError(`config file at ${path} is not valid JSON: ${(err as Error).message}`);
+    throw new UserLoadError(`config file at ${path} is not valid JSON: ${(err as Error).message}`);
   }
   const result = TeamConfigSchema.safeParse(parsed);
   if (!result.success) {
-    throw new SlotLoadError(`config file at ${path} is invalid — cannot rotate`);
+    throw new UserLoadError(`config file at ${path} is invalid — cannot rotate`);
   }
-  const target = result.data.slots.find((s) => s.name === name);
+  const target = result.data.users.find((s) => s.name === name);
   if (!target) {
-    throw new SlotLoadError(`no slot with name '${name}' in ${path}`);
+    throw new UserLoadError(`no user with name '${name}' in ${path}`);
   }
 
-  const newToken = generateSlotToken();
+  const newToken = generateUserToken();
   const newHash = hashToken(newToken);
 
-  const onDisk: SlotOnDisk[] = result.data.slots.map((s) => {
+  const onDisk: UserOnDisk[] = result.data.users.map((s) => {
     if (s.name === name) {
       return {
         name: s.name,
         role: s.role,
-        authority: s.authority,
+        userType: s.userType,
         tokenHash: newHash,
         totpSecret: s.totpSecret ?? null,
         totpLastCounter: s.totpLastCounter ?? 0,
@@ -669,7 +669,7 @@ export function rotateSlotToken(path: string, name: string): string {
     return {
       name: s.name,
       role: s.role,
-      authority: s.authority,
+      userType: s.userType,
       tokenHash: s.tokenHash ?? hashToken(s.token as string),
       totpSecret: s.totpSecret ?? null,
       totpLastCounter: s.totpLastCounter ?? 0,
@@ -695,37 +695,37 @@ export function rotateSlotToken(path: string, name: string): string {
  * Rewrite the config file at `path` with a new TOTP secret for
  * `name`. Used by the CLI `ac7 enroll` command and by the wizard.
  */
-export function enrollSlotTotp(path: string, name: string, totpSecret: string | null): void {
+export function enrollUserTotp(path: string, name: string, totpSecret: string | null): void {
   let raw: string;
   try {
     raw = readFileSync(path, 'utf8');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === 'ENOENT') throw new ConfigNotFoundError(path);
-    throw new SlotLoadError(`failed to read config file at ${path}: ${(err as Error).message}`);
+    throw new UserLoadError(`failed to read config file at ${path}: ${(err as Error).message}`);
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new SlotLoadError(`config file at ${path} is not valid JSON: ${(err as Error).message}`);
+    throw new UserLoadError(`config file at ${path} is not valid JSON: ${(err as Error).message}`);
   }
   const result = TeamConfigSchema.safeParse(parsed);
   if (!result.success) {
-    throw new SlotLoadError(`config file at ${path} is invalid — cannot enroll`);
+    throw new UserLoadError(`config file at ${path} is invalid — cannot enroll`);
   }
-  const target = result.data.slots.find((s) => s.name === name);
+  const target = result.data.users.find((s) => s.name === name);
   if (!target) {
-    throw new SlotLoadError(`no slot with name '${name}' in ${path}`);
+    throw new UserLoadError(`no user with name '${name}' in ${path}`);
   }
 
-  const onDisk: SlotOnDisk[] = result.data.slots.map((s) => {
+  const onDisk: UserOnDisk[] = result.data.users.map((s) => {
     const tokenHash = s.tokenHash ?? hashToken(s.token as string);
     if (s.name === name) {
       return {
         name: s.name,
         role: s.role,
-        authority: s.authority,
+        userType: s.userType,
         tokenHash,
         totpSecret,
         totpLastCounter: 0,
@@ -734,7 +734,7 @@ export function enrollSlotTotp(path: string, name: string, totpSecret: string | 
     return {
       name: s.name,
       role: s.role,
-      authority: s.authority,
+      userType: s.userType,
       tokenHash,
       totpSecret: s.totpSecret ?? null,
       totpLastCounter: s.totpLastCounter ?? 0,
@@ -759,26 +759,22 @@ function writeTeamConfigFile(
   comment: string,
   team: Team,
   roles: Record<string, Role>,
-  slots: SlotOnDisk[],
+  slots: UserOnDisk[],
   https?: HttpsConfig,
   webPush?: WebPushConfig | null,
 ): void {
-  const slotsForDisk = slots.map((s) => {
+  const usersForDisk = slots.map((s) => {
     const out: Record<string, unknown> = {
       name: s.name,
       role: s.role,
+      userType: s.userType,
+      tokenHash: s.tokenHash,
     };
-    // Only emit `authority` when it differs from the default, to keep
-    // freshly-written configs tidy for plain-individual-contributor-only teams.
-    if (s.authority !== 'individual-contributor') {
-      out.authority = s.authority;
-    }
-    out.tokenHash = s.tokenHash;
     if (s.totpSecret !== undefined && s.totpSecret !== null) {
       // Encrypt at the on-disk boundary when a KEK is active.
       // `encryptField` is idempotent on enc-v1 values, so passing a
       // mix of plaintext + already-encrypted values (e.g. during an
-      // enroll that touches one slot in a file with others in
+      // enroll that touches one user in a file with others in
       // various states) is safe.
       out.totpSecret =
         activeKek !== null ? (encryptField(s.totpSecret, activeKek) ?? s.totpSecret) : s.totpSecret;
@@ -792,7 +788,7 @@ function writeTeamConfigFile(
     _comment: comment,
     team,
     roles,
-    slots: slotsForDisk,
+    users: usersForDisk,
   };
   if (https && !httpsConfigEqualsDefault(https)) {
     payload.https = https;
@@ -855,14 +851,14 @@ function atomicWriteRestricted(path: string, body: string): void {
  * briefing response. Preserves config ordering. Cached by store
  * identity since slots are immutable after boot.
  */
-const teammateCache = new WeakMap<SlotStore, Teammate[]>();
-export function teammatesFromStore(store: SlotStore): Teammate[] {
+const teammateCache = new WeakMap<UserStore, Teammate[]>();
+export function teammatesFromUsers(store: UserStore): Teammate[] {
   const cached = teammateCache.get(store);
   if (cached) return cached;
   const teammates = store.slots().map((s) => ({
     name: s.name,
     role: s.role,
-    authority: s.authority,
+    userType: s.userType,
   }));
   teammateCache.set(store, teammates);
   return teammates;
@@ -870,9 +866,9 @@ export function teammatesFromStore(store: SlotStore): Teammate[] {
 
 export const CONFIG_FILE_COMMENT =
   'ac7 team config. Defines one team with a directive, roles, and slots. ' +
-  'Each slot has { name, role, authority, tokenHash }. `authority` is one of ' +
+  'Each user has { name, role, authority, tokenHash }. `authority` is one of ' +
   '`director | manager | individual-contributor`, defaulting to `individual-contributor` when omitted. ' +
-  'At least one director is required. To rotate or add a slot by hand, add ' +
+  'At least one admin is required. To rotate or add a user by hand, add ' +
   '{ "name": "...", "role": "...", "authority": "...", "token": "<plaintext>" } ' +
   'and the server will hash the token on next boot and rewrite this file.';
 

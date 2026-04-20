@@ -39,9 +39,9 @@ export {
   type PushSubscriptionStore,
 } from './push-subscription-store.js';
 export {
-  AgentIdentityError,
-  AgentRegistry,
-  type AgentState,
+  PresenceIdentityError,
+  PresenceRegistry,
+  type PresenceState,
   type Subscriber,
 } from './registry.js';
 export {

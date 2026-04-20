@@ -37,7 +37,7 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
   const objectives = objectivesSignal.value;
   const errorMessage = agentActivityError.value;
 
-  const isDirector = b?.authority === 'director';
+  const isDirector = b?.userType === 'admin';
 
   useEffect(() => {
     if (!isDirector) return;
@@ -77,7 +77,7 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
   }
 
   const teammate: Teammate | undefined = rosterResp?.teammates.find((t) => t.name === name);
-  const agent = rosterResp?.connected.find((c) => c.agentId === name);
+  const agent = rosterResp?.connected.find((c) => c.name === name);
   const isOnline = Boolean(agent && agent.connected > 0);
 
   const assigned = objectives.filter(
@@ -105,11 +105,11 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
           >
             {name}
           </h1>
-          {teammate?.authority && (
+          {teammate?.userType && (
             <span
-              class={`badge ${teammate.authority === 'director' ? 'solid' : teammate.authority === 'manager' ? 'ember' : 'soft'}`}
+              class={`badge ${teammate.userType === 'admin' ? 'solid' : teammate.userType === 'operator' || teammate.userType === 'lead-agent' ? 'ember' : 'soft'}`}
             >
-              {formatAuthority(teammate.authority)}
+              {formatAuthority(teammate.userType)}
             </span>
           )}
           <span class={`badge ${isOnline ? 'soft' : 'muted'}`}>

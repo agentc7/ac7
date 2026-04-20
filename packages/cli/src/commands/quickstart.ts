@@ -98,7 +98,7 @@ export async function runQuickstartCommand(
   }
   const assignee =
     input.assignee ??
-    rosterResp.teammates.find((t) => t.authority === 'individual-contributor')?.name ??
+    rosterResp.teammates.find((t) => t.userType === 'agent')?.name ??
     rosterResp.teammates[0]?.name;
   if (!assignee) {
     // Unreachable given the length check above, but keeps the types honest.

@@ -10,27 +10,24 @@ import { z } from 'zod';
 
 export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'error', 'critical']);
 
-export const AuthoritySchema = z.enum(['director', 'manager', 'individual-contributor']);
+export const UserTypeSchema = z.enum(['admin', 'operator', 'lead-agent', 'agent']);
 
 /**
- * A role label — freeform string, 1-64 chars. No fixed enum; individual-contributors
- * define their own role names in the team config. Suggested defaults
- * (shipped by the wizard): `individual-contributor`, `implementer`, `reviewer`, `watcher`.
+ * A role label — freeform string, 1-64 chars. No fixed enum;
+ * deployments define their own role names in the team config.
+ * Suggested defaults (shipped by the wizard): `admin`, `implementer`,
+ * `reviewer`, `watcher`.
  */
 export const RoleNameSchema = z.string().min(1).max(64);
 
 /**
- * Names obey the same shape rules as legacy agent IDs: alphanumeric
- * plus `.`, `_`, `-`, 1-128 chars.
+ * User names — alphanumeric plus `.`, `_`, `-`, 1-128 chars.
  */
 export const NameSchema = z
   .string()
   .min(1)
   .max(128)
   .regex(/^[a-zA-Z0-9._-]+$/, 'name must be alphanumeric with . _ - allowed');
-
-/** Alias — `agentId` in wire payloads is always a name. */
-export const AgentIdSchema = NameSchema;
 
 export const TeamSchema = z.object({
   name: z.string().min(1).max(128),
@@ -43,16 +40,16 @@ export const RoleSchema = z.object({
   instructions: z.string().max(8192).default(''),
 });
 
-export const SlotSchema = z.object({
+export const UserSchema = z.object({
   name: NameSchema,
   role: RoleNameSchema,
-  authority: AuthoritySchema.default('individual-contributor'),
+  userType: UserTypeSchema,
 });
 
 export const TeammateSchema = z.object({
   name: NameSchema,
   role: RoleNameSchema,
-  authority: AuthoritySchema,
+  userType: UserTypeSchema,
 });
 
 /**
@@ -81,7 +78,7 @@ export const AttachmentSchema = z.object({
 });
 
 export const PushPayloadSchema = z.object({
-  agentId: AgentIdSchema.nullable().optional(),
+  to: NameSchema.nullable().optional(),
   title: z.string().max(200).nullable().optional(),
   body: z
     .string()
@@ -95,7 +92,7 @@ export const PushPayloadSchema = z.object({
 export const MessageSchema = z.object({
   id: z.string(),
   ts: z.number(),
-  agentId: AgentIdSchema.nullable(),
+  to: NameSchema.nullable(),
   from: z.string().nullable(),
   title: z.string().nullable(),
   body: z.string(),
@@ -104,13 +101,13 @@ export const MessageSchema = z.object({
   attachments: z.array(AttachmentSchema).default([]),
 });
 
-export const AgentSchema = z.object({
-  agentId: AgentIdSchema,
+export const PresenceSchema = z.object({
+  name: NameSchema,
   connected: z.number().int().nonnegative(),
   createdAt: z.number(),
   lastSeen: z.number(),
   role: RoleNameSchema.nullable(),
-  authority: AuthoritySchema,
+  userType: UserTypeSchema,
 });
 
 export const DeliveryReportSchema = z.object({
@@ -358,16 +355,16 @@ const OpaqueHttpEntrySchema = z.object({
   responseBodyPreview: z.string().nullable(),
 });
 
-// ───────────────────────── Agent activity stream ──────────────
+// ───────────────────────── Activity stream ──────────────────────
 
-export const AgentActivityKindSchema = z.enum([
+export const ActivityKindSchema = z.enum([
   'objective_open',
   'objective_close',
   'llm_exchange',
   'opaque_http',
 ]);
 
-export const AgentActivityEventSchema = z.discriminatedUnion('kind', [
+export const ActivityEventSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('objective_open'),
     ts: z.number().int().nonnegative(),
@@ -393,30 +390,67 @@ export const AgentActivityEventSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
-export const AgentActivityRowSchema = z.object({
+export const ActivityRowSchema = z.object({
   id: z.number().int().nonnegative(),
-  slotName: NameSchema,
-  event: AgentActivityEventSchema,
+  userName: NameSchema,
+  event: ActivityEventSchema,
   createdAt: z.number().int().nonnegative(),
 });
 
-export const UploadAgentActivityRequestSchema = z.object({
-  events: z.array(AgentActivityEventSchema).min(1).max(500),
+export const UploadActivityRequestSchema = z.object({
+  events: z.array(ActivityEventSchema).min(1).max(500),
 });
 
-export const UploadAgentActivityResponseSchema = z.object({
+export const UploadActivityResponseSchema = z.object({
   accepted: z.number().int().nonnegative(),
 });
 
-export const ListAgentActivityResponseSchema = z.object({
-  activity: z.array(AgentActivityRowSchema),
+export const ListActivityResponseSchema = z.object({
+  activity: z.array(ActivityRowSchema),
 });
 
-export const ListAgentActivityQuerySchema = z.object({
+export const ListActivityQuerySchema = z.object({
   from: z.number().int().nonnegative().optional(),
   to: z.number().int().nonnegative().optional(),
-  kind: z.union([AgentActivityKindSchema, z.array(AgentActivityKindSchema)]).optional(),
+  kind: z.union([ActivityKindSchema, z.array(ActivityKindSchema)]).optional(),
   limit: z.number().int().positive().max(1000).optional(),
+});
+
+// ───────────────────────── Users ──────────────────────────────
+
+export const CreateUserRequestSchema = z.object({
+  name: NameSchema,
+  userType: UserTypeSchema,
+  role: RoleNameSchema,
+});
+
+export const UpdateUserRequestSchema = z
+  .object({
+    userType: UserTypeSchema.optional(),
+    role: RoleNameSchema.optional(),
+  })
+  .refine((v) => v.userType !== undefined || v.role !== undefined, {
+    message: 'update must include at least one of: userType, role',
+  });
+
+export const CreateUserResponseSchema = z.object({
+  user: TeammateSchema,
+  token: z.string(),
+  totpSecret: z.string().optional(),
+  totpUri: z.string().optional(),
+});
+
+export const ListUsersResponseSchema = z.object({
+  users: z.array(TeammateSchema),
+});
+
+export const RotateTokenResponseSchema = z.object({
+  token: z.string(),
+});
+
+export const EnrollTotpResponseSchema = z.object({
+  totpSecret: z.string(),
+  totpUri: z.string(),
 });
 
 // ───────────────────────── Briefing + session ─────────────────
@@ -424,7 +458,7 @@ export const ListAgentActivityQuerySchema = z.object({
 export const BriefingResponseSchema = z.object({
   name: NameSchema,
   role: RoleNameSchema,
-  authority: AuthoritySchema,
+  userType: UserTypeSchema,
   team: TeamSchema,
   teammates: z.array(TeammateSchema),
   openObjectives: z.array(ObjectiveSchema),
@@ -433,7 +467,7 @@ export const BriefingResponseSchema = z.object({
 
 export const RosterResponseSchema = z.object({
   teammates: z.array(TeammateSchema),
-  connected: z.array(AgentSchema),
+  connected: z.array(PresenceSchema),
 });
 
 export const HistoryResponseSchema = z.object({
@@ -442,13 +476,13 @@ export const HistoryResponseSchema = z.object({
 
 export const TotpLoginRequestSchema = z.object({
   code: z.string().regex(/^\d{6}$/, 'code must be exactly 6 digits'),
-  slot: NameSchema.optional(),
+  user: NameSchema.optional(),
 });
 
 export const SessionResponseSchema = z.object({
-  slot: NameSchema,
+  user: NameSchema,
   role: RoleNameSchema,
-  authority: AuthoritySchema,
+  userType: UserTypeSchema,
   expiresAt: z.number().int().positive(),
 });
 

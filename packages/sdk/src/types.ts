@@ -8,17 +8,60 @@
 export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical';
 
 /**
- * Authority tier on a slot. Orthogonal to `role` (what you do vs. what
- * you can change). Most slots are plain `individual-contributor`; `manager` can
- * create and assign objectives; `director` can do everything including
- * edit team config and roles.
+ * The four user archetypes on a team. Orthogonal to `role` (what a
+ * user does vs. what they can change).
+ *
+ *   admin       — human with full team access. "Admin" of the deployment.
+ *                 Only admins can create/update/delete other users,
+ *                 reassign objectives to different owners, or read
+ *                 another user's activity stream / file tree.
+ *   operator    — human who can create and assign objectives, cancel
+ *                 ones they originated, and govern their own watchers.
+ *   lead-agent  — machine (AI agent) with the same operational
+ *                 permissions as an operator. Connects with a bearer
+ *                 token; no TOTP.
+ *   agent       — machine assistant. Executes assigned work; cannot
+ *                 create objectives. The most common type for AI agents.
+ *
+ * Human vs. agent determines login surface (TOTP vs. bearer-only) and
+ * MCP tool exposure; it does not grant additional permissions beyond
+ * those implied by the type.
  */
-export type Authority = 'director' | 'manager' | 'individual-contributor';
+export type UserType = 'admin' | 'operator' | 'lead-agent' | 'agent';
+
+/** True for admin + operator — the two human types. */
+export function isHuman(type: UserType): boolean {
+  return type === 'admin' || type === 'operator';
+}
+
+/** True for lead-agent + agent — the two machine types. */
+export function isAgent(type: UserType): boolean {
+  return type === 'lead-agent' || type === 'agent';
+}
+
+/** Admin-only capabilities. */
+export function canManageUsers(type: UserType): boolean {
+  return type === 'admin';
+}
+export function canReassignObjective(type: UserType): boolean {
+  return type === 'admin';
+}
+export function canViewAnyActivity(type: UserType): boolean {
+  return type === 'admin';
+}
+export function canReadAnyFile(type: UserType): boolean {
+  return type === 'admin';
+}
+
+/** Manager-tier capabilities (admin + operator + lead-agent). */
+export function canCreateObjective(type: UserType): boolean {
+  return type !== 'agent';
+}
 
 /**
  * A team is the top-level unit the server controls. One deployment
  * = one team. The team defines the directive and the context every
- * slot inherits. Multi-team lives at the SaaS layer.
+ * user inherits. Multi-team lives at the SaaS layer.
  */
 export interface Team {
   name: string;
@@ -28,11 +71,11 @@ export interface Team {
 
 /**
  * A named bundle of role-specific instructions. Roles are defined in
- * the server config and referenced by slots. Multiple slots can share
- * a role — e.g., two `implementer` slots running in parallel.
+ * the server config and referenced by users. Multiple users can share
+ * a role — e.g., two `implementer` lead-agents running in parallel.
  *
- * Permission to edit team state comes from the slot's `authority`,
- * not from the role.
+ * Permission to edit team state comes from the user's `userType`, not
+ * from the role.
  */
 export interface Role {
   description: string;
@@ -40,38 +83,47 @@ export interface Role {
 }
 
 /**
- * A reserved position on the team. The token is the auth boundary;
- * the name is the team-context identity; the role is a key into
- * the team's roles map; the authority tier gates write access.
+ * A member of the team. The token is the auth boundary; the name is
+ * the team-context identity; the role is a key into the team's roles
+ * map; the userType gates write access and determines whether the
+ * member is human (admin/operator) or agent (lead-agent/agent).
  *
- * On the wire, slots never carry their token — it's resolved by auth
+ * On the wire, users never carry their token — it's resolved by auth
  * and never returned in any response.
  */
-export interface Slot {
+export interface User {
   name: string;
   role: string;
-  authority: Authority;
+  userType: UserType;
 }
 
-/** Projection of a slot for rendering in the roster / briefing. */
+/** Projection of a user for rendering in the roster / briefing. */
 export interface Teammate {
   name: string;
   role: string;
-  authority: Authority;
+  userType: UserType;
 }
 
-export interface Agent {
-  agentId: string;
-  /** Number of live SSE subscribers currently attached to this agent. */
+/**
+ * Live connection state for one user. "Presence" replaces the older
+ * `Agent` type — the word "agent" is now reserved for the UserType —
+ * so this shape describes any user currently on the wire, whether
+ * they're a human with a browser tab open or an AI agent with its MCP
+ * link alive.
+ */
+export interface Presence {
+  name: string;
+  /** Number of live SSE subscribers currently attached. */
   connected: number;
   createdAt: number;
   lastSeen: number;
   role: string | null;
-  authority: Authority;
+  userType: UserType;
 }
 
 export interface PushPayload {
-  agentId?: string | null;
+  /** Target user name, or null for a broadcast. */
+  to?: string | null;
   title?: string | null;
   body: string;
   level?: LogLevel;
@@ -89,11 +141,11 @@ export interface PushPayload {
 export interface Message {
   id: string;
   ts: number;
-  /** Target agent name, or null for a broadcast. */
-  agentId: string | null;
+  /** Target user name, or null for a broadcast. */
+  to: string | null;
   /**
    * Authoritative sender name, stamped by the broker based on the
-   * caller's authenticated slot. Never trusted from the request payload.
+   * caller's authenticated user. Never trusted from the request payload.
    */
   from: string | null;
   title: string | null;
@@ -133,10 +185,10 @@ export interface HealthResponse {
 export interface BriefingResponse {
   name: string;
   role: string;
-  authority: Authority;
+  userType: UserType;
   team: Team;
   teammates: Teammate[];
-  /** Objectives currently assigned to this slot with status === 'active' or 'blocked'. */
+  /** Objectives currently assigned to this user with status === 'active' or 'blocked'. */
   openObjectives: Objective[];
   instructions: string;
 }
@@ -144,7 +196,7 @@ export interface BriefingResponse {
 /** Response from `GET /roster`. */
 export interface RosterResponse {
   teammates: Teammate[];
-  connected: Agent[];
+  connected: Presence[];
 }
 
 /** Query parameters for `GET /history`. */
@@ -160,21 +212,21 @@ export interface HistoryResponse {
 
 /**
  * Request body for `POST /session/totp`. The SPA submits a 6-digit
- * code and the server iterates enrolled slots to find a match. The
- * optional `slot` field is a legacy + CLI hint: when present, the
- * server skips iteration and verifies against that specific slot
- * only, preserving the targeted-login flow for automation that
- * already knows which name is logging in.
+ * code and the server iterates enrolled users to find a match. The
+ * optional `user` field is a CLI hint: when present, the server
+ * skips iteration and verifies against that specific user only,
+ * preserving the targeted-login flow for automation that already
+ * knows which name is logging in.
  */
 export interface TotpLoginRequest {
   code: string;
-  slot?: string;
+  user?: string;
 }
 
 export interface SessionResponse {
-  slot: string;
+  user: string;
   role: string;
-  authority: Authority;
+  userType: UserType;
   expiresAt: number;
 }
 
@@ -194,6 +246,66 @@ export interface PushSubscriptionResponse {
   id: number;
   endpoint: string;
   createdAt: number;
+}
+
+// ───────────────────────── Users ──────────────────────────────
+
+/**
+ * `POST /users` body — admin-only. Server generates the bearer token
+ * and (for humans) the TOTP secret; the plaintext of both is returned
+ * exactly once in `CreateUserResponse` and never again.
+ */
+export interface CreateUserRequest {
+  name: string;
+  userType: UserType;
+  role: string;
+}
+
+/**
+ * `POST /users` response. The plaintext `token` is shown to the admin
+ * who creates the user, then immediately hashed on disk. Humans
+ * (admin/operator) also receive a `totpSecret` (base32) and
+ * `totpUri` (otpauth://) that the admin shares with the new user to
+ * enroll in an authenticator app; machines get neither.
+ */
+export interface CreateUserResponse {
+  user: Teammate;
+  token: string;
+  totpSecret?: string;
+  totpUri?: string;
+}
+
+/**
+ * `PATCH /users/:name` body. Any subset of fields may be present;
+ * `null` is not allowed — omit a field to leave it alone. Changing
+ * `userType` enforces the "at least one admin must remain" invariant.
+ */
+export interface UpdateUserRequest {
+  userType?: UserType;
+  role?: string;
+}
+
+/** `GET /users` response — admin-only, with full userType info. */
+export interface ListUsersResponse {
+  users: Teammate[];
+}
+
+/**
+ * `POST /users/:name/rotate-token` response — admin or self. Returns
+ * the new plaintext token (shown once).
+ */
+export interface RotateTokenResponse {
+  token: string;
+}
+
+/**
+ * `POST /users/:name/enroll-totp` response — admin or self. Returns
+ * the new TOTP secret + otpauth URI so the caller can render a QR.
+ * Humans only; servers return 409 for an agent target.
+ */
+export interface EnrollTotpResponse {
+  totpSecret: string;
+  totpUri: string;
 }
 
 // ───────────────────────── Objectives ─────────────────────────
@@ -430,10 +542,12 @@ export interface OpaqueHttpEntry {
 }
 
 /**
- * Agent activity event — one entry in the append-only timeline the
- * runner streams to the server while its agent is alive.
+ * Activity event — one entry in the append-only timeline a user
+ * streams to the server while their connection is alive. Humans
+ * rarely emit these (no MCP runner); agents produce the bulk as
+ * their MITM proxy captures outbound traffic.
  *
- * Activity is the source of truth for "what did this agent actually
+ * Activity is the source of truth for "what did this user actually
  * do" — LLM calls, opaque HTTP to non-Anthropic endpoints, and
  * objective lifecycle markers. Objective "traces" are no longer a
  * separate table; they're a time-range slice of this stream
@@ -441,27 +555,27 @@ export interface OpaqueHttpEntry {
  * given objectiveId.
  *
  * Kinds:
- *   - `objective_open`  — the slot just took ownership of an objective
- *   - `objective_close` — the slot released it (done/cancelled/reassigned)
+ *   - `objective_open`  — the user just took ownership of an objective
+ *   - `objective_close` — the user released it (done/cancelled/reassigned)
  *   - `llm_exchange`    — a parsed Anthropic API request/response pair
  *   - `opaque_http`     — a non-Anthropic HTTP exchange captured by the
  *                         MITM proxy (telemetry, update checks, etc.)
  */
-export type AgentActivityEvent =
-  | AgentActivityObjectiveOpen
-  | AgentActivityObjectiveClose
-  | AgentActivityLlmExchange
-  | AgentActivityOpaqueHttp;
+export type ActivityEvent =
+  | ActivityObjectiveOpen
+  | ActivityObjectiveClose
+  | ActivityLlmExchange
+  | ActivityOpaqueHttp;
 
-export type AgentActivityKind = AgentActivityEvent['kind'];
+export type ActivityKind = ActivityEvent['kind'];
 
-export interface AgentActivityObjectiveOpen {
+export interface ActivityObjectiveOpen {
   readonly kind: 'objective_open';
   readonly ts: number;
   readonly objectiveId: string;
 }
 
-export interface AgentActivityObjectiveClose {
+export interface ActivityObjectiveClose {
   readonly kind: 'objective_close';
   readonly ts: number;
   readonly objectiveId: string;
@@ -469,7 +583,7 @@ export interface AgentActivityObjectiveClose {
   readonly result: 'done' | 'cancelled' | 'reassigned' | 'runner_shutdown';
 }
 
-export interface AgentActivityLlmExchange {
+export interface ActivityLlmExchange {
   readonly kind: 'llm_exchange';
   /** Start of the request on the MITM wire. */
   readonly ts: number;
@@ -478,7 +592,7 @@ export interface AgentActivityLlmExchange {
   readonly entry: AnthropicMessagesEntry;
 }
 
-export interface AgentActivityOpaqueHttp {
+export interface ActivityOpaqueHttp {
   readonly kind: 'opaque_http';
   readonly ts: number;
   readonly duration: number;
@@ -487,12 +601,12 @@ export interface AgentActivityOpaqueHttp {
 
 /**
  * One activity row as the server stores it — the upload event plus
- * the server-assigned id + slot name.
+ * the server-assigned id + user name.
  */
-export interface AgentActivityRow {
+export interface ActivityRow {
   readonly id: number;
-  readonly slotName: string;
-  readonly event: AgentActivityEvent;
+  readonly userName: string;
+  readonly event: ActivityEvent;
   readonly createdAt: number;
 }
 
@@ -501,27 +615,27 @@ export interface AgentActivityRow {
  * up to a few dozen at a time. The server stamps each with an id
  * and broadcasts to any live SSE subscribers.
  */
-export interface UploadAgentActivityRequest {
-  readonly events: AgentActivityEvent[];
+export interface UploadActivityRequest {
+  readonly events: ActivityEvent[];
 }
 
-export interface UploadAgentActivityResponse {
+export interface UploadActivityResponse {
   readonly accepted: number;
 }
 
-export interface ListAgentActivityQuery {
+export interface ListActivityQuery {
   /** Inclusive lower bound on ts (ms since epoch). */
   readonly from?: number;
   /** Inclusive upper bound on ts (ms since epoch). */
   readonly to?: number;
   /** Filter by kind — single or array. Omit for all kinds. */
-  readonly kind?: AgentActivityKind | AgentActivityKind[];
+  readonly kind?: ActivityKind | ActivityKind[];
   /** Max rows to return. Default 200, max 1000. Newest first. */
   readonly limit?: number;
 }
 
-export interface ListAgentActivityResponse {
-  readonly activity: AgentActivityRow[];
+export interface ListActivityResponse {
+  readonly activity: ActivityRow[];
 }
 
 // ───────────────────────── Filesystem ─────────────────────────
