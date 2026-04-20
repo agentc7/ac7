@@ -35,6 +35,7 @@ import {
 } from '../lib/objectives.js';
 import { roster } from '../lib/roster.js';
 import { selectAgentDetail, selectObjectivesList } from '../lib/view.js';
+import { MessageAttachments } from './MessageAttachments.js';
 import { MessageLine } from './MessageLine.js';
 import { TracePanel } from './TracePanel.js';
 
@@ -355,6 +356,15 @@ function OverviewTab({
           <div style="font-family:var(--f-sans);font-size:14.5px;color:var(--ink);white-space:pre-wrap;line-height:1.55">
             {objective.body}
           </div>
+        </section>
+      )}
+
+      {objective.attachments.length > 0 && (
+        <section class="card">
+          <div class="eyebrow" style="margin-bottom:10px">
+            Attachments ({objective.attachments.length})
+          </div>
+          <MessageAttachments attachments={objective.attachments} />
         </section>
       )}
 

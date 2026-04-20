@@ -19,7 +19,14 @@
  */
 
 import type { Client as BrokerClient, ClientError } from '@agentc7/sdk/client';
-import type { BriefingResponse, LogLevel, Message, ObjectiveStatus } from '@agentc7/sdk/types';
+import type {
+  Attachment,
+  BriefingResponse,
+  FsEntry,
+  LogLevel,
+  Message,
+  ObjectiveStatus,
+} from '@agentc7/sdk/types';
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js';
 
 const LEVELS: readonly LogLevel[] = ['debug', 'info', 'notice', 'warning', 'error', 'critical'];
@@ -56,7 +63,9 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
       description:
         `Broadcast a message to the ${team.name} team channel. All teammates see it in ` +
         `real time. Use this for team-wide announcements, status updates, and individual-contributor ` +
-        `directives. You go by ${identity}. Teammates: ${teammateList}.`,
+        `directives. You go by ${identity}. Teammates: ${teammateList}. Optionally attach ` +
+        `files from your home (\`/${name}/...\`); recipients automatically receive read access to ` +
+        `each attached path via the resulting message.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -67,6 +76,12 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
             enum: [...LEVELS],
             description: "Optional severity; defaults to 'info'.",
           },
+          attachments: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              "Optional list of file paths (e.g. ['/<name>/uploads/report.pdf']). Each must already exist and be readable to you. Use `fs_write` to upload a new file first.",
+          },
         },
         required: ['body'],
       },
@@ -76,7 +91,8 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
       description:
         `Send a direct message to a specific teammate on ${team.name}. Messages are ` +
         `private to you and the target. You go by ${identity}. Available names: ` +
-        `${teammateList}. Directive: ${team.directive}.`,
+        `${teammateList}. Directive: ${team.directive}. Optionally attach files from ` +
+        `your home; the recipient receives read access to each attached path.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -87,6 +103,12 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
             type: 'string',
             enum: [...LEVELS],
             description: "Optional severity; defaults to 'info'.",
+          },
+          attachments: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              "Optional list of file paths to attach. Each must already exist and be readable to you.",
           },
         },
         required: ['to', 'body'],
@@ -185,7 +207,8 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
         `their live stream. Use this for progress updates, questions, intermediate ` +
         `findings, coordination with the originator, or acknowledgments — anything that's ` +
         `conversation rather than a state transition. Every post is archived alongside ` +
-        `the objective's event log and is visible in the web UI's inline thread view.`,
+        `the objective's event log and is visible in the web UI's inline thread view. ` +
+        `Optionally attach files from your home; thread members receive automatic read access.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -197,6 +220,12 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
           title: {
             type: 'string',
             description: 'Optional short title / subject line.',
+          },
+          attachments: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Optional list of file paths to attach. Each must already exist and be readable to you.',
           },
         },
         required: ['id', 'body'],
@@ -222,6 +251,14 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
         required: ['id', 'result'],
       },
     },
+    // ── Filesystem tools ───────────────────────────────────────────
+    //
+    // Every slot has a home at `/<name>/` with full read/write access;
+    // directors may also read/write anywhere. Reads outside your home
+    // require either a grant (the file was attached to a message you
+    // can see) or director authority. See `fs_shared` for a list of
+    // files shared with you.
+    ...buildFilesystemTools(name),
     // ── Authority-gated tools ────────────────────────────────────────
     //
     // These tools appear in the agent's toolbox only when their slot
@@ -239,6 +276,142 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
     // the "only objectives you originated" rule so the agent doesn't
     // try to touch someone else's objective and eat a 403.
     ...buildAuthorityTools(briefing),
+  ];
+}
+
+function buildFilesystemTools(name: string): Tool[] {
+  const home = `/${name}`;
+  return [
+    {
+      name: 'fs_ls',
+      description:
+        `List the contents of a directory in the ac7 virtual filesystem. ` +
+        `Your home is \`${home}\`; passing "/" lists the set of homes you can see. ` +
+        `Entries include per-item metadata (kind, size, mime type, owner).`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: `Absolute path to list. Defaults to your home ("${home}").`,
+          },
+        },
+      },
+    },
+    {
+      name: 'fs_stat',
+      description: `Fetch metadata for a single path. Returns null if the path does not exist.`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Absolute path to stat.' },
+        },
+        required: ['path'],
+      },
+    },
+    {
+      name: 'fs_read',
+      description:
+        `Read the contents of a file. Text-like files (mime \`text/*\` or \`application/json\`) ` +
+        `are returned as UTF-8; everything else is returned as base64. The response ` +
+        `always includes the path, size, mime type, and either \`text\` or \`base64\`.`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Absolute path of the file to read.' },
+        },
+        required: ['path'],
+      },
+    },
+    {
+      name: 'fs_write',
+      description:
+        `Upload a file. Pass EITHER \`text\` (UTF-8 string) or \`base64\` (for binary ` +
+        `content), never both. Parent directories are auto-created. By default errors on ` +
+        `collision; use collide="suffix" to auto-rename ("foo.txt" → "foo-1.txt") or ` +
+        `"overwrite" to replace the existing file. You go by ${name}; your home is ${home}.`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: {
+            type: 'string',
+            description: `Absolute path to write (must sit under ${home} unless you are a director).`,
+          },
+          mimeType: {
+            type: 'string',
+            description: 'MIME type of the uploaded file, e.g. "text/plain" or "image/png".',
+          },
+          text: {
+            type: 'string',
+            description: 'UTF-8 content. Exclusive with `base64`.',
+          },
+          base64: {
+            type: 'string',
+            description: 'Base64-encoded binary content. Exclusive with `text`.',
+          },
+          collide: {
+            type: 'string',
+            enum: ['error', 'suffix', 'overwrite'],
+            description: "Collision behavior (default 'error').",
+          },
+        },
+        required: ['path', 'mimeType'],
+      },
+    },
+    {
+      name: 'fs_mkdir',
+      description:
+        `Create a directory. Pass recursive=true to auto-create missing parents. ` +
+        `You go by ${name}; your home is ${home}.`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Absolute directory path to create.' },
+          recursive: { type: 'boolean', description: 'Create missing parents (default false).' },
+        },
+        required: ['path'],
+      },
+    },
+    {
+      name: 'fs_rm',
+      description:
+        `Remove a file or directory. Directories require recursive=true if non-empty. ` +
+        `Deletion cascades blob refcounts — the underlying content is purged only when the ` +
+        `last referencing entry across the filesystem goes away.`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Absolute path to remove.' },
+          recursive: {
+            type: 'boolean',
+            description: 'Cascade-delete directory contents (default false).',
+          },
+        },
+        required: ['path'],
+      },
+    },
+    {
+      name: 'fs_mv',
+      description:
+        `Rename / move a file. Directory moves are not currently supported. ` +
+        `Both the source and destination must sit under a tree you own (or you must be a director).`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          from: { type: 'string', description: 'Current absolute path.' },
+          to: { type: 'string', description: 'Destination absolute path.' },
+        },
+        required: ['from', 'to'],
+      },
+    },
+    {
+      name: 'fs_shared',
+      description:
+        `List every file that has been shared with you via a message or objective ` +
+        `attachment. Owner-private files from other slots never appear here — only ones ` +
+        `a teammate explicitly attached to a thread you can see.`,
+      inputSchema: { type: 'object', properties: {} },
+    },
   ];
 }
 
@@ -291,6 +464,12 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
           items: { type: 'string' },
           description:
             'Optional list of teammate names to add as watchers on the objective thread from the start.',
+        },
+        attachments: {
+          type: 'array',
+          items: { type: 'string' },
+          description:
+            'Optional list of file paths to attach to the objective. Every thread member (originator, assignee, watchers, directors) receives automatic read access. Use `fs_write` to upload a file first.',
         },
       },
       required: ['title', 'outcome', 'assignee'],
@@ -422,6 +601,22 @@ export async function handleToolCall(
         return await handleObjectivesWatchers(args, brokerClient, briefing);
       case 'objectives_reassign':
         return await handleObjectivesReassign(args, brokerClient, briefing);
+      case 'fs_ls':
+        return await handleFsLs(args, brokerClient, briefing);
+      case 'fs_stat':
+        return await handleFsStat(args, brokerClient);
+      case 'fs_read':
+        return await handleFsRead(args, brokerClient);
+      case 'fs_write':
+        return await handleFsWrite(args, brokerClient);
+      case 'fs_mkdir':
+        return await handleFsMkdir(args, brokerClient);
+      case 'fs_rm':
+        return await handleFsRm(args, brokerClient);
+      case 'fs_mv':
+        return await handleFsMv(args, brokerClient);
+      case 'fs_shared':
+        return await handleFsShared(brokerClient);
       default:
         return errorResult(`unknown tool: ${name}`);
     }
@@ -462,10 +657,19 @@ async function handleBroadcast(
   const levelResult = parseLevel(args.level);
   if (levelResult.error) return errorResult(`broadcast: ${levelResult.error}`);
   const title = typeof args.title === 'string' ? args.title : null;
-  const result = await brokerClient.push({ body, title, level: levelResult.level });
+  const attachments = await resolveAttachmentPaths(args.attachments, brokerClient);
+  if ('error' in attachments) return errorResult(`broadcast: ${attachments.error}`);
+  const result = await brokerClient.push({
+    body,
+    title,
+    level: levelResult.level,
+    ...(attachments.list.length > 0 ? { attachments: attachments.list } : {}),
+  });
+  const attachmentSummary =
+    attachments.list.length > 0 ? ` attachments=${attachments.list.length}` : '';
   return textResult(
     `broadcast delivered: sse=${result.delivery.sse} ` +
-      `targets=${result.delivery.targets} msg=${result.message.id}`,
+      `targets=${result.delivery.targets} msg=${result.message.id}${attachmentSummary}`,
   );
 }
 
@@ -479,11 +683,59 @@ async function handleSend(
   const levelResult = parseLevel(args.level);
   if (levelResult.error) return errorResult(`send: ${levelResult.error}`);
   const title = typeof args.title === 'string' ? args.title : null;
-  const result = await brokerClient.push({ agentId: to, body, title, level: levelResult.level });
+  const attachments = await resolveAttachmentPaths(args.attachments, brokerClient);
+  if ('error' in attachments) return errorResult(`send: ${attachments.error}`);
+  const result = await brokerClient.push({
+    agentId: to,
+    body,
+    title,
+    level: levelResult.level,
+    ...(attachments.list.length > 0 ? { attachments: attachments.list } : {}),
+  });
+  const attachmentSummary =
+    attachments.list.length > 0 ? ` attachments=${attachments.list.length}` : '';
   return textResult(
     `delivered to ${to}: sse=${result.delivery.sse} ` +
-      `targets=${result.delivery.targets} msg=${result.message.id}`,
+      `targets=${result.delivery.targets} msg=${result.message.id}${attachmentSummary}`,
   );
+}
+
+/**
+ * Turn the agent's string[] of paths into the full Attachment
+ * objects the broker expects. Resolves each via `fsStat`, reports
+ * the first failure by path so the agent can fix the offender.
+ */
+async function resolveAttachmentPaths(
+  raw: unknown,
+  brokerClient: BrokerClient,
+): Promise<{ list: Attachment[] } | { error: string }> {
+  if (raw === undefined || raw === null) return { list: [] };
+  if (!Array.isArray(raw)) {
+    return { error: '`attachments` must be an array of paths' };
+  }
+  const list: Attachment[] = [];
+  for (const p of raw) {
+    if (typeof p !== 'string' || p.length === 0) {
+      return { error: '`attachments` entries must be non-empty path strings' };
+    }
+    try {
+      const entry = await brokerClient.fsStat(p);
+      if (!entry) return { error: `attachment not found: ${p}` };
+      if (entry.kind !== 'file') return { error: `attachment is a directory: ${p}` };
+      if (entry.size === null || entry.mimeType === null) {
+        return { error: `attachment is corrupt: ${p}` };
+      }
+      list.push({
+        path: entry.path,
+        name: entry.name,
+        size: entry.size,
+        mimeType: entry.mimeType,
+      });
+    } catch (err) {
+      return { error: `attachment lookup failed for ${p}: ${String(err)}` };
+    }
+  }
+  return { list };
 }
 
 async function handleRecent(
@@ -612,12 +864,19 @@ async function handleObjectivesDiscuss(
     return errorResult('objectives_discuss: both `id` and `body` are required');
   }
   const title = typeof args.title === 'string' ? args.title : undefined;
+  const attachmentsResult = await resolveAttachmentPaths(args.attachments, brokerClient);
+  if ('error' in attachmentsResult) {
+    return errorResult(`objectives_discuss: ${attachmentsResult.error}`);
+  }
   const message = await brokerClient.discussObjective(id, {
     body,
     ...(title !== undefined ? { title } : {}),
+    ...(attachmentsResult.list.length > 0 ? { attachments: attachmentsResult.list } : {}),
   });
+  const attachmentNote =
+    attachmentsResult.list.length > 0 ? ` attachments=${attachmentsResult.list.length}` : '';
   return textResult(
-    `posted to objective ${id} thread: msg=${message.id} (fanned out to thread members)`,
+    `posted to objective ${id} thread: msg=${message.id}${attachmentNote} (fanned out to thread members)`,
   );
 }
 
@@ -663,19 +922,27 @@ async function handleObjectivesCreate(
   if (Array.isArray(args.watchers)) {
     watchers = args.watchers.filter((v): v is string => typeof v === 'string');
   }
+  const attachmentsResult = await resolveAttachmentPaths(args.attachments, brokerClient);
+  if ('error' in attachmentsResult) {
+    return errorResult(`objectives_create: ${attachmentsResult.error}`);
+  }
   const created = await brokerClient.createObjective({
     title,
     outcome,
     assignee,
     ...(body ? { body } : {}),
     ...(watchers && watchers.length > 0 ? { watchers } : {}),
+    ...(attachmentsResult.list.length > 0 ? { attachments: attachmentsResult.list } : {}),
   });
   return textResult(
     `created ${created.id} assigned to ${created.assignee}: ${created.title}\n` +
       `outcome: ${created.outcome}\n` +
       (created.watchers.length > 0
         ? `watchers: ${created.watchers.join(', ')}`
-        : 'watchers: (none)'),
+        : 'watchers: (none)') +
+      (created.attachments.length > 0
+        ? `\nattachments: ${created.attachments.map((a) => a.path).join(', ')}`
+        : ''),
   );
 }
 
@@ -741,6 +1008,135 @@ async function handleObjectivesReassign(
     ...(note ? { note } : {}),
   });
   return textResult(`reassigned ${updated.id} to ${updated.assignee}: ${updated.title}`);
+}
+
+// ── Filesystem handlers ────────────────────────────────────────────
+
+const TEXT_MIME_RE = /^(text\/|application\/json\b|application\/xml\b)/i;
+
+function formatFsEntry(entry: FsEntry): string {
+  if (entry.kind === 'directory') {
+    return `d  ${entry.path}/  owner=${entry.owner}`;
+  }
+  const sizeKb = entry.size !== null ? `${Math.max(entry.size, 0)}B` : '?';
+  return `f  ${entry.path}  ${sizeKb}  ${entry.mimeType ?? 'unknown'}  owner=${entry.owner}`;
+}
+
+async function handleFsLs(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+  briefing: BriefingResponse,
+): Promise<CallToolResult> {
+  const raw = typeof args.path === 'string' ? args.path : `/${briefing.name}`;
+  const entries = await brokerClient.fsList(raw);
+  if (entries.length === 0) {
+    return textResult(`${raw}: (empty)`);
+  }
+  return textResult(
+    `${raw}:\n${entries.map((e) => `  ${formatFsEntry(e)}`).join('\n')}`,
+  );
+}
+
+async function handleFsStat(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const path = typeof args.path === 'string' ? args.path : '';
+  if (!path) return errorResult('fs_stat: `path` is required');
+  const entry = await brokerClient.fsStat(path);
+  if (!entry) return textResult(`${path}: not found`);
+  return textResult(formatFsEntry(entry));
+}
+
+async function handleFsRead(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const path = typeof args.path === 'string' ? args.path : '';
+  if (!path) return errorResult('fs_read: `path` is required');
+  const entry = await brokerClient.fsStat(path);
+  if (!entry) return errorResult(`fs_read: not found: ${path}`);
+  if (entry.kind !== 'file') return errorResult(`fs_read: not a file: ${path}`);
+  const blob = await brokerClient.fsRead(path);
+  const buffer = Buffer.from(await blob.arrayBuffer());
+  const mime = entry.mimeType ?? 'application/octet-stream';
+  const header = `path=${entry.path}\nsize=${entry.size ?? 0}\nmime=${mime}`;
+  if (TEXT_MIME_RE.test(mime)) {
+    return textResult(`${header}\ntext:\n${buffer.toString('utf8')}`);
+  }
+  return textResult(`${header}\nbase64:\n${buffer.toString('base64')}`);
+}
+
+async function handleFsWrite(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const path = typeof args.path === 'string' ? args.path : '';
+  const mimeType = typeof args.mimeType === 'string' ? args.mimeType : '';
+  if (!path || !mimeType) return errorResult('fs_write: `path` and `mimeType` are required');
+  const text = typeof args.text === 'string' ? args.text : undefined;
+  const b64 = typeof args.base64 === 'string' ? args.base64 : undefined;
+  if ((text === undefined && b64 === undefined) || (text !== undefined && b64 !== undefined)) {
+    return errorResult('fs_write: provide exactly one of `text` or `base64`');
+  }
+  const collideRaw = typeof args.collide === 'string' ? args.collide : 'error';
+  if (collideRaw !== 'error' && collideRaw !== 'overwrite' && collideRaw !== 'suffix') {
+    return errorResult(`fs_write: invalid collide strategy '${collideRaw}'`);
+  }
+  const source = text !== undefined ? Buffer.from(text, 'utf8') : Buffer.from(b64 as string, 'base64');
+  const result = await brokerClient.fsWrite({
+    path,
+    mimeType,
+    source: new Uint8Array(source),
+    collision: collideRaw,
+  });
+  const renamedNote = result.renamed ? ` (renamed to ${result.entry.path})` : '';
+  return textResult(
+    `wrote ${result.entry.path}${renamedNote}: size=${result.entry.size ?? source.length} mime=${result.entry.mimeType}`,
+  );
+}
+
+async function handleFsMkdir(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const path = typeof args.path === 'string' ? args.path : '';
+  if (!path) return errorResult('fs_mkdir: `path` is required');
+  const recursive = args.recursive === true;
+  const entry = await brokerClient.fsMkdir(path, recursive);
+  return textResult(`mkdir ${entry.path} (owner=${entry.owner})`);
+}
+
+async function handleFsRm(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const path = typeof args.path === 'string' ? args.path : '';
+  if (!path) return errorResult('fs_rm: `path` is required');
+  const recursive = args.recursive === true;
+  await brokerClient.fsRm(path, recursive);
+  return textResult(`rm ${path}${recursive ? ' (recursive)' : ''}`);
+}
+
+async function handleFsMv(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const from = typeof args.from === 'string' ? args.from : '';
+  const to = typeof args.to === 'string' ? args.to : '';
+  if (!from || !to) return errorResult('fs_mv: both `from` and `to` are required');
+  const entry = await brokerClient.fsMv(from, to);
+  return textResult(`mv ${from} → ${entry.path}`);
+}
+
+async function handleFsShared(brokerClient: BrokerClient): Promise<CallToolResult> {
+  const entries = await brokerClient.fsShared();
+  if (entries.length === 0) {
+    return textResult('no files currently shared with you');
+  }
+  return textResult(
+    `files shared with you:\n${entries.map((e) => `  ${formatFsEntry(e)}`).join('\n')}`,
+  );
 }
 
 function formatRecentLine(m: Message): string {

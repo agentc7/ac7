@@ -21,6 +21,7 @@
  */
 
 import { existsSync } from 'node:fs';
+import { Readable } from 'node:stream';
 import { type Broker, clampQueryLimit } from '@agentc7/core';
 import { PATHS, PROTOCOL_HEADER, PROTOCOL_VERSION } from '@agentc7/sdk/protocol';
 import {
@@ -29,6 +30,10 @@ import {
   CompleteObjectiveRequestSchema,
   CreateObjectiveRequestSchema,
   DiscussObjectiveRequestSchema,
+  FsMkdirRequestSchema,
+  FsMoveRequestSchema,
+  FsPathSchema,
+  FsWriteCollisionSchema,
   ListObjectivesQuerySchema,
   NameSchema,
   PushPayloadSchema,
@@ -41,6 +46,7 @@ import {
 } from '@agentc7/sdk/schemas';
 import type {
   AgentActivityEvent,
+  Attachment,
   Message,
   Objective,
   ObjectiveEvent,
@@ -49,12 +55,13 @@ import type {
   Team,
 } from '@agentc7/sdk/types';
 import { serveStatic } from '@hono/node-server/serve-static';
-import { Hono } from 'hono';
+import { type Context, Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
 import { streamSSE } from 'hono/streaming';
 import type { AgentActivityStore } from './agent-activity.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
+import { FsError, type FilesystemStore, type ViewerContext } from './files/index.js';
 import type { Logger } from './logger.js';
 import { ObjectivesError, type ObjectivesStore } from './objectives.js';
 import type { PushSubscriptionStore } from './push/store.js';
@@ -125,6 +132,19 @@ export interface AppOptions {
    */
   onPushed?: (message: Message) => void;
   /**
+   * Virtual filesystem backing file attachments. The `/fs/*` endpoints
+   * are registered iff this is provided, and `/push` gains attachment
+   * validation + per-recipient grant materialization. Omit for
+   * machine-only or chat-only deployments.
+   */
+  files?: FilesystemStore;
+  /**
+   * Per-file upload cap in bytes. Defaults to 25 MB. The broker caps
+   * this at 1 GB regardless of config — tune upward with intent, not
+   * by accident.
+   */
+  maxFileSize?: number;
+  /**
    * Clock injection for tests — rate-limit book-keeping uses `now()`
    * so tests don't have to wall-clock-wait to see a lockout expire.
    */
@@ -185,7 +205,11 @@ const API_PATH_PREFIXES = [
   PATHS.pushSubscriptions,
   PATHS.objectives,
   '/agents',
+  '/fs',
 ] as const;
+
+const DEFAULT_MAX_FILE_SIZE = 25 * 1024 * 1024;
+const HARD_CAP_MAX_FILE_SIZE = 1024 * 1024 * 1024;
 
 function isApiPath(pathname: string): boolean {
   for (const p of API_PATH_PREFIXES) {
@@ -214,6 +238,11 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     vapidPublicKey,
     onPushed,
   } = options;
+  const { files } = options;
+  const maxFileSize = Math.min(
+    options.maxFileSize ?? DEFAULT_MAX_FILE_SIZE,
+    HARD_CAP_MAX_FILE_SIZE,
+  );
   const now = options.now ?? Date.now;
   const app = new Hono<AppBindings>();
 
@@ -465,11 +494,48 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       return c.json({ error: `no such agent: ${parsed.data.agentId}` }, 404);
     }
     const slot = c.get('slot');
-    const result = await broker.push(parsed.data, { from: slot.name });
+
+    // Attachment validation: every path must resolve, must be a file,
+    // and the sender must have read access. The wire `size` / `mime`
+    // / `name` fields are re-derived from the stored entry so the
+    // sender can't lie about what they're attaching.
+    const pushAttachmentsResult = canonicalizeAttachments(
+      parsed.data.attachments,
+      toViewer(slot),
+      files,
+    );
+    if (!pushAttachmentsResult.ok) {
+      return c.json({ error: pushAttachmentsResult.error }, pushAttachmentsResult.status);
+    }
+    const canonicalAttachments = pushAttachmentsResult.canonical;
+
+    const payload = canonicalAttachments
+      ? { ...parsed.data, attachments: canonicalAttachments }
+      : parsed.data;
+
+    const result = await broker.push(payload, { from: slot.name });
+
+    // Grant fanout — for every recipient that isn't the owner, record
+    // a read grant keyed on the message id. The recipient set is the
+    // push's audience: targeted = {target, sender}, broadcast = all
+    // slots. Owner self-grants are dropped by `files.grant` so we
+    // don't need to filter here.
+    if (files && canonicalAttachments.length > 0) {
+      const recipients = new Set<string>();
+      if (result.message.agentId) {
+        recipients.add(result.message.agentId);
+        if (slot.name !== result.message.agentId) recipients.add(slot.name);
+      } else {
+        for (const s of slots.slots()) recipients.add(s.name);
+      }
+      grantAttachmentsTo(files, canonicalAttachments, recipients, result.message.id, logger);
+    }
+
     logger.info('push delivered', {
       messageId: result.message.id,
       from: slot.name,
       targetAgent: parsed.data.agentId ?? '*broadcast*',
+      attachments: canonicalAttachments.length,
       sse: result.delivery.sse,
       targets: result.delivery.targets,
     });
@@ -727,13 +793,42 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
           }
         }
       }
+      const createAttachmentsResult = canonicalizeAttachments(
+        parsed.data.attachments,
+        toViewer(slot),
+        files,
+      );
+      if (!createAttachmentsResult.ok) {
+        return c.json(
+          { error: createAttachmentsResult.error },
+          createAttachmentsResult.status,
+        );
+      }
+      const inputWithCanonical = createAttachmentsResult.canonical.length > 0
+        ? { ...parsed.data, attachments: createAttachmentsResult.canonical }
+        : parsed.data;
       try {
-        const { objective: created, events } = objectives.create(parsed.data, slot.name);
+        const { objective: created, events } = objectives.create(inputWithCanonical, slot.name);
         logger.info('objective created', {
           id: created.id,
           originator: slot.name,
           assignee: created.assignee,
+          attachments: created.attachments.length,
         });
+        // Grant every initial thread member access to the attachments.
+        // `objectiveThreadMembers` already knows the originator,
+        // assignee, explicit watchers, and all directors — so one
+        // call covers everyone who should see these files.
+        if (files && created.attachments.length > 0) {
+          const members = objectiveThreadMembers(created);
+          grantAttachmentsTo(
+            files,
+            created.attachments,
+            members,
+            `obj:${created.id}`,
+            logger,
+          );
+        }
         queueMicrotask(() => {
           for (const ev of events) {
             void publishObjectiveEvent(created, ev, slot.name);
@@ -859,6 +954,18 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
       try {
         const { objective: updated, events } = objectives.reassign(id, parsed.data, slot.name);
+        // Backfill attachment grants for the new assignee — they're
+        // now a thread member and should be able to download
+        // anything that was attached to the objective at creation.
+        if (files && updated.attachments.length > 0) {
+          grantAttachmentsTo(
+            files,
+            updated.attachments,
+            [updated.assignee],
+            `obj:${updated.id}`,
+            logger,
+          );
+        }
         queueMicrotask(() => {
           for (const ev of events) {
             void publishObjectiveEvent(updated, ev, slot.name);
@@ -924,6 +1031,27 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
           parsed.data,
           slot.name,
         );
+        // Every watcher_added event carries a name; backfill attachment
+        // grants for each newly-added watcher so they can read files
+        // that were attached to the objective before they joined the
+        // thread.
+        if (files && updated.attachments.length > 0) {
+          const addedNames: string[] = [];
+          for (const ev of events) {
+            if (ev.kind === 'watcher_added' && typeof ev.payload.name === 'string') {
+              addedNames.push(ev.payload.name);
+            }
+          }
+          if (addedNames.length > 0) {
+            grantAttachmentsTo(
+              files,
+              updated.attachments,
+              addedNames,
+              `obj:${updated.id}`,
+              logger,
+            );
+          }
+        }
         queueMicrotask(() => {
           for (const ev of events) {
             void publishObjectiveEvent(updated, ev, slot.name);
@@ -972,6 +1100,19 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         return c.json({ error: 'invalid discuss payload', details: parsed.error.issues }, 400);
       }
 
+      const discussAttachmentsResult = canonicalizeAttachments(
+        parsed.data.attachments,
+        toViewer(slot),
+        files,
+      );
+      if (!discussAttachmentsResult.ok) {
+        return c.json(
+          { error: discussAttachmentsResult.error },
+          discussAttachmentsResult.status,
+        );
+      }
+      const discussAttachments = discussAttachmentsResult.canonical;
+
       const threadKey = `obj:${id}`;
       let canonical: Message | null = null;
       for (const target of members) {
@@ -988,6 +1129,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
                 objective_id: id,
                 thread: threadKey,
               },
+              ...(discussAttachments.length > 0 ? { attachments: discussAttachments } : {}),
             },
             { from: slot.name },
           );
@@ -1004,6 +1146,13 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
             error: err instanceof Error ? err.message : String(err),
           });
         }
+      }
+
+      // Materialize grants for every thread member (minus the owner,
+      // filtered inside files.grant). Use the message id so agents and
+      // the Files panel can trace the grant back to a specific post.
+      if (files && discussAttachments.length > 0 && canonical) {
+        grantAttachmentsTo(files, discussAttachments, members, canonical.id, logger);
       }
 
       if (!canonical) {
@@ -1319,6 +1468,165 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     });
   }
 
+  // ─── Filesystem endpoints ─────────────────────────────────────
+  //
+  // Registered iff an FilesystemStore is provided. Permission checks
+  // live in the store; this layer maps `FsError` codes onto HTTP
+  // statuses and handles request/response plumbing (multipart vs raw
+  // body, streaming downloads, JSON payload parsing).
+  if (files) {
+    const fsStore = files;
+
+    app.get(PATHS.fsList, auth, (c) => {
+      const pathRaw = c.req.query('path') ?? '/';
+      const parsedPath = FsPathSchema.safeParse(pathRaw);
+      if (!parsedPath.success) {
+        return c.json({ error: 'invalid path', details: parsedPath.error.issues }, 400);
+      }
+      try {
+        const entries = fsStore.list(parsedPath.data, toViewer(c.get('slot')));
+        return c.json({ entries });
+      } catch (err) {
+        return mapFsError(c, err);
+      }
+    });
+
+    app.get(PATHS.fsStat, auth, (c) => {
+      const pathRaw = c.req.query('path');
+      if (!pathRaw) return c.json({ error: '`path` query parameter is required' }, 400);
+      const parsedPath = FsPathSchema.safeParse(pathRaw);
+      if (!parsedPath.success) {
+        return c.json({ error: 'invalid path', details: parsedPath.error.issues }, 400);
+      }
+      try {
+        const entry = fsStore.stat(parsedPath.data, toViewer(c.get('slot')));
+        if (!entry) return c.json({ error: `no such path: ${parsedPath.data}` }, 404);
+        return c.json({ entry });
+      } catch (err) {
+        return mapFsError(c, err);
+      }
+    });
+
+    app.get(PATHS.fsShared, auth, (c) => {
+      const entries = fsStore.listShared(toViewer(c.get('slot')));
+      return c.json({ entries });
+    });
+
+    // `/fs/read/*` — catch-all, single URL-decoded segment per path
+    // component so `<img src="/fs/read/alice/uploads/foo.png">` just
+    // works. The `*` route lives in its own handler so Hono's
+    // path-matcher treats it distinctly from /fs/read (no slash).
+    app.get('/fs/read/*', auth, async (c) => {
+      const rawPath = c.req.path.slice('/fs/read'.length);
+      if (rawPath.length === 0 || rawPath === '/') {
+        return c.json({ error: '`/fs/read/<path>` requires a file path' }, 400);
+      }
+      // Hono's URL already URL-decodes the path before we see it;
+      // pass through to the store which does its own validation.
+      const parsedPath = FsPathSchema.safeParse(rawPath);
+      if (!parsedPath.success) {
+        return c.json({ error: 'invalid path', details: parsedPath.error.issues }, 400);
+      }
+      try {
+        const { entry, stream } = fsStore.openReadStream(parsedPath.data, toViewer(c.get('slot')));
+        const webStream = nodeStreamToWebStream(stream);
+        return new Response(webStream, {
+          status: 200,
+          headers: {
+            'Content-Type': entry.mimeType ?? 'application/octet-stream',
+            ...(entry.size !== null ? { 'Content-Length': String(entry.size) } : {}),
+            'Content-Disposition': `inline; filename="${encodeFilenameForHeader(entry.name)}"`,
+          },
+        });
+      } catch (err) {
+        return mapFsError(c, err);
+      }
+    });
+
+    app.post(PATHS.fsWrite, auth, async (c) => {
+      const pathRaw = c.req.query('path');
+      const mime = c.req.query('mime');
+      const collideRaw = c.req.query('collide') ?? 'error';
+      if (!pathRaw) return c.json({ error: '`path` query parameter is required' }, 400);
+      if (!mime) return c.json({ error: '`mime` query parameter is required' }, 400);
+      const parsedPath = FsPathSchema.safeParse(pathRaw);
+      if (!parsedPath.success) {
+        return c.json({ error: 'invalid path', details: parsedPath.error.issues }, 400);
+      }
+      const parsedCollide = FsWriteCollisionSchema.safeParse(collideRaw);
+      if (!parsedCollide.success) {
+        return c.json(
+          { error: `invalid collide strategy: ${collideRaw}` },
+          400,
+        );
+      }
+      const body = c.req.raw.body;
+      if (!body) return c.json({ error: 'empty upload body' }, 400);
+      const nodeStream = Readable.fromWeb(
+        body as unknown as import('node:stream/web').ReadableStream<Uint8Array>,
+      );
+      try {
+        const result = await fsStore.writeFile({
+          path: parsedPath.data,
+          mimeType: mime,
+          writer: toViewer(c.get('slot')),
+          source: nodeStream,
+          collision: parsedCollide.data,
+          maxSize: maxFileSize,
+        });
+        return c.json(result);
+      } catch (err) {
+        return mapFsError(c, err);
+      }
+    });
+
+    app.post(PATHS.fsMkdir, auth, async (c) => {
+      const raw = await c.req.json().catch(() => null);
+      const parsed = FsMkdirRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid mkdir payload', details: parsed.error.issues }, 400);
+      }
+      try {
+        const recursive = parsed.data.recursive ?? false;
+        const entry = fsStore.mkdir(parsed.data.path, toViewer(c.get('slot')), { recursive });
+        return c.json({ entry });
+      } catch (err) {
+        return mapFsError(c, err);
+      }
+    });
+
+    app.delete(PATHS.fsRm, auth, async (c) => {
+      const pathRaw = c.req.query('path');
+      const recursiveRaw = c.req.query('recursive');
+      if (!pathRaw) return c.json({ error: '`path` query parameter is required' }, 400);
+      const parsedPath = FsPathSchema.safeParse(pathRaw);
+      if (!parsedPath.success) {
+        return c.json({ error: 'invalid path', details: parsedPath.error.issues }, 400);
+      }
+      const recursive = recursiveRaw === 'true' || recursiveRaw === '1';
+      try {
+        await fsStore.remove(parsedPath.data, toViewer(c.get('slot')), { recursive });
+        return c.body(null, 204);
+      } catch (err) {
+        return mapFsError(c, err);
+      }
+    });
+
+    app.post(PATHS.fsMv, auth, async (c) => {
+      const raw = await c.req.json().catch(() => null);
+      const parsed = FsMoveRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid move payload', details: parsed.error.issues }, 400);
+      }
+      try {
+        const entry = fsStore.move(parsed.data.from, parsed.data.to, toViewer(c.get('slot')));
+        return c.json({ entry });
+      } catch (err) {
+        return mapFsError(c, err);
+      }
+    });
+  }
+
   // ─── Static SPA serving (registered LAST so API routes match first) ─
 
   if (publicRoot && existsSync(publicRoot)) {
@@ -1416,6 +1724,150 @@ function checkObjectiveContext(
 
 /** Re-export so `LoadedSlot` consumers don't have to dig into slots.ts. */
 export type { LoadedSlot };
+
+/**
+ * Validate + canonicalize a list of attachment claims. Server
+ * re-derives name/size/mime from the stored entry so the caller
+ * can't lie. Used by `/push`, `/objectives` create, and
+ * `/objectives/:id/discuss` so every attachment-bearing path
+ * shares the same resolver.
+ *
+ *   result.error      — a human-readable explanation; set iff
+ *                       result.canonical is undefined
+ *   result.status     — HTTP status to return alongside result.error
+ *   result.canonical  — an array (possibly empty) of authoritative
+ *                       Attachment objects to persist / fan out
+ */
+type CanonicalizeResult =
+  | { ok: true; canonical: Attachment[] }
+  | { ok: false; error: string; status: 400 | 403 };
+
+function canonicalizeAttachments(
+  claims: Attachment[] | undefined,
+  viewer: ViewerContext,
+  filesStore: FilesystemStore | undefined,
+): CanonicalizeResult {
+  if (!claims || claims.length === 0) return { ok: true, canonical: [] };
+  if (!filesStore) {
+    return {
+      ok: false,
+      error: 'file attachments are not enabled on this server',
+      status: 400,
+    };
+  }
+  const out: Attachment[] = [];
+  for (const claim of claims) {
+    try {
+      const entry = filesStore.stat(claim.path, viewer);
+      if (!entry) {
+        return { ok: false, error: `attachment not found: ${claim.path}`, status: 400 };
+      }
+      if (entry.kind !== 'file') {
+        return { ok: false, error: `attachment is a directory: ${claim.path}`, status: 400 };
+      }
+      if (entry.size === null || entry.mimeType === null) {
+        return { ok: false, error: `attachment is corrupt: ${claim.path}`, status: 400 };
+      }
+      out.push({
+        path: entry.path,
+        name: entry.name,
+        size: entry.size,
+        mimeType: entry.mimeType,
+      });
+    } catch (err) {
+      if (err instanceof FsError && err.code === 'forbidden') {
+        return { ok: false, error: `no access to attachment: ${claim.path}`, status: 403 };
+      }
+      throw err;
+    }
+  }
+  return { ok: true, canonical: out };
+}
+
+/**
+ * Materialize read-grants for every (attachment, recipient) pair.
+ * Owner self-grants are dropped inside `files.grant`, so callers
+ * don't need to filter the recipient set.
+ */
+function grantAttachmentsTo(
+  filesStore: FilesystemStore,
+  attachments: Attachment[],
+  recipients: Iterable<string>,
+  grantKey: string,
+  logger: Logger,
+): void {
+  for (const att of attachments) {
+    for (const r of recipients) {
+      try {
+        filesStore.grant(att.path, r, grantKey);
+      } catch (err) {
+        logger.warn('failed to grant attachment access', {
+          path: att.path,
+          viewer: r,
+          grantKey,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Project a LoadedSlot onto the smaller shape the filesystem layer
+ * consumes. The store only needs name + authority for permission
+ * checks — keeping the surface lean makes it trivial to unit-test
+ * without constructing a full slot record.
+ */
+function toViewer(slot: LoadedSlot): ViewerContext {
+  return { name: slot.name, authority: slot.authority };
+}
+
+/**
+ * Map an `FsError` to a Hono JSON response. Non-FsError throws
+ * bubble up as 500s — the store never throws raw errors for
+ * permission / shape issues.
+ */
+function mapFsError(c: Context<AppBindings>, err: unknown): Response {
+  if (err instanceof FsError) {
+    const status =
+      err.code === 'not_found'
+        ? 404
+        : err.code === 'forbidden'
+          ? 403
+          : err.code === 'too_large'
+            ? 413
+            : err.code === 'exists' ||
+                err.code === 'not_a_directory' ||
+                err.code === 'is_a_directory' ||
+                err.code === 'not_empty'
+              ? 409
+              : 400;
+    return c.json({ error: err.message, code: err.code }, status as 400 | 403 | 404 | 409 | 413);
+  }
+  return c.json(
+    { error: err instanceof Error ? err.message : String(err) },
+    500,
+  );
+}
+
+/**
+ * Wrap a Node `Readable` into a web `ReadableStream<Uint8Array>` so
+ * we can hand it to `new Response(...)`. `Readable.toWeb` returns a
+ * loosely-typed stream; we narrow it at the boundary since every
+ * value on the wire is a Uint8Array chunk.
+ */
+function nodeStreamToWebStream(stream: Readable): ReadableStream<Uint8Array> {
+  return Readable.toWeb(stream) as unknown as ReadableStream<Uint8Array>;
+}
+
+/**
+ * RFC-5987 filename* encoding for Content-Disposition. Non-ASCII
+ * characters are percent-encoded per UTF-8. Control characters and
+ * the characters `"\` are replaced with `_` to keep the header safe.
+ */
+function encodeFilenameForHeader(name: string): string {
+  return name.replace(/[\x00-\x1f"\\]/g, '_');
+}
 
 /**
  * Render the human-readable body for a lifecycle event's channel push.

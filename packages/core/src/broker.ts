@@ -216,6 +216,7 @@ export class Broker {
       body: payload.body,
       level: payload.level ?? 'info',
       data: payload.data ?? {},
+      attachments: payload.attachments ?? [],
     };
 
     await this.eventLog.append(message);

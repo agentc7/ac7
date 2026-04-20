@@ -438,6 +438,7 @@ describe('InMemoryEventLog.query', () => {
       body: 'msg',
       level: 'info',
       data: {},
+      attachments: [],
       ...overrides,
     };
   }
@@ -496,6 +497,7 @@ describe('InMemoryEventLog', () => {
       body: 'a',
       level: 'info',
       data: {},
+      attachments: [],
     };
     const m2: Message = { ...m1, id: 'b', ts: 2, body: 'b' };
     await log.append(m1);
@@ -518,6 +520,7 @@ describe('InMemoryEventLog', () => {
         body: `msg ${i}`,
         level: 'info',
         data: {},
+        attachments: [],
       });
     }
     const sinceOut = await log.tail({ since: 3 });

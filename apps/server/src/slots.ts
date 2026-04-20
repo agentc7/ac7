@@ -198,6 +198,17 @@ const HttpsConfigSchema = z.object({
   custom: CustomHttpsConfigSchema.default({ certPath: null, keyPath: null }),
 });
 
+/**
+ * Filesystem attachments config block. Both fields optional — the
+ * server picks the defaults (25 MB cap, `./data/files` root) when
+ * omitted. Max 1 GB cap is enforced at runtime regardless of the
+ * caller's value, so a typo doesn't let the team eat its disk.
+ */
+const FilesConfigSchema = z.object({
+  root: z.string().min(1).optional(),
+  maxFileSize: z.number().int().positive().optional(),
+});
+
 const TeamConfigSchema = z.object({
   _comment: z.unknown().optional(),
   team: TeamSchema,
@@ -205,10 +216,12 @@ const TeamConfigSchema = z.object({
   slots: z.array(SlotEntrySchema).min(1, 'slots must contain at least one entry'),
   https: HttpsConfigSchema.optional(),
   webPush: WebPushConfigSchema.optional(),
+  files: FilesConfigSchema.optional(),
 });
 
 export type HttpsConfig = z.infer<typeof HttpsConfigSchema>;
 export type WebPushConfig = z.infer<typeof WebPushConfigSchema>;
+export type FilesConfig = z.infer<typeof FilesConfigSchema>;
 
 export class SlotLoadError extends Error {
   constructor(message: string) {
@@ -331,6 +344,7 @@ export interface TeamConfig {
   store: SlotStore;
   https: HttpsConfig;
   webPush: WebPushConfig | null;
+  files: FilesConfig | null;
   migrated: number;
 }
 
@@ -520,13 +534,15 @@ export function loadTeamConfigFromFile(path: string): TeamConfig {
     }
   }
 
+  const files: FilesConfig | null = result.data.files ?? null;
+
   if (migrated > 0) {
     const topComment =
       typeof result.data._comment === 'string' ? result.data._comment : CONFIG_FILE_COMMENT;
     writeTeamConfigFile(path, topComment, team, roles, onDisk, https, webPush);
   }
 
-  return { team, roles, store, https, webPush, migrated };
+  return { team, roles, store, https, webPush, files, migrated };
 }
 
 /** Shape persisted to disk for a single slot entry. */

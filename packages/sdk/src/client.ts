@@ -9,6 +9,7 @@
 import {
   AGENT_PATHS,
   AUTH_HEADER,
+  FS_PATHS,
   OBJECTIVE_PATHS,
   PATHS,
   PROTOCOL_HEADER,
@@ -16,6 +17,9 @@ import {
 } from './protocol.js';
 import {
   BriefingResponseSchema,
+  FsEntryResponseSchema,
+  FsListResponseSchema,
+  FsWriteResponseSchema,
   GetObjectiveResponseSchema,
   HealthResponseSchema,
   HistoryResponseSchema,
@@ -37,6 +41,8 @@ import type {
   CancelObjectiveRequest,
   CreateObjectiveRequest,
   DiscussObjectiveRequest,
+  FsEntry,
+  FsWriteResponse,
   GetObjectiveResponse,
   HealthResponse,
   HistoryQuery,
@@ -58,6 +64,22 @@ import type {
   UploadAgentActivityResponse,
   VapidPublicKeyResponse,
 } from './types.js';
+
+export type FsWriteCollisionStrategy = 'error' | 'overwrite' | 'suffix';
+
+export interface FsWriteInput {
+  path: string;
+  mimeType: string;
+  /**
+   * The file contents. Accepts anything `fetch` accepts for a body —
+   * a `Blob`, `ArrayBuffer`, `Uint8Array`, `File`, `ReadableStream`,
+   * or `string`. For large files prefer a streaming source so the
+   * request doesn't buffer the entire file in memory.
+   */
+  source: BodyInit;
+  /** Override the default `'error'` collision behavior. */
+  collision?: FsWriteCollisionStrategy;
+}
 
 export interface ClientOptions {
   /** Broker base URL, e.g. `http://127.0.0.1:8717`. No trailing slash required. */
@@ -457,6 +479,125 @@ export class Client {
       body: JSON.stringify(validated),
     });
     return PushResultSchema.parse(await this.json(resp));
+  }
+
+  // ─────────────────────────── Filesystem ─────────────────────────
+
+  /**
+   * List the immediate children of `path`. Directories are returned
+   * first, alphabetized within each group. Directors see every home
+   * when listing `/`; everyone else sees only their own home.
+   */
+  async fsList(path: string): Promise<FsEntry[]> {
+    const qs = new URLSearchParams({ path });
+    const resp = await this.request(`${PATHS.fsList}?${qs.toString()}`, { method: 'GET' });
+    return FsListResponseSchema.parse(await this.json(resp)).entries;
+  }
+
+  /** Fetch metadata for a single path, or null if it does not exist. */
+  async fsStat(path: string): Promise<FsEntry | null> {
+    const qs = new URLSearchParams({ path });
+    const resp = await this.request(`${PATHS.fsStat}?${qs.toString()}`, { method: 'GET' });
+    if (resp.status === 404) return null;
+    return FsEntryResponseSchema.parse(await this.json(resp)).entry;
+  }
+
+  /**
+   * Download a file as a `Blob`. Callers wanting a streaming
+   * `ReadableStream` should use `fsReadStream` instead.
+   */
+  async fsRead(path: string): Promise<Blob> {
+    const resp = await this.request(FS_PATHS.read(path), { method: 'GET' });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new ClientError(
+        `fsRead failed: ${resp.status} ${resp.statusText}`,
+        resp.status,
+        text,
+      );
+    }
+    return resp.blob();
+  }
+
+  /**
+   * Download a file as a `ReadableStream`. Use when the caller wants
+   * to pipe the body directly into another consumer (file, fetch,
+   * DOM `<img>` via `URL.createObjectURL`, etc.) without buffering.
+   */
+  async fsReadStream(path: string): Promise<ReadableStream<Uint8Array>> {
+    const resp = await this.request(FS_PATHS.read(path), { method: 'GET' });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new ClientError(
+        `fsReadStream failed: ${resp.status} ${resp.statusText}`,
+        resp.status,
+        text,
+      );
+    }
+    if (!resp.body) {
+      throw new ClientError('fsReadStream: empty response body', resp.status, '');
+    }
+    return resp.body;
+  }
+
+  /**
+   * Upload a file. The sender must have write access to the target
+   * path (owns the containing home, or is a director). Parent
+   * directories are auto-created.
+   */
+  async fsWrite(input: FsWriteInput): Promise<FsWriteResponse> {
+    const qs = new URLSearchParams({
+      path: input.path,
+      mime: input.mimeType,
+      collide: input.collision ?? 'error',
+    });
+    const resp = await this.request(`${PATHS.fsWrite}?${qs.toString()}`, {
+      method: 'POST',
+      body: input.source,
+    });
+    return FsWriteResponseSchema.parse(await this.json(resp));
+  }
+
+  /** Create a directory. Pass `recursive: true` to auto-create missing parents. */
+  async fsMkdir(path: string, recursive = false): Promise<FsEntry> {
+    const resp = await this.request(PATHS.fsMkdir, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, recursive }),
+    });
+    return FsEntryResponseSchema.parse(await this.json(resp)).entry;
+  }
+
+  /** Remove a file or directory. Pass `recursive: true` to cascade-delete directories. */
+  async fsRm(path: string, recursive = false): Promise<void> {
+    const qs = new URLSearchParams({ path });
+    if (recursive) qs.set('recursive', 'true');
+    const resp = await this.request(`${PATHS.fsRm}?${qs.toString()}`, { method: 'DELETE' });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      throw new ClientError(`fsRm failed: ${resp.status} ${resp.statusText}`, resp.status, body);
+    }
+  }
+
+  /** Rename or move a file (directories currently unsupported server-side). */
+  async fsMv(from: string, to: string): Promise<FsEntry> {
+    const resp = await this.request(PATHS.fsMv, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to }),
+    });
+    return FsEntryResponseSchema.parse(await this.json(resp)).entry;
+  }
+
+  /**
+   * Enumerate files shared with the caller via message or objective
+   * attachments. Unique by path — a file referenced from multiple
+   * messages appears once. Owner's own files aren't in this list;
+   * use `fsList` under the owner home for those.
+   */
+  async fsShared(): Promise<FsEntry[]> {
+    const resp = await this.request(PATHS.fsShared, { method: 'GET' });
+    return FsListResponseSchema.parse(await this.json(resp)).entries;
   }
 
   /**

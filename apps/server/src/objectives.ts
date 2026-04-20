@@ -31,6 +31,7 @@
 
 import { ObjectiveEventKindSchema, ObjectiveStatusSchema } from '@agentc7/sdk/schemas';
 import type {
+  Attachment,
   CancelObjectiveRequest,
   CompleteObjectiveRequest,
   CreateObjectiveRequest,
@@ -58,7 +59,8 @@ const CREATE_SCHEMA = `
     updated_at INTEGER NOT NULL,
     completed_at INTEGER,
     result TEXT,
-    block_reason TEXT
+    block_reason TEXT,
+    attachments TEXT NOT NULL DEFAULT '[]'
   );
   CREATE INDEX IF NOT EXISTS objectives_assignee_idx ON objectives (assignee);
   CREATE INDEX IF NOT EXISTS objectives_status_idx ON objectives (status);
@@ -89,6 +91,7 @@ interface ObjectiveRow {
   completed_at: number | null;
   result: string | null;
   block_reason: string | null;
+  attachments: string;
 }
 
 interface ObjectiveEventRow {
@@ -107,6 +110,16 @@ function parseWatchers(raw: string): string[] {
     }
   } catch {
     /* malformed — default to empty */
+  }
+  return [];
+}
+
+function parseAttachments(raw: string): Attachment[] {
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as Attachment[];
+  } catch {
+    /* malformed — fall through */
   }
   return [];
 }
@@ -139,6 +152,7 @@ function rowToObjective(row: ObjectiveRow): Objective {
     completedAt: row.completed_at,
     result: row.result,
     blockReason: row.block_reason,
+    attachments: parseAttachments(row.attachments ?? '[]'),
   };
 }
 
@@ -259,18 +273,21 @@ class SqliteObjectivesStore implements ObjectivesStore {
   constructor(db: DatabaseSyncInstance) {
     this.db = db;
     this.db.exec(CREATE_SCHEMA);
-    // Best-effort schema migration: databases created before the
-    // `watchers` column existed won't pick it up from CREATE_SCHEMA
-    // (which is IF NOT EXISTS and a no-op on existing tables). ALTER
-    // adds it in place. We swallow only the specific "duplicate
-    // column name" error that fresh DBs throw because CREATE_SCHEMA
-    // already created the column — any other SQL error is real and
-    // rethrows.
-    try {
-      this.db.exec("ALTER TABLE objectives ADD COLUMN watchers TEXT NOT NULL DEFAULT '[]'");
-    } catch (err) {
-      const msg = (err as Error).message ?? '';
-      if (!msg.includes('duplicate column name')) throw err;
+    // Best-effort schema migrations for databases that predate the
+    // current column set. Each ALTER is wrapped individually so a
+    // partial success doesn't skip the remaining ones. We swallow
+    // only the specific "duplicate column name" error that fresh DBs
+    // throw because CREATE_SCHEMA already created the column.
+    for (const alter of [
+      "ALTER TABLE objectives ADD COLUMN watchers TEXT NOT NULL DEFAULT '[]'",
+      "ALTER TABLE objectives ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]'",
+    ]) {
+      try {
+        this.db.exec(alter);
+      } catch (err) {
+        const msg = (err as Error).message ?? '';
+        if (!msg.includes('duplicate column name')) throw err;
+      }
     }
     this.listAllStmt = db.prepare('SELECT * FROM objectives ORDER BY created_at DESC, id DESC');
     this.listByAssigneeStmt = db.prepare(
@@ -286,8 +303,8 @@ class SqliteObjectivesStore implements ObjectivesStore {
     this.insertStmt = db.prepare(
       `INSERT INTO objectives (
          id, title, body, outcome, status, assignee, originator, watchers,
-         created_at, updated_at, completed_at, result, block_reason
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL)`,
+         created_at, updated_at, completed_at, result, block_reason, attachments
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)`,
     );
     this.updateRowStmt = db.prepare(
       `UPDATE objectives
@@ -363,6 +380,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
     const rollback = this.db.prepare('ROLLBACK');
     tx.run();
     try {
+      const attachments = Array.isArray(input.attachments) ? input.attachments : [];
       this.insertStmt.run(
         id,
         title,
@@ -374,6 +392,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
         JSON.stringify(watchers),
         now,
         now,
+        JSON.stringify(attachments),
       );
       events.push(
         this.appendEvent(id, now, originator, 'assigned', {

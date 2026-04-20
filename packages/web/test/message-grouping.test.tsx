@@ -29,6 +29,7 @@ function msg(overrides: Partial<Message> = {}): Message {
     body: 'hello',
     level: 'info',
     data: {},
+    attachments: [],
     ...overrides,
   };
 }

@@ -240,6 +240,7 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Team
     store,
     https: defaultHttpsConfig(),
     webPush: null,
+    files: null,
     migrated: 0,
   };
 }

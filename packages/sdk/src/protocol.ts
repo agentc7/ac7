@@ -25,6 +25,17 @@ export const PATHS = {
   pushSubscriptions: '/push/subscriptions',
   // Objectives — Director/Manager create & assign, assignees execute.
   objectives: '/objectives',
+  // Filesystem — per-slot home directories with content-addressed blob
+  // storage. The dedicated `read/*` catch-all supports friendly URLs
+  // for <a href> and <img src>; other ops take path via query or body.
+  fsList: '/fs/ls',
+  fsStat: '/fs/stat',
+  fsRead: '/fs/read',
+  fsWrite: '/fs/write',
+  fsMkdir: '/fs/mkdir',
+  fsRm: '/fs/rm',
+  fsMv: '/fs/mv',
+  fsShared: '/fs/shared',
   // The helpers below compose `:id` paths at runtime rather than
   // templating here, since `PATHS` is keyed by identifier not URL.
 } as const;
@@ -49,6 +60,20 @@ export const OBJECTIVE_PATHS = {
 export const AGENT_PATHS = {
   activity: (name: string) => `/agents/${encodeURIComponent(name)}/activity`,
   activityStream: (name: string) => `/agents/${encodeURIComponent(name)}/activity/stream`,
+} as const;
+
+/**
+ * Path builder for the `/fs/read/<path>` download endpoint. The
+ * server treats the trailing segment as a catch-all so friendly URLs
+ * like `/fs/read/alice/uploads/foo.pdf` work directly in `<a href>`
+ * and `<img src>`. Each segment is URL-encoded individually so names
+ * with spaces or special characters stay safe.
+ */
+export const FS_PATHS = {
+  read: (virtualPath: string): string => {
+    const segments = virtualPath.split('/').filter((s) => s.length > 0);
+    return `/fs/read/${segments.map(encodeURIComponent).join('/')}`;
+  },
 } as const;
 
 export const DEFAULT_PORT = 8717 as const;

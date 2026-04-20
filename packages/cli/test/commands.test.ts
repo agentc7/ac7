@@ -69,6 +69,7 @@ describe('runPushCommand', () => {
       body: 'hi',
       level: 'info',
       data: {},
+      attachments: [],
     };
     const fakeResult: PushResult = {
       delivery: { sse: 2, targets: 1 },

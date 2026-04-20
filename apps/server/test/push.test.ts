@@ -97,6 +97,7 @@ function mkMsg(overrides: Partial<Message>): Message {
     body: 'hi',
     level: 'info',
     data: {},
+    attachments: [],
     ...overrides,
   };
 }

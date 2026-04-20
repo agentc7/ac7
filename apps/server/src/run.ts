@@ -34,6 +34,7 @@ import {
   loadCustomCert,
   loadOrGenerateSelfSigned,
 } from './https/store.js';
+import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
 import { createSqliteObjectivesStore } from './objectives.js';
 import { dispatchPush } from './push/dispatch.js';
@@ -158,6 +159,18 @@ export interface RunServerOptions {
   host?: string;
   dbPath?: string;
   /**
+   * Root directory for the content-addressed blob store backing
+   * filesystem attachments. Defaults to `./data/files`. The path is
+   * created if missing; blobs land under `<root>/<hash-prefix>/...`
+   * with an atomic temp-and-rename upload flow.
+   */
+  filesRoot?: string;
+  /**
+   * Per-file upload cap in bytes. Defaults to 25 MB; the broker
+   * additionally caps at 1 GB regardless of caller value.
+   */
+  maxFileSize?: number;
+  /**
    * Dedicated SQLite file for the agent-activity (trace) store.
    *
    * Activity rows are the heaviest-write path in the broker — every
@@ -265,6 +278,19 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const activityDbPath = options.activityDbPath ?? defaultActivityDbPath(dbPath);
   const activityDb: DatabaseSyncInstance = openDatabase(activityDbPath);
   const agentActivityStore: AgentActivityStore = createSqliteAgentActivityStore(activityDb);
+
+  // Virtual filesystem for file attachments. Blob store holds
+  // content-addressed bytes on disk; the filesystem store holds path
+  // tree + permissions + refcount metadata in the main SQLite.
+  const filesRoot = options.filesRoot ?? './data/files';
+  const blobStore = new LocalBlobStore(filesRoot);
+  const filesStore = createSqliteFilesystemStore({ db, blobs: blobStore });
+  // Pre-seed home directories so browsers can list their own home
+  // without having to write first.
+  for (const s of options.slots.slots()) {
+    filesStore.ensureHome(s.name);
+  }
+
   sessions.purgeExpired();
 
   // VAPID lifecycle: either the caller provided keys (from the
@@ -382,6 +408,8 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     roles: options.roles,
     objectives: objectivesStore,
     agentActivity: agentActivityStore,
+    files: filesStore,
+    ...(options.maxFileSize !== undefined ? { maxFileSize: options.maxFileSize } : {}),
     version: SERVER_VERSION,
     logger: log,
     secureCookies,

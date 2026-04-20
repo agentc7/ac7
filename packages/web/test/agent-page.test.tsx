@@ -87,6 +87,7 @@ const OBJECTIVE: Objective = {
   completedAt: null,
   result: null,
   blockReason: null,
+  attachments: [],
 };
 
 const LLM_ROW: AgentActivityRow = {

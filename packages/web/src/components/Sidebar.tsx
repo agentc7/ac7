@@ -31,6 +31,7 @@ import {
   closeSidebar,
   isSidebarOpen,
   selectDmWith,
+  selectFiles,
   selectObjectivesList,
   selectOverview,
   selectThread,
@@ -83,6 +84,7 @@ export function Sidebar({ viewer }: SidebarProps) {
   const drawerOpen = isSidebarOpen.value;
   const objectivesActive =
     v.kind === 'objectives-list' || v.kind === 'objective-detail' || v.kind === 'objective-create';
+  const filesActive = v.kind === 'files';
   const activeObjectiveCount = objectives.value.filter(
     (o) => o.assignee === viewer && (o.status === 'active' || o.status === 'blocked'),
   ).length;
@@ -130,6 +132,12 @@ export function Sidebar({ viewer }: SidebarProps) {
                 <UnreadBadge count={activeObjectiveCount} />
               ) : undefined
             }
+          />
+          <NavLink
+            label="Files"
+            active={filesActive}
+            onClick={() => selectFiles(`/${viewer}`)}
+            ariaLabel="Browse files"
           />
         </div>
 

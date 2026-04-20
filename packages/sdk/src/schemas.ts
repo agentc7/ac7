@@ -55,6 +55,31 @@ export const TeammateSchema = z.object({
   authority: AuthoritySchema,
 });
 
+/**
+ * Filesystem path: absolute, Unix-like, enforced shape matches the
+ * server's `normalizePath` rules (alphanumerics + . _ - and single
+ * spaces, no traversal). The server re-normalizes on ingest so this
+ * schema is a first-pass filter only.
+ */
+export const FsPathSchema = z
+  .string()
+  .min(1)
+  .max(1024)
+  .regex(
+    /^\/(?:[a-zA-Z0-9._\- ]+(?:\/[a-zA-Z0-9._\- ]+)*)?$/,
+    'path must be absolute Unix-style with [a-zA-Z0-9._- ] segments',
+  )
+  .refine((p) => !p.split('/').some((s) => s === '.' || s === '..'), {
+    message: 'path may not contain . or .. segments',
+  });
+
+export const AttachmentSchema = z.object({
+  path: FsPathSchema,
+  name: z.string().min(1).max(255),
+  size: z.number().int().nonnegative(),
+  mimeType: z.string().min(1).max(255),
+});
+
 export const PushPayloadSchema = z.object({
   agentId: AgentIdSchema.nullable().optional(),
   title: z.string().max(200).nullable().optional(),
@@ -64,6 +89,7 @@ export const PushPayloadSchema = z.object({
     .max(64 * 1024),
   level: LogLevelSchema.default('info'),
   data: z.record(z.string(), z.unknown()).optional(),
+  attachments: z.array(AttachmentSchema).max(64).optional(),
 });
 
 export const MessageSchema = z.object({
@@ -75,6 +101,7 @@ export const MessageSchema = z.object({
   body: z.string(),
   level: LogLevelSchema,
   data: z.record(z.string(), z.unknown()),
+  attachments: z.array(AttachmentSchema).default([]),
 });
 
 export const AgentSchema = z.object({
@@ -119,6 +146,7 @@ export const ObjectiveSchema = z.object({
   completedAt: z.number().int().nonnegative().nullable(),
   result: z.string().nullable(),
   blockReason: z.string().nullable(),
+  attachments: z.array(AttachmentSchema).default([]),
 });
 
 export const ObjectiveEventKindSchema = z.enum([
@@ -146,6 +174,7 @@ export const CreateObjectiveRequestSchema = z.object({
   body: z.string().max(4096).optional(),
   assignee: NameSchema,
   watchers: z.array(NameSchema).max(64).optional(),
+  attachments: z.array(AttachmentSchema).max(64).optional(),
 });
 
 export const UpdateWatchersRequestSchema = z
@@ -174,6 +203,7 @@ export const DiscussObjectiveRequestSchema = z.object({
     .min(1)
     .max(16 * 1024),
   title: z.string().max(200).optional(),
+  attachments: z.array(AttachmentSchema).max(64).optional(),
 });
 
 export const CompleteObjectiveRequestSchema = z.object({
@@ -439,3 +469,48 @@ export const PushSubscriptionResponseSchema = z.object({
   endpoint: z.string(),
   createdAt: z.number().int().nonnegative(),
 });
+
+// ───────────────────────── Filesystem ─────────────────────────
+
+export const FsEntryKindSchema = z.enum(['file', 'directory']);
+
+export const FsEntrySchema = z.object({
+  path: FsPathSchema,
+  name: z.string().min(1).max(255),
+  kind: FsEntryKindSchema,
+  owner: NameSchema,
+  size: z.number().int().nonnegative().nullable(),
+  mimeType: z.string().max(255).nullable(),
+  hash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/, 'hash must be sha256 hex')
+    .nullable(),
+  createdAt: z.number().int().nonnegative(),
+  createdBy: NameSchema,
+  updatedAt: z.number().int().nonnegative(),
+});
+
+export const FsListResponseSchema = z.object({
+  entries: z.array(FsEntrySchema),
+});
+
+export const FsEntryResponseSchema = z.object({
+  entry: FsEntrySchema,
+});
+
+export const FsWriteResponseSchema = z.object({
+  entry: FsEntrySchema,
+  renamed: z.boolean(),
+});
+
+export const FsMkdirRequestSchema = z.object({
+  path: FsPathSchema,
+  recursive: z.boolean().optional(),
+});
+
+export const FsMoveRequestSchema = z.object({
+  from: FsPathSchema,
+  to: FsPathSchema,
+});
+
+export const FsWriteCollisionSchema = z.enum(['error', 'overwrite', 'suffix']);

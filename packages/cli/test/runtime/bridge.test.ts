@@ -169,7 +169,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     send({ jsonrpc: '2.0', method: 'notifications/initialized' });
   });
 
-  it('lists the full 13-tool surface (chat + objective + authority-gated)', async () => {
+  it('lists the full 21-tool surface (chat + objective + filesystem + authority-gated)', async () => {
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const response = await waitForMessage((m) => m.id === 2);
     const result = response.result as {
@@ -178,6 +178,14 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     const names = result.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'broadcast',
+      'fs_ls',
+      'fs_mkdir',
+      'fs_mv',
+      'fs_read',
+      'fs_rm',
+      'fs_shared',
+      'fs_stat',
+      'fs_write',
       'objectives_cancel',
       'objectives_complete',
       'objectives_create',

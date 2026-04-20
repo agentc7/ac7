@@ -46,6 +46,7 @@ describe('SqliteEventLog', () => {
       body: 'hello',
       level: 'warning',
       data: { foo: 'bar', n: 42 },
+      attachments: [],
     };
     await log.append(m1);
     const tailed = await log.tail();
@@ -64,6 +65,7 @@ describe('SqliteEventLog', () => {
       body: 'no sender known',
       level: 'info',
       data: {},
+      attachments: [],
     };
     await log.append(m);
     const tailed = await log.tail();
@@ -82,6 +84,7 @@ describe('SqliteEventLog', () => {
         body: `msg ${i}`,
         level: 'info',
         data: {},
+        attachments: [],
       });
     }
     const since = await log.tail({ since: 3 });
@@ -104,6 +107,7 @@ describe('SqliteEventLog', () => {
       body: 'survive',
       level: 'info',
       data: {},
+      attachments: [],
     });
     firstDb.close();
 

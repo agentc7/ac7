@@ -26,6 +26,7 @@ import { effect, signal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import { AgentPage } from '../components/AgentPage.js';
 import { Composer } from '../components/Composer.js';
+import { FilesPanel } from '../components/FilesPanel.js';
 import { Header } from '../components/Header.js';
 import { ObjectiveCreate } from '../components/ObjectiveCreate.js';
 import { ObjectiveDetail } from '../components/ObjectiveDetail.js';
@@ -256,6 +257,8 @@ function renderView(v: View, viewer: string) {
       return <ObjectiveCreate />;
     case 'agent-detail':
       return <AgentPage name={v.name} viewer={viewer} />;
+    case 'files':
+      return <FilesPanel viewer={viewer} path={v.path} />;
   }
 }
 

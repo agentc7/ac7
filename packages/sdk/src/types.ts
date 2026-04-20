@@ -76,6 +76,14 @@ export interface PushPayload {
   body: string;
   level?: LogLevel;
   data?: Record<string, unknown>;
+  /**
+   * Optional file attachments. Each entry is a reference to a path in
+   * the ac7 virtual filesystem that the sender already owns write
+   * access to. The broker validates each path exists and
+   * materializes per-recipient grants so recipients can download the
+   * file via `GET /fs/read/<path>`.
+   */
+  attachments?: Attachment[];
 }
 
 export interface Message {
@@ -92,6 +100,12 @@ export interface Message {
   body: string;
   level: LogLevel;
   data: Record<string, unknown>;
+  /**
+   * Attachments associated with this message. Always an array — empty
+   * when the message carries no files. Render inline for `image/*`
+   * mime types; otherwise surface as download chips.
+   */
+  attachments: Attachment[];
 }
 
 export interface DeliveryReport {
@@ -221,6 +235,15 @@ export interface Objective {
   result: string | null;
   /** Set while status === 'blocked'; cleared on unblock. */
   blockReason: string | null;
+  /**
+   * Files attached to the objective at creation time. Thread members
+   * (originator, assignee, watchers, directors) all receive read
+   * grants for each attachment, so any thread-scoped UI can render
+   * them alongside the objective body. New watchers added later and
+   * reassigned assignees backfill their grants via the respective
+   * mutation handlers so access tracks thread membership.
+   */
+  attachments: Attachment[];
 }
 
 /**
@@ -266,6 +289,12 @@ export interface CreateObjectiveRequest {
    * Every name must resolve to a known team slot.
    */
   watchers?: string[];
+  /**
+   * Optional files to attach. The originator must have read access
+   * to each path. Thread members receive automatic read grants as
+   * part of the `assigned` event fanout.
+   */
+  attachments?: Attachment[];
 }
 
 /**
@@ -307,6 +336,13 @@ export interface ReassignObjectiveRequest {
 export interface DiscussObjectiveRequest {
   body: string;
   title?: string;
+  /**
+   * Optional files to attach to this discussion post. Resolved and
+   * grant-propagated the same way attachments on `/push` are —
+   * every thread member who receives the post also gets read
+   * access to each attachment.
+   */
+  attachments?: Attachment[];
 }
 
 export interface ListObjectivesResponse {
@@ -486,4 +522,70 @@ export interface ListAgentActivityQuery {
 
 export interface ListAgentActivityResponse {
   readonly activity: AgentActivityRow[];
+}
+
+// ───────────────────────── Filesystem ─────────────────────────
+
+/**
+ * One entry in the ac7 virtual filesystem — either a file or a
+ * directory. Paths are absolute Unix-style; the first segment is
+ * the owning slot (`/<slotname>/...`).
+ *
+ * For directories: `size`, `mimeType`, and `hash` are null.
+ * For files: all three are populated; `hash` is SHA-256 hex of the
+ * blob content and doubles as the dedup key for the blob store.
+ */
+export interface FsEntry {
+  path: string;
+  name: string;
+  kind: 'file' | 'directory';
+  owner: string;
+  size: number | null;
+  mimeType: string | null;
+  hash: string | null;
+  createdAt: number;
+  createdBy: string;
+  updatedAt: number;
+}
+
+/**
+ * Lightweight file reference embedded in a `Message` or an objective.
+ * Recipients resolve downloads via `GET /fs/read/<path>`. The
+ * accompanying `size` and `mimeType` let clients render previews
+ * without an extra round-trip.
+ */
+export interface Attachment {
+  path: string;
+  name: string;
+  size: number;
+  mimeType: string;
+}
+
+export interface FsListResponse {
+  entries: FsEntry[];
+}
+
+export interface FsEntryResponse {
+  entry: FsEntry;
+}
+
+export interface FsWriteResponse {
+  entry: FsEntry;
+  /** True when a collide-suffix strategy caused the final path to differ from the request. */
+  renamed: boolean;
+}
+
+export interface FsMkdirRequest {
+  path: string;
+  recursive?: boolean;
+}
+
+export interface FsRemoveQuery {
+  path: string;
+  recursive?: boolean;
+}
+
+export interface FsMoveRequest {
+  from: string;
+  to: string;
 }

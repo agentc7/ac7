@@ -19,7 +19,8 @@ export type View =
   | { kind: 'objectives-list' }
   | { kind: 'objective-detail'; id: string }
   | { kind: 'objective-create' }
-  | { kind: 'agent-detail'; name: string };
+  | { kind: 'agent-detail'; name: string }
+  | { kind: 'files'; path: string };
 
 export const view = signal<View>({ kind: 'thread', key: PRIMARY_THREAD });
 
@@ -88,6 +89,17 @@ export function selectObjectiveCreate(): void {
  */
 export function selectAgentDetail(name: string): void {
   view.value = { kind: 'agent-detail', name };
+  isSidebarOpen.value = false;
+}
+
+/**
+ * Open the Files browser at an explicit path. Use `/<viewer>/` to
+ * land on the caller's own home; directors can pass any slot's home.
+ * The panel keeps its own breadcrumb state; this action is the
+ * single entry point from outside.
+ */
+export function selectFiles(path: string): void {
+  view.value = { kind: 'files', path };
   isSidebarOpen.value = false;
 }
 

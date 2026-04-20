@@ -18,7 +18,12 @@ import { agentActivityError, startAgentActivitySubscribe } from '../lib/agent-ac
 import { briefing } from '../lib/briefing.js';
 import { objectives as objectivesSignal } from '../lib/objectives.js';
 import { roster as rosterSignal } from '../lib/roster.js';
-import { selectDmWith, selectObjectiveDetail, selectOverview } from '../lib/view.js';
+import {
+  selectDmWith,
+  selectFiles,
+  selectObjectiveDetail,
+  selectOverview,
+} from '../lib/view.js';
 import { AgentTimeline } from './AgentTimeline.js';
 
 export interface AgentPageProps {
@@ -125,16 +130,25 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
             team: <span style="color:var(--ink);font-weight:600">{b.team.name}</span>
           </span>
         </div>
-        {viewer !== name && (
+        <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+          {viewer !== name && (
+            <button
+              type="button"
+              onClick={() => selectDmWith(name)}
+              class="btn btn-ghost btn-sm"
+            >
+              → Open DM with {name}
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => selectDmWith(name)}
+            onClick={() => selectFiles(`/${name}`)}
             class="btn btn-ghost btn-sm"
-            style="margin-top:14px"
+            title={`Browse ${name}'s files`}
           >
-            → Open DM with {name}
+            → Browse files
           </button>
-        )}
+        </div>
       </div>
 
       <div

@@ -12,6 +12,11 @@
 # when the server auto-flips to self-signed on a non-loopback bind.
 /certs/
 
+# Default filesystem blob-store root. Created on first server boot
+# alongside the DB; contains hashed attachment payloads. Override
+# via `files.root` in the team config to put it elsewhere.
+/data/
+
 # Local dev config variants (plaintext tokens during bring-up).
 config.dev.json
 apps/server/config.dev.json

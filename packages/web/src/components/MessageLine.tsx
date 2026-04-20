@@ -31,6 +31,7 @@
 import type { Message } from '@agentc7/sdk/types';
 import { renderInlineMarkdown } from '../lib/markdown.js';
 import { senderTextClass } from '../lib/theme.js';
+import { MessageAttachments } from './MessageAttachments.js';
 
 /** 5 minutes — matches Slack's default "merge into a group" threshold. */
 const GROUP_WINDOW_MS = 5 * 60 * 1000;
@@ -118,6 +119,7 @@ export function MessageLine({ message, viewer, previousMessage }: MessageLinePro
             {formatTs(message.ts)}
           </span>
           <span dangerouslySetInnerHTML={{ __html: body }} />
+          <MessageAttachments attachments={message.attachments} />
         </div>
       </div>
     );
@@ -156,6 +158,7 @@ export function MessageLine({ message, viewer, previousMessage }: MessageLinePro
           </span>
         )}
         <span dangerouslySetInnerHTML={{ __html: body }} />
+        <MessageAttachments attachments={message.attachments} />
       </div>
     </div>
   );

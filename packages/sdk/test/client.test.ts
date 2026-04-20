@@ -66,6 +66,7 @@ describe('Client', () => {
       body: 'hello world',
       level: 'info',
       data: {},
+      attachments: [],
     };
     const payload: PushResult = {
       delivery: { sse: 1, targets: 1 },
@@ -114,6 +115,7 @@ describe('Client', () => {
       body: 'hi',
       level: 'info',
       data: {},
+      attachments: [],
     };
     const fakeMessage2: Message = { ...fakeMessage, id: 'msg-2', body: 'second' };
     const sse =
@@ -150,6 +152,7 @@ describe('Client', () => {
       body: 'split across chunks',
       level: 'info',
       data: {},
+      attachments: [],
     };
     const json = JSON.stringify(fakeMessage);
     // Split the frame mid-payload to exercise the buffering path.

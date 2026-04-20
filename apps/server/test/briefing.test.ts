@@ -176,6 +176,7 @@ describe('composeBriefing', () => {
           completedAt: null,
           result: null,
           blockReason: null,
+          attachments: [],
         },
       ],
     });
