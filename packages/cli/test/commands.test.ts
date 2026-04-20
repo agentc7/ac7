@@ -134,6 +134,6 @@ describe('runRosterCommand', () => {
       fetch: mockFetch(() => jsonResponse({ teammates: [], connected: [] })),
     });
     const out = await runRosterCommand(client);
-    expect(out).toBe('no slots defined');
+    expect(out).toBe('no users defined');
   });
 });

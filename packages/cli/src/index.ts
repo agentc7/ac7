@@ -1,12 +1,14 @@
 /**
- * `ac7` — individual-contributor CLI for ac7.
+ * `ac7` — operator CLI for ac7.
  *
  * Subcommands:
  *   ac7 setup       — first-run wizard: create team config + enroll TOTP
- *   ac7 enroll      — (re-)enroll a slot for web UI login (TOTP)
+ *   ac7 user        — list / create / update / delete team users
+ *   ac7 enroll      — (re-)enroll a user for web UI login (TOTP)
+ *   ac7 rotate      — rotate a user's bearer token
  *   ac7 claude-code — spawn claude-code wrapped in a ac7 runner
  *   ac7 push        — push an event to a teammate or broadcast
- *   ac7 roster      — list slots and connection state
+ *   ac7 roster      — list users and connection state
  *   ac7 objectives  — list / view / mutate team objectives
  *   ac7 serve       — run a local broker (optional peer: @agentc7/server)
  *
@@ -35,20 +37,22 @@ import { type RotateCommandInput, runRotateCommand } from './commands/rotate.js'
 import { runServeCommand } from './commands/serve.js';
 import { runSetupCommand } from './commands/setup.js';
 import { runTelemetryCommand, type TelemetryEventKind } from './commands/telemetry.js';
+import { runUserCommand } from './commands/user.js';
 import { CLI_VERSION } from './version.js';
 
 const USAGE = `ac7 cli v${CLI_VERSION}
 
 usage:
-  ac7 setup       [--config-path <path>]            first-run wizard (team + slots + TOTP)
-  ac7 enroll      --slot <name> [--config-path <path>]   (re-)enroll a slot for web UI login
-  ac7 rotate      --slot <name> [--config-path <path>]   rotate a slot's bearer token (atomic; prints new token once)
+  ac7 setup       [--config-path <path>]                 first-run wizard (team + first admin + TOTP)
+  ac7 user        list|create|update|delete [--config-path <path>]   offline user management (runs without the broker)
+  ac7 enroll      --user <name> [--config-path <path>]   (re-)enroll a user for web UI login
+  ac7 rotate      --user <name> [--config-path <path>]   rotate a user's bearer token (atomic; prints new token once)
   ac7 quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
   ac7 telemetry   enable|disable|preview|rotate|status       opt-in, zero-PII, off-by-default install telemetry
   ac7 claude-code [--no-trace] [--doctor] [--skip-doctor] [--unsafe-tls] [-- <claude args>...]   spawn claude-code wrapped in a ac7 runner
   ac7 push        --body <text> (--agent <id> | --broadcast) [--title <t>] [--level <lvl>] [--data key=value]...
-  ac7 roster      [--reveal-token --slot <name> [--config-path <path>]]
-                                    list slots (no flags) or rotate+print a slot's token (alias over 'ac7 rotate')
+  ac7 roster      [--reveal-token --user <name> [--config-path <path>]]
+                                    list teammates (no flags) or rotate+print a user's token (alias over 'ac7 rotate')
   ac7 objectives  list|view|create|update|complete|cancel|reassign   team objectives
   ac7 serve       [--config-path <path>] [--port <n>] [--host <h>] [--db <path>]
   ac7 prune-traces --older-than <duration> [--activity-db <path>] [--yes]   delete activity rows older than the cutoff
@@ -105,6 +109,9 @@ async function main(): Promise<void> {
   switch (subcommand) {
     case 'setup':
       await handleSetup(rest);
+      return;
+    case 'user':
+      await handleUser(rest);
       return;
     case 'enroll':
       await handleEnroll(rest);
@@ -171,7 +178,7 @@ async function handleSetup(args: string[]): Promise<void> {
 
 async function handleEnroll(args: string[]): Promise<void> {
   const { values } = parseSubcommandArgs(args, {
-    slot: { type: 'string', short: 's' },
+    user: { type: 'string', short: 'u' },
     'config-path': { type: 'string' },
     config: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
@@ -184,7 +191,7 @@ async function handleEnroll(args: string[]): Promise<void> {
   try {
     await runEnrollCommand(
       {
-        slot: getString(values, 'slot'),
+        user: getString(values, 'user'),
         configPath: getString(values, 'config-path') ?? getString(values, 'config'),
       },
       (line) => log(line),
@@ -197,7 +204,7 @@ async function handleEnroll(args: string[]): Promise<void> {
 
 async function handleRotate(args: string[]): Promise<void> {
   const { values } = parseSubcommandArgs(args, {
-    slot: { type: 'string', short: 's' },
+    user: { type: 'string', short: 'u' },
     'config-path': { type: 'string' },
     config: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
@@ -210,11 +217,26 @@ async function handleRotate(args: string[]): Promise<void> {
   try {
     await runRotateCommand(
       {
-        slot: getString(values, 'slot'),
+        user: getString(values, 'user'),
         configPath: getString(values, 'config-path') ?? getString(values, 'config'),
       },
       (line) => log(line),
     );
+  } catch (err) {
+    if (err instanceof UsageError) fail(err.message, 2);
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function handleUser(args: string[]): Promise<void> {
+  // `user` has internal subcommand routing (list/create/update/delete)
+  // with flags that differ per-subcommand — parse there, not here.
+  if (args[0] === '-h' || args[0] === '--help') {
+    process.stdout.write(USAGE);
+    return;
+  }
+  try {
+    await runUserCommand(args, (line) => log(line));
   } catch (err) {
     if (err instanceof UsageError) fail(err.message, 2);
     fail(err instanceof Error ? err.message : String(err));
@@ -375,7 +397,7 @@ async function handleRoster(args: string[]): Promise<void> {
     url: { type: 'string' },
     token: { type: 'string' },
     'reveal-token': { type: 'boolean' },
-    slot: { type: 'string', short: 's' },
+    user: { type: 'string', short: 'u' },
     'config-path': { type: 'string' },
     config: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
@@ -385,25 +407,25 @@ async function handleRoster(args: string[]): Promise<void> {
     return;
   }
 
-  // `--reveal-token` is an alias over `ac7 rotate --slot X`: the only
-  // honest way to surface a slot's bearer plaintext is to mint a fresh
+  // `--reveal-token` is an alias over `ac7 rotate --user X`: the only
+  // honest way to surface a user's bearer plaintext is to mint a fresh
   // one, since hash-on-disk (I1 posture) means the existing plaintext
   // was never persisted. Invoking this command therefore has a visible
   // side effect — the previous token is invalidated. We disclose that
   // up front so it's impossible to miss, then delegate to the exact
   // same code path `ac7 rotate` uses.
   if (getBoolean(values, 'reveal-token')) {
-    const slot = getString(values, 'slot');
-    if (!slot) {
-      fail('roster --reveal-token: --slot <name> is required', 2);
+    const user = getString(values, 'user');
+    if (!user) {
+      fail('roster --reveal-token: --user <name> is required', 2);
     }
     log('');
-    log(`ac7 roster --reveal-token → rotating '${slot}' token.`);
+    log(`ac7 roster --reveal-token → rotating '${user}' token.`);
     log('  (ac7 never persists token plaintext; the only honest "reveal"');
     log('   is to mint a fresh token and print it once. This invalidates');
-    log('   any previous token for this slot.)');
+    log('   any previous token for this user.)');
     const rotateInput: RotateCommandInput = {
-      slot,
+      user,
       configPath: getString(values, 'config-path') ?? getString(values, 'config'),
     };
     try {

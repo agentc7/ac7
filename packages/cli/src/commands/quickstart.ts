@@ -1,23 +1,23 @@
 /**
  * `ac7 quickstart` — zero-to-first-directive helper.
  *
- * Assumes the individual-contributor has already run `ac7 setup` (or ingested a
+ * Assumes the caller has already run `ac7 setup` (or ingested a
  * team config some other way). Picks up from "you have a token and
  * a broker URL" and seeds the remaining first-session experience:
  *
  *   1. Health-check the broker at the configured URL. If it's not up,
  *      print a clear "start `ac7 serve` first" message and exit 1.
  *   2. Resolve an assignee for a demo objective. Defaults to the first
- *      individual-contributor-tier slot on the roster; falls back to the first slot
- *      regardless of tier if none exists.
+ *      user with userType === 'agent' on the roster; falls back to the
+ *      first teammate regardless of userType if no agent exists.
  *   3. Create the demo objective ("summarize this repository in 3
- *      paragraphs") with the individual-contributor as originator and the chosen slot
+ *      paragraphs") with the caller as originator and the chosen user
  *      as assignee. Idempotent-ish: skips creation if a demo objective
  *      with the same title is already on the roster.
- *   4. Best-effort open the web UI in the individual-contributor's default browser.
+ *   4. Best-effort open the web UI in the user's default browser.
  *      Cross-platform (macOS `open`, Linux `xdg-open`, Windows `start`).
  *      Never fails the command if the open fails — the URL is always
- *      printed alongside so the individual-contributor can click/paste themselves.
+ *      printed alongside so the user can click/paste themselves.
  *   5. Print a crisp "next step" block pointing at `ac7 claude-code`.
  *
  * This intentionally does NOT spawn a broker in-process (that would
@@ -25,9 +25,7 @@
  * invocation, which is a confusing ownership model) and does NOT run
  * the setup wizard automatically (the wizard prints credentials once
  * and an accidental re-run from quickstart would invalidate them).
- * Both of those flows stay as explicit individual-contributor actions.
- *
- * Context: part of I3 (obj-mo240qpt-6), acceptance criterion 7.
+ * Both of those flows stay as explicit user actions.
  */
 
 import { spawn } from 'node:child_process';
@@ -86,14 +84,13 @@ export async function runQuickstartCommand(
     );
   }
 
-  // 2. Resolve an assignee. Prefer individual-contributor-tier slots because the
-  //    demo objective is individual-contributor-flavored work (execute a task);
-  //    fall back to the first slot of any tier if the team has no
-  //    individual-contributor configured.
+  // 2. Resolve an assignee. Prefer agents because the demo objective
+  //    is execution-flavored work (do a task); fall back to the first
+  //    teammate of any userType if the team has no agents configured.
   const rosterResp = await client.roster();
   if (rosterResp.teammates.length === 0) {
     throw new QuickstartError(
-      'team has no slots configured — run `ac7 setup` to create one before quickstart.',
+      'team has no users configured — run `ac7 setup` to create one before quickstart.',
     );
   }
   const assignee =
@@ -140,21 +137,21 @@ export async function runQuickstartCommand(
       const ce = err as ClientError;
       throw new QuickstartError(
         `failed to create demo objective: ${ce.message ?? String(err)}\n` +
-          `  (the caller needs manager or director authority to create objectives — ` +
-          `check your slot's authority with \`ac7 roster\`)`,
+          `  (agents cannot create objectives — admin, operator, or lead-agent ` +
+          `userType is required; check your userType with \`ac7 roster\`)`,
       );
     }
   }
 
   // 4. Best-effort open the browser. Print the URL unconditionally so
-  //    the individual-contributor can click it themselves if the open fails.
+  //    the user can click it themselves if the open fails.
   const webUrl = input.url.replace(/\/+$/, '');
   let browserOpen: QuickstartReport['browserOpen'] = 'skipped';
   if (!input.skipBrowser) {
     browserOpen = tryOpenBrowser(webUrl);
   }
 
-  // 5. Pretty status to stdout — the individual-contributor sees this directly.
+  // 5. Pretty status to stdout — the user sees this directly.
   log('');
   log('ac7 quickstart — ready.');
   log('');
@@ -190,8 +187,8 @@ export async function runQuickstartCommand(
 /**
  * Attempt to open `url` in the OS default browser. Returns a flag
  * describing what happened — never throws. We never want a failed
- * browser open to fail the quickstart, because the individual-contributor can
- * always click the URL we already printed.
+ * browser open to fail the quickstart, because the user can always
+ * click the URL we already printed.
  */
 function tryOpenBrowser(url: string): QuickstartReport['browserOpen'] {
   const { command, args } = openCommandFor(process.platform, url);

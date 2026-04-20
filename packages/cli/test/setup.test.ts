@@ -39,17 +39,22 @@ const VALID_CONFIG_JSON = JSON.stringify({
     brief: '',
   },
   roles: {
-    'individual-contributor': { description: '', instructions: '' },
+    admin: { description: '', instructions: '' },
     implementer: { description: '', instructions: '' },
   },
   users: [
     {
       name: 'ACTUAL',
-      role: 'individual-contributor',
+      role: 'admin',
       userType: 'admin',
       tokenHash: `sha256:${'a'.repeat(64)}`,
     },
-    { name: 'ALPHA-1', role: 'implementer', tokenHash: `sha256:${'b'.repeat(64)}` },
+    {
+      name: 'ALPHA-1',
+      role: 'implementer',
+      userType: 'agent',
+      tokenHash: `sha256:${'b'.repeat(64)}`,
+    },
   ],
 });
 

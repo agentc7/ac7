@@ -1,25 +1,19 @@
 /**
- * `ac7 rotate` — regenerate a slot's bearer token.
- *
- * Closes the "no bearer-token rotation flow" gap from the 2026-04-16
- * audit. Before this, rotating a slot's bearer meant hand-editing
- * `ac7.json` — risky (easy to typo / clobber another slot) and
- * skipped in practice.
+ * `ac7 rotate` — regenerate a user's bearer token.
  *
  * Flow:
  *   1. Load the team config at the resolved path.
- *   2. Error clearly if `--slot` is missing or the name isn't
- *      known.
+ *   2. Error clearly if `--user` is missing or the name isn't known.
  *   3. Call `rotateUserToken` — atomic config rewrite at `0o600`
- *      with a fresh `ac7_<base64url>` token; every other slot's
- *      state (authority, role, TOTP) is preserved byte-for-byte.
+ *      with a fresh `ac7_<base64url>` token; every other user's
+ *      state (userType, role, TOTP) is preserved byte-for-byte.
  *   4. Print the NEW plaintext token once with explicit save-now
  *      framing. The plaintext is never persisted to disk; only the
  *      SHA-256 hash lands in the config file.
  *
- * Recovery: if the individual-contributor loses the new token between the print
- * and saving it somewhere, they can just re-run `ac7 rotate --slot X`
- * — it'll invalidate this one and mint a fresh one. Each rotation is
+ * Recovery: if the user loses the new token between the print and
+ * saving it somewhere, they can just re-run `ac7 rotate --user X` —
+ * it'll invalidate this one and mint a fresh one. Each rotation is
  * idempotent in posture; there's no recovery-of-a-lost-token path
  * because losing a secret is the whole point of treating it as a
  * secret.
@@ -31,8 +25,8 @@ import { UsageError } from './errors.js';
 export { UsageError };
 
 export interface RotateCommandInput {
-  /** Name of the slot to rotate. Required. */
-  slot?: string;
+  /** Name of the user to rotate. Required. */
+  user?: string;
   /** Override the config file location (defaults to $AC7_CONFIG_PATH → ./ac7.json). */
   configPath?: string;
 }
@@ -41,8 +35,8 @@ export async function runRotateCommand(
   input: RotateCommandInput,
   stdout: (line: string) => void,
 ): Promise<void> {
-  if (!input.slot) {
-    throw new UsageError('rotate: --slot <name> is required');
+  if (!input.user) {
+    throw new UsageError('rotate: --user <name> is required');
   }
 
   const server = await loadServerModule();
@@ -78,17 +72,17 @@ export async function runRotateCommand(
     throw err;
   }
 
-  if (!config.store.findByName(input.slot)) {
+  if (!config.store.findByName(input.user)) {
     const known = config.store.names().join(', ');
     throw new UsageError(
-      `rotate: no slot with name '${input.slot}' in ${configPath}\n` +
+      `rotate: no user with name '${input.user}' in ${configPath}\n` +
         `  known names: ${known || '(none)'}`,
     );
   }
 
   let newToken: string;
   try {
-    newToken = server.rotateUserToken(configPath, input.slot);
+    newToken = server.rotateUserToken(configPath, input.user);
   } catch (err) {
     if (err instanceof server.UserLoadError) {
       throw new UsageError(`rotate: ${err.message}`);
@@ -98,17 +92,17 @@ export async function runRotateCommand(
 
   // Explicit save-now framing. Matches the wizard's token-reveal
   // treatment without the ANSI scrollback-clearing trick — for a
-  // one-off rotation the individual-contributor knows why they're seeing the
-  // banner and doesn't need the wipe-after-confirm dance.
+  // one-off rotation the user knows why they're seeing the banner
+  // and doesn't need the wipe-after-confirm dance.
   stdout('');
-  stdout(`✓ rotated bearer token for '${input.slot}'`);
+  stdout(`✓ rotated bearer token for '${input.user}'`);
   stdout(`  config: ${configPath}`);
   stdout('');
   stdout('  ┌─ NEW TOKEN — save this now; it is not persisted anywhere else ─┐');
   stdout(`  │ ${newToken}`);
   stdout('  └────────────────────────────────────────────────────────────────┘');
   stdout('');
-  stdout('  The previous token for this slot is now invalid. Any process using');
+  stdout('  The previous token for this user is now invalid. Any process using');
   stdout('  it (runners, CI, scripts) will need the new value to re-authenticate.');
   stdout('');
 }
