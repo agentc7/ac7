@@ -81,30 +81,38 @@ export async function startFakeBroker(): Promise<FakeBroker> {
       res.end(
         JSON.stringify({
           name: FAKE_BROKER_NAME,
-          role: 'implementer',
-          // Director authority so the link test exercises the full
-          // authority-gated tool surface (objectives_create /
-          // _cancel / _reassign / _watchers). IndividualContributor-authority
-          // behavior is tested at the unit level via defineTools.
-          userType: 'admin',
+          role: { title: 'engineer', description: '' },
+          // Admin-level permissions so the link test exercises the
+          // full gated tool surface.
+          permissions: [
+            'team.manage',
+            'members.manage',
+            'objectives.create',
+            'objectives.cancel',
+            'objectives.reassign',
+            'objectives.watch',
+            'activity.read',
+          ],
+          instructions: '',
           team: {
             name: FAKE_BROKER_TEAM_NAME,
             directive: FAKE_BROKER_MISSION,
             brief: '',
+            permissionPresets: {},
           },
           teammates: [
             {
               name: FAKE_BROKER_NAME,
-              role: 'implementer',
-              userType: 'agent',
+              role: { title: 'engineer', description: '' },
+              permissions: [],
             },
-            { name: 'peer-1', role: 'reviewer', userType: 'agent' },
+            {
+              name: 'peer-1',
+              role: { title: 'reviewer', description: '' },
+              permissions: [],
+            },
           ],
           openObjectives: fakeBrokerObjectives,
-          instructions:
-            `You've connected to the ac7 net. In this team you go by ${FAKE_BROKER_NAME}.\n` +
-            `Team: ${FAKE_BROKER_TEAM_NAME}\n` +
-            `Directive: ${FAKE_BROKER_MISSION}`,
         }),
       );
       return;
@@ -117,10 +125,14 @@ export async function startFakeBroker(): Promise<FakeBroker> {
           teammates: [
             {
               name: FAKE_BROKER_NAME,
-              role: 'implementer',
-              userType: 'agent',
+              role: { title: 'engineer', description: '' },
+              permissions: [],
             },
-            { name: 'peer-1', role: 'reviewer', userType: 'agent' },
+            {
+              name: 'peer-1',
+              role: { title: 'reviewer', description: '' },
+              permissions: [],
+            },
           ],
           connected: [
             {
@@ -128,8 +140,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
               connected: 1,
               createdAt: 1_700_000_000_000,
               lastSeen: 1_700_000_000_000,
-              role: 'reviewer',
-              userType: 'agent',
+              role: { title: 'reviewer', description: '' },
             },
           ],
         }),

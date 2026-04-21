@@ -21,7 +21,7 @@
  *   5. Render a QR to the terminal and print the base32 fallback.
  *   6. Prompt for a live 6-digit confirmation code; retry on errors
  *      up to 3 times; empty input = abort with the config untouched.
- *   7. On success, call `enrollUserTotp` to atomically rewrite the
+ *   7. On success, call `enrollMemberTotp` to atomically rewrite the
  *      config with the new secret (and reset the replay counter).
  *
  * Agents (lead-agent, agent) don't sign into the web UI and don't
@@ -66,7 +66,7 @@ export async function runEnrollCommand(
   }
 
   // Load the existing config. Any failure here (missing, invalid)
-  // gets mapped to a user-facing UsageError so the raw UserLoadError
+  // gets mapped to a user-facing UsageError so the raw MemberLoadError
   // stack doesn't surface.
   let config: Awaited<ReturnType<typeof server.loadTeamConfigFromFile>>;
   try {
@@ -78,7 +78,7 @@ export async function runEnrollCommand(
           '  Run `pnpm wizard` (or `ac7 setup`) first to create one.',
       );
     }
-    if (err instanceof server.UserLoadError) {
+    if (err instanceof server.MemberLoadError) {
       throw new UsageError(`enroll: ${err.message}`);
     }
     throw err;
@@ -92,13 +92,6 @@ export async function runEnrollCommand(
         `  known names: ${known || '(none)'}`,
     );
   }
-  if (targetUser.userType !== 'admin' && targetUser.userType !== 'operator') {
-    throw new UsageError(
-      `enroll: '${input.user}' is a ${targetUser.userType} — agents do not use web UI login.\n` +
-        '  Only admin / operator users can be enrolled for TOTP.',
-    );
-  }
-
   const alreadyEnrolled = Boolean(targetUser.totpSecret);
   if (alreadyEnrolled) {
     stdout('');
@@ -169,11 +162,11 @@ export async function runEnrollCommand(
       throw new UsageError('enroll: too many bad attempts — no changes written to the config.');
     }
 
-    // Persist the new secret. enrollUserTotp reloads the config file
+    // Persist the new secret. enrollMemberTotp reloads the config file
     // defensively, patches the target user, and rewrites atomically
     // at 0o600, so a concurrent edit elsewhere in the file doesn't
     // get trampled.
-    server.enrollUserTotp(configPath, input.user, secret);
+    server.enrollMemberTotp(configPath, input.user, secret);
 
     stdout('');
     stdout(`✓ ${alreadyEnrolled ? 're-enrolled' : 'enrolled'} '${input.user}' for web UI login`);

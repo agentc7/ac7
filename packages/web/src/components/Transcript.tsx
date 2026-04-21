@@ -25,7 +25,7 @@ export function Transcript({ viewer }: TranscriptProps) {
   const _map = messagesByThread.value;
   void _map;
   const b = briefing.value;
-  const isDirector = b?.userType === 'admin';
+  const isDirector = b?.permissions.includes('members.manage') ?? false;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const stickyRef = useRef(true);

@@ -97,8 +97,12 @@ describe('runPushCommand', () => {
 describe('runRosterCommand', () => {
   it('renders a formatted table when teammates exist', async () => {
     const teammates: Teammate[] = [
-      { name: 'ACTUAL', role: 'agent', userType: 'admin' },
-      { name: 'ALPHA-1', role: 'implementer', userType: 'agent' },
+      {
+        name: 'ACTUAL',
+        role: { title: 'engineer', description: '' },
+        permissions: ['members.manage'],
+      },
+      { name: 'ALPHA-1', role: { title: 'engineer', description: '' }, permissions: [] },
     ];
     const connected: Presence[] = [
       {
@@ -106,8 +110,7 @@ describe('runRosterCommand', () => {
         connected: 1,
         createdAt: 1_700_000_000_000,
         lastSeen: 1_700_000_100_000,
-        role: 'agent',
-        userType: 'admin',
+        role: { title: 'engineer', description: '' },
       },
     ];
     const client = new Client({
@@ -119,8 +122,8 @@ describe('runRosterCommand', () => {
     expect(out).toContain('name');
     expect(out).toContain('ACTUAL');
     expect(out).toContain('ALPHA-1');
-    expect(out).toContain('agent');
-    expect(out).toContain('implementer');
+    expect(out).toContain('engineer');
+    expect(out).toContain('admin');
   });
 
   it('renders a friendly message when empty', async () => {
@@ -130,6 +133,6 @@ describe('runRosterCommand', () => {
       fetch: mockFetch(() => jsonResponse({ teammates: [], connected: [] })),
     });
     const out = await runRosterCommand(client);
-    expect(out).toBe('no users defined');
+    expect(out).toBe('no members defined');
   });
 });

@@ -19,7 +19,7 @@ import pLimit from 'p-limit';
 // Default-import for the same CJS reason as vapid.ts.
 import webpush from 'web-push';
 import type { Logger } from '../logger.js';
-import type { UserStore } from '../slots.js';
+import type { MemberStore } from '../members.js';
 import { shouldPush } from './policy.js';
 import type { PushSubscriptionRow, PushSubscriptionStore } from './store.js';
 
@@ -44,7 +44,7 @@ export interface PushPayload {
 
 export interface DispatchDeps {
   sessions: PushSubscriptionStore;
-  slots: UserStore;
+  members: MemberStore;
   logger: Logger;
   /** Returns true if `name` currently has at least one live SSE subscriber. */
   isLive: (name: string) => boolean;
@@ -56,14 +56,14 @@ export interface DispatchDeps {
  * or not) — you can safely fire-and-forget with `.catch(logger.error)`.
  */
 export async function dispatchPush(message: Message, deps: DispatchDeps): Promise<void> {
-  const { sessions: store, slots, logger, isLive } = deps;
+  const { sessions: store, members, logger, isLive } = deps;
 
   // Fan out to every team user that isn't the sender; per-user policy
   // + per-subscription looping happens inside the limiter.
   const limit = pLimit(PARALLEL_SENDS);
   const tasks: Promise<unknown>[] = [];
 
-  for (const user of slots.slots()) {
+  for (const user of members.members()) {
     const decision = shouldPush({
       message,
       recipient: user.name,
@@ -71,7 +71,7 @@ export async function dispatchPush(message: Message, deps: DispatchDeps): Promis
     });
     if (!decision) continue;
 
-    const subs = store.listForUser(user.name);
+    const subs = store.listForMember(user.name);
     if (subs.length === 0) continue;
 
     const payload = buildPayload(message);

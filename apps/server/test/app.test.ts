@@ -1,11 +1,11 @@
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import { PROTOCOL_HEADER } from '@agentc7/sdk/protocol';
-import type { BriefingResponse, Message, Role, RosterResponse, Team } from '@agentc7/sdk/types';
+import type { BriefingResponse, Message, RosterResponse, Team } from '@agentc7/sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
+import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
-import { createUserStore } from '../src/slots.js';
 
 const OP_TOKEN = 'ac7_test_operator_secret';
 const BOT_TOKEN = 'ac7_test_bot_secret';
@@ -14,17 +14,7 @@ const TEAM: Team = {
   name: 'alpha-team',
   directive: 'Ship and operate the payment service.',
   brief: 'We own the full lifecycle.',
-};
-
-const ROLES: Record<string, Role> = {
-  'individual-contributor': {
-    description: 'Directs the team.',
-    instructions: 'Lead the team.',
-  },
-  implementer: {
-    description: 'Writes code.',
-    instructions: 'Ship work and report status.',
-  },
+  permissionPresets: {},
 };
 
 function makeApp() {
@@ -33,19 +23,28 @@ function makeApp() {
     now: () => 1_700_000_000_000,
     idFactory: () => 'msg-fixed',
   });
-  const slots = createUserStore([
-    { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin', token: OP_TOKEN },
-    { name: 'build-bot', role: 'implementer', token: BOT_TOKEN },
+  const members = createMemberStore([
+    {
+      name: 'ACTUAL',
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
+      token: OP_TOKEN,
+    },
+    {
+      name: 'build-bot',
+      role: { title: 'engineer', description: '' },
+      permissions: [],
+      token: BOT_TOKEN,
+    },
   ]);
   // Tests run with an in-memory SQLite solely for the sessions table.
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db);
   const app = createApp({
     broker,
-    slots,
+    members,
     sessions,
     team: TEAM,
-    roles: ROLES,
     version: '0.0.0',
     logger: {
       debug: vi.fn(),
@@ -54,7 +53,7 @@ function makeApp() {
       error: vi.fn(),
     },
   });
-  return { app, broker, slots, sessions, db };
+  return { app, broker, members, sessions, db };
 }
 
 function authed(token: string, body?: unknown): RequestInit {
@@ -87,24 +86,24 @@ describe('app GET /briefing', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as BriefingResponse;
     expect(body.name).toBe('ACTUAL');
-    expect(body.role).toBe('individual-contributor');
-    expect(body.userType).toBe('admin');
+    expect(body.role.title).toBe('commander');
+    expect(body.permissions).toContain('members.manage');
     expect(body.team).toEqual(TEAM);
     expect(body.teammates.map((t) => t.name).sort()).toEqual(['ACTUAL', 'build-bot']);
     expect(body.openObjectives).toEqual([]);
     expect(body.instructions).toContain('ACTUAL');
-    expect(body.instructions).toContain('individual-contributor');
+    expect(body.instructions).toContain('commander');
     expect(body.instructions).toContain(TEAM.directive);
   });
 
-  it('returns userType=individual-contributor for slots that omit userType in their config', async () => {
+  it('returns empty permissions for plain members', async () => {
     const { app } = makeApp();
     const res = await app.request('/briefing', authed(BOT_TOKEN));
     expect(res.status).toBe(200);
     const body = (await res.json()) as BriefingResponse;
     expect(body.name).toBe('build-bot');
-    expect(body.role).toBe('implementer');
-    expect(body.userType).toBe('agent');
+    expect(body.role.title).toBe('engineer');
+    expect(body.permissions).toEqual([]);
   });
 
   it('requires auth', async () => {
@@ -153,9 +152,9 @@ describe('app GET /roster', () => {
   it('returns all teammates from the slot config plus runtime connection state', async () => {
     const { app, broker } = makeApp();
     // Pre-seed both slots so they appear in connected state
-    broker.seedUsers([
-      { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' },
-      { name: 'build-bot', role: 'implementer', userType: 'agent' },
+    broker.seedMembers([
+      { name: 'ACTUAL', role: { title: 'commander', description: '' } },
+      { name: 'build-bot', role: { title: 'engineer', description: '' } },
     ]);
 
     const res = await app.request('/roster', authed(OP_TOKEN));

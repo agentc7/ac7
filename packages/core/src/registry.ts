@@ -1,18 +1,19 @@
 /**
- * Presence registry — tracks known users and their live subscribers.
+ * Presence registry — tracks known members and their live subscribers.
  *
  * "Subscriber" here is a callback invoked when a message targets this
- * user. The Node server creates one subscriber per live SSE connection;
- * anything else that wants to observe pushes can attach the same way.
+ * member. The Node server creates one subscriber per live SSE
+ * connection; anything else that wants to observe pushes can attach
+ * the same way.
  *
- * Identity model: a user's `name` is the key. The broker enforces
+ * Identity model: a member's `name` is the key. The broker enforces
  * that register/subscribe callers authenticate as the same name
- * they're acting on (the registry itself is identity-agnostic so core
- * stays testable without wiring up auth). A mismatch surfaces as
- * `PresenceIdentityError`.
+ * they're acting on (the registry itself is identity-agnostic so
+ * core stays testable without wiring up auth). A mismatch surfaces
+ * as `PresenceIdentityError`.
  */
 
-import type { Message, Presence, UserType } from '@agentc7/sdk/types';
+import type { Message, Presence, Role } from '@agentc7/sdk/types';
 
 export type Subscriber = (message: Message) => void | Promise<void>;
 
@@ -23,7 +24,7 @@ export interface PresenceState {
 
 /**
  * Thrown by `Broker.register` / `Broker.subscribe` when the caller's
- * authenticated user name doesn't match the name they're trying to
+ * authenticated member name doesn't match the name they're trying to
  * act on. Runtime adapters translate this into an HTTP 403.
  */
 export class PresenceIdentityError extends Error {
@@ -31,7 +32,7 @@ export class PresenceIdentityError extends Error {
   readonly callerName: string;
   constructor(targetName: string, callerName: string) {
     super(
-      `user '${callerName}' cannot act on '${targetName}'; ` +
+      `member '${callerName}' cannot act on '${targetName}'; ` +
         "the target name must equal the caller's authenticated name",
     );
     this.name = 'PresenceIdentityError';
@@ -46,16 +47,11 @@ export class PresenceRegistry {
   /**
    * Look up or create a presence entry for `name`. Updates `lastSeen`
    * on each call so the list endpoint reflects recent activity. Role
-   * + userType are first-register-wins: once set, subsequent
-   * registrations ignore the values (the registry is authoritative
-   * about online/offline, not about role or type changes).
+   * is first-register-wins: once set, subsequent registrations ignore
+   * the value (the registry is authoritative about online/offline,
+   * not about role changes).
    */
-  registerOrGet(
-    name: string,
-    now: number,
-    role: string | null = null,
-    userType: UserType = 'agent',
-  ): PresenceState {
+  registerOrGet(name: string, now: number, role: Role | null = null): PresenceState {
     const existing = this.presences.get(name);
     if (existing) {
       existing.presence.lastSeen = now;
@@ -68,7 +64,6 @@ export class PresenceRegistry {
         createdAt: now,
         lastSeen: now,
         role,
-        userType,
       },
       subscribers: new Set(),
     };
@@ -93,7 +88,6 @@ export class PresenceRegistry {
         createdAt: state.presence.createdAt,
         lastSeen: state.presence.lastSeen,
         role: state.presence.role,
-        userType: state.presence.userType,
       });
     }
     return out;

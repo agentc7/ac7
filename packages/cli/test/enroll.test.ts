@@ -41,22 +41,19 @@ const VALID_CONFIG_JSON = JSON.stringify({
     name: 'alpha-team',
     directive: 'ship',
     brief: '',
+    permissionPresets: {},
   },
-  roles: {
-    admin: { description: '', instructions: '' },
-    implementer: { description: '', instructions: '' },
-  },
-  users: [
+  members: [
     {
       name: 'ACTUAL',
-      role: 'admin',
-      userType: 'admin',
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
       tokenHash: `sha256:${'a'.repeat(64)}`,
     },
     {
       name: 'ALPHA-1',
-      role: 'implementer',
-      userType: 'agent',
+      role: { title: 'engineer', description: '' },
+      permissions: [],
       tokenHash: `sha256:${'b'.repeat(64)}`,
     },
   ],
@@ -107,19 +104,6 @@ describe('runEnrollCommand', () => {
     await expect(runEnrollCommand({ user: 'ACTUAL', configPath }, () => {})).rejects.toThrow(
       UsageError,
     );
-  });
-
-  it('rejects enrolling an agent user', async () => {
-    const configPath = tmpPath();
-    writeFileSync(configPath, VALID_CONFIG_JSON);
-    try {
-      await runEnrollCommand({ user: 'ALPHA-1', configPath }, () => {});
-      throw new Error('expected UsageError');
-    } catch (err) {
-      expect(err).toBeInstanceOf(UsageError);
-      const msg = (err as Error).message;
-      expect(msg).toContain('agents do not use web UI login');
-    }
   });
 
   it('bails with a friendly UsageError when stdin is not a TTY', async () => {

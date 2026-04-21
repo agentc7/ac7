@@ -23,7 +23,7 @@
 // form fails at runtime with "Named export not found". Default-import
 // the whole namespace and destructure at call sites instead.
 import webpush from 'web-push';
-import type { WebPushConfig } from '../slots.js';
+import type { WebPushConfig } from '../members.js';
 
 const { generateVAPIDKeys, setVapidDetails } = webpush;
 

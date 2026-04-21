@@ -23,15 +23,17 @@ export const PATHS = {
   // Web Push (browser) — VAPID public key + per-device subscriptions.
   pushVapidPublicKey: '/push/vapid-public-key',
   pushSubscriptions: '/push/subscriptions',
-  // Objectives — admin/operator/lead-agent create & assign, assignees execute.
+  // Objectives — members with `objectives.create` post and assign,
+  // assignees execute, watchers observe.
   objectives: '/objectives',
-  // Users — admin CRUD for team membership. Top-level GET is
-  // dual-auth (everyone can read the teammate list); mutating verbs
-  // are admin-only. The helpers below compose the `:name` subpaths.
-  users: '/users',
-  // Filesystem — per-user home directories with content-addressed blob
-  // storage. The dedicated `read/*` catch-all supports friendly URLs
-  // for <a href> and <img src>; other ops take path via query or body.
+  // Members — requires `members.manage` for mutations. Top-level GET
+  // is dual-auth (everyone can read the teammate list); mutating verbs
+  // gate on the permission. The helpers below compose the `:name`
+  // subpaths.
+  members: '/members',
+  // Filesystem — per-member home directories with content-addressed
+  // blob storage. The dedicated `read/*` catch-all supports friendly
+  // URLs for <a href> and <img src>; other ops take path via query or body.
   fsList: '/fs/ls',
   fsStat: '/fs/stat',
   fsRead: '/fs/read',
@@ -56,22 +58,22 @@ export const OBJECTIVE_PATHS = {
 } as const;
 
 /**
- * Path builders for per-user subresources.
+ * Path builders for per-member subresources.
  *
- *   PATCH  /users/:name                   — update (admin only)
- *   DELETE /users/:name                   — delete (admin only)
- *   POST   /users/:name/rotate-token      — rotate bearer token (admin or self)
- *   POST   /users/:name/enroll-totp       — (re-)enroll TOTP (admin or self, humans only)
- *   POST   /users/:name/activity          — append activity event (self only)
- *   GET    /users/:name/activity          — range query (self or admin)
- *   GET    /users/:name/activity/stream   — SSE live tail (self or admin)
+ *   PATCH  /members/:name                   — update (members.manage)
+ *   DELETE /members/:name                   — delete (members.manage)
+ *   POST   /members/:name/rotate-token      — rotate bearer token (members.manage or self)
+ *   POST   /members/:name/enroll-totp       — (re-)enroll TOTP (members.manage or self)
+ *   POST   /members/:name/activity          — append activity event (self only)
+ *   GET    /members/:name/activity          — range query (self or activity.read)
+ *   GET    /members/:name/activity/stream   — SSE live tail (self or activity.read)
  */
-export const USER_PATHS = {
-  one: (name: string) => `/users/${encodeURIComponent(name)}`,
-  rotateToken: (name: string) => `/users/${encodeURIComponent(name)}/rotate-token`,
-  enrollTotp: (name: string) => `/users/${encodeURIComponent(name)}/enroll-totp`,
-  activity: (name: string) => `/users/${encodeURIComponent(name)}/activity`,
-  activityStream: (name: string) => `/users/${encodeURIComponent(name)}/activity/stream`,
+export const MEMBER_PATHS = {
+  one: (name: string) => `/members/${encodeURIComponent(name)}`,
+  rotateToken: (name: string) => `/members/${encodeURIComponent(name)}/rotate-token`,
+  enrollTotp: (name: string) => `/members/${encodeURIComponent(name)}/enroll-totp`,
+  activity: (name: string) => `/members/${encodeURIComponent(name)}/activity`,
+  activityStream: (name: string) => `/members/${encodeURIComponent(name)}/activity/stream`,
 } as const;
 
 /**

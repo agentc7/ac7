@@ -2,16 +2,16 @@
  * Session signal — the SPA's single source of truth for "who am I."
  *
  * Three states:
- *   - `loading`                          — initial mount, haven't asked the server yet
- *   - `anonymous`                        — confirmed no valid session; show login
- *   - `{user, role, userType, …}`       — authenticated; show the shell
+ *   - `loading`                                 — initial mount, haven't asked the server yet
+ *   - `anonymous`                               — confirmed no valid session; show login
+ *   - `{member, role, permissions, …}`          — authenticated; show the shell
  *
  * Components read the signal via Preact's `.value`; writes always go
  * through `bootstrap`, `loginWithTotp`, or `logout` so the state
  * transitions stay auditable in one place.
  */
 
-import type { SessionResponse, UserType } from '@agentc7/sdk/types';
+import type { Permission, Role, SessionResponse } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { getClient } from './client.js';
 
@@ -20,9 +20,9 @@ export type SessionState =
   | { status: 'anonymous' }
   | {
       status: 'authenticated';
-      user: string;
-      role: string;
-      userType: UserType;
+      member: string;
+      role: Role;
+      permissions: Permission[];
       expiresAt: number;
     };
 
@@ -106,9 +106,9 @@ export class LoginError extends Error {
 function authenticatedFrom(resp: SessionResponse): SessionState {
   return {
     status: 'authenticated',
-    user: resp.user,
+    member: resp.member,
     role: resp.role,
-    userType: resp.userType,
+    permissions: resp.permissions,
     expiresAt: resp.expiresAt,
   };
 }

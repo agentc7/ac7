@@ -22,14 +22,14 @@
  */
 
 import { Broker, InMemoryEventLog } from '@agentc7/core';
-import { USER_PATHS } from '@agentc7/sdk/protocol';
-import type { ActivityEvent, ListActivityResponse, Role, Team } from '@agentc7/sdk/types';
+import { MEMBER_PATHS } from '@agentc7/sdk/protocol';
+import type { ActivityEvent, ListActivityResponse, Team } from '@agentc7/sdk/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createSqliteActivityStore } from '../src/agent-activity.js';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
+import { createSqliteActivityStore } from '../src/member-activity.js';
+import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
-import { createUserStore } from '../src/slots.js';
 
 const CMD_TOKEN = 'ac7_test_director';
 const ASSIGNEE_TOKEN = 'ac7_test_assignee';
@@ -39,11 +39,7 @@ const TEAM: Team = {
   name: 'alpha-team',
   directive: 'Ship the payments service.',
   brief: 'End-to-end ownership.',
-};
-
-const ROLES: Record<string, Role> = {
-  'individual-contributor': { description: 'Directs the team.', instructions: 'Lead.' },
-  implementer: { description: 'Writes code.', instructions: 'Ship work.' },
+  permissionPresets: {},
 };
 
 function makeApp() {
@@ -52,20 +48,34 @@ function makeApp() {
     now: () => 1_700_000_000_000,
     idFactory: () => 'msg-fixed',
   });
-  const slots = createUserStore([
-    { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin', token: CMD_TOKEN },
-    { name: 'ALPHA-1', role: 'implementer', token: ASSIGNEE_TOKEN },
-    { name: 'BRAVO-1', role: 'implementer', token: OTHER_TOKEN },
+  const members = createMemberStore([
+    {
+      name: 'ACTUAL',
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage', 'activity.read'],
+      token: CMD_TOKEN,
+    },
+    {
+      name: 'ALPHA-1',
+      role: { title: 'engineer', description: '' },
+      permissions: [],
+      token: ASSIGNEE_TOKEN,
+    },
+    {
+      name: 'BRAVO-1',
+      role: { title: 'engineer', description: '' },
+      permissions: [],
+      token: OTHER_TOKEN,
+    },
   ]);
   const db = openDatabase(':memory:');
   const activityStore = createSqliteActivityStore(db);
   const app = createApp({
     broker,
-    slots,
+    members,
     sessions: new SessionStore(db),
     activityStore,
     team: TEAM,
-    roles: ROLES,
     version: '0.0.0',
     logger: {
       debug: vi.fn(),
@@ -157,7 +167,7 @@ describe('POST /users/:name/activity', () => {
 
   it('accepts events from the slot itself and returns the count', async () => {
     const res = await app.request(
-      USER_PATHS.activity('ALPHA-1'),
+      MEMBER_PATHS.activity('ALPHA-1'),
       post(ASSIGNEE_TOKEN, { events: [sampleEvent(1_700_000_000_000)] }),
     );
     expect(res.status).toBe(201);
@@ -167,7 +177,7 @@ describe('POST /users/:name/activity', () => {
 
   it('rejects uploads targeting another slot (even from a director)', async () => {
     const res = await app.request(
-      USER_PATHS.activity('ALPHA-1'),
+      MEMBER_PATHS.activity('ALPHA-1'),
       post(CMD_TOKEN, { events: [sampleEvent(1_700_000_000_000)] }),
     );
     expect(res.status).toBe(403);
@@ -175,7 +185,7 @@ describe('POST /users/:name/activity', () => {
 
   it('rejects uploads from an unrelated teammate', async () => {
     const res = await app.request(
-      USER_PATHS.activity('ALPHA-1'),
+      MEMBER_PATHS.activity('ALPHA-1'),
       post(OTHER_TOKEN, { events: [sampleEvent(1_700_000_000_000)] }),
     );
     expect(res.status).toBe(403);
@@ -183,7 +193,7 @@ describe('POST /users/:name/activity', () => {
 
   it('rejects malformed event payloads', async () => {
     const res = await app.request(
-      USER_PATHS.activity('ALPHA-1'),
+      MEMBER_PATHS.activity('ALPHA-1'),
       post(ASSIGNEE_TOKEN, { events: [{ kind: 'bogus', ts: 1 }] }),
     );
     expect(res.status).toBe(400);
@@ -191,7 +201,7 @@ describe('POST /users/:name/activity', () => {
 
   it('rejects empty event lists (schema requires at least one)', async () => {
     const res = await app.request(
-      USER_PATHS.activity('ALPHA-1'),
+      MEMBER_PATHS.activity('ALPHA-1'),
       post(ASSIGNEE_TOKEN, { events: [] }),
     );
     expect(res.status).toBe(400);
@@ -216,27 +226,27 @@ describe('GET /users/:name/activity', () => {
   });
 
   it('returns all events for the slot itself', async () => {
-    const res = await app.request(USER_PATHS.activity('ALPHA-1'), bearer(ASSIGNEE_TOKEN));
+    const res = await app.request(MEMBER_PATHS.activity('ALPHA-1'), bearer(ASSIGNEE_TOKEN));
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListActivityResponse;
     expect(body.activity).toHaveLength(3);
   });
 
   it('returns all events to a director reading another slot', async () => {
-    const res = await app.request(USER_PATHS.activity('ALPHA-1'), bearer(CMD_TOKEN));
+    const res = await app.request(MEMBER_PATHS.activity('ALPHA-1'), bearer(CMD_TOKEN));
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListActivityResponse;
     expect(body.activity).toHaveLength(3);
   });
 
   it('rejects a non-director reading another slot', async () => {
-    const res = await app.request(USER_PATHS.activity('ALPHA-1'), bearer(OTHER_TOKEN));
+    const res = await app.request(MEMBER_PATHS.activity('ALPHA-1'), bearer(OTHER_TOKEN));
     expect(res.status).toBe(403);
   });
 
   it('filters by ts range', async () => {
     const res = await app.request(
-      `${USER_PATHS.activity('ALPHA-1')}?from=1500&to=2500`,
+      `${MEMBER_PATHS.activity('ALPHA-1')}?from=1500&to=2500`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(200);
@@ -247,7 +257,7 @@ describe('GET /users/:name/activity', () => {
 
   it('filters by single kind', async () => {
     const res = await app.request(
-      `${USER_PATHS.activity('ALPHA-1')}?kind=llm_exchange`,
+      `${MEMBER_PATHS.activity('ALPHA-1')}?kind=llm_exchange`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(200);
@@ -260,7 +270,7 @@ describe('GET /users/:name/activity', () => {
 
   it('filters by multiple kinds (?kind=llm_exchange&kind=opaque_http)', async () => {
     const res = await app.request(
-      `${USER_PATHS.activity('ALPHA-1')}?kind=llm_exchange&kind=opaque_http`,
+      `${MEMBER_PATHS.activity('ALPHA-1')}?kind=llm_exchange&kind=opaque_http`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(200);
@@ -270,7 +280,7 @@ describe('GET /users/:name/activity', () => {
 
   it('rejects an unknown kind', async () => {
     const res = await app.request(
-      `${USER_PATHS.activity('ALPHA-1')}?kind=nope`,
+      `${MEMBER_PATHS.activity('ALPHA-1')}?kind=nope`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(400);
@@ -278,7 +288,7 @@ describe('GET /users/:name/activity', () => {
 
   it('honors limit and returns newest-first', async () => {
     const res = await app.request(
-      `${USER_PATHS.activity('ALPHA-1')}?limit=2`,
+      `${MEMBER_PATHS.activity('ALPHA-1')}?limit=2`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(200);
@@ -293,7 +303,7 @@ describe('GET /users/:name/activity', () => {
     // We don't gate GET on name existence — an unknown slot
     // just has no rows. 403 would leak whether the slot exists;
     // empty list is the correct shape.
-    const res = await app.request(USER_PATHS.activity('UNKNOWN'), bearer(CMD_TOKEN));
+    const res = await app.request(MEMBER_PATHS.activity('UNKNOWN'), bearer(CMD_TOKEN));
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListActivityResponse;
     expect(body.activity).toHaveLength(0);

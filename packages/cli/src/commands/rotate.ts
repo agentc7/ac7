@@ -4,7 +4,7 @@
  * Flow:
  *   1. Load the team config at the resolved path.
  *   2. Error clearly if `--user` is missing or the name isn't known.
- *   3. Call `rotateUserToken` — atomic config rewrite at `0o600`
+ *   3. Call `rotateMemberToken` — atomic config rewrite at `0o600`
  *      with a fresh `ac7_<base64url>` token; every other user's
  *      state (userType, role, TOTP) is preserved byte-for-byte.
  *   4. Print the NEW plaintext token once with explicit save-now
@@ -55,8 +55,8 @@ export async function runRotateCommand(
   }
 
   // Defensive load — we want to fail fast with a useful error if the
-  // config is missing or invalid rather than let `rotateUserToken`
-  // surface the UserLoadError raw.
+  // config is missing or invalid rather than let `rotateMemberToken`
+  // surface the MemberLoadError raw.
   let config: Awaited<ReturnType<typeof server.loadTeamConfigFromFile>>;
   try {
     config = server.loadTeamConfigFromFile(configPath);
@@ -66,7 +66,7 @@ export async function runRotateCommand(
         `rotate: no config file at ${configPath}\n  Run \`ac7 setup\` first to create one.`,
       );
     }
-    if (err instanceof server.UserLoadError) {
+    if (err instanceof server.MemberLoadError) {
       throw new UsageError(`rotate: ${err.message}`);
     }
     throw err;
@@ -82,9 +82,9 @@ export async function runRotateCommand(
 
   let newToken: string;
   try {
-    newToken = server.rotateUserToken(configPath, input.user);
+    newToken = server.rotateMemberToken(configPath, input.user);
   } catch (err) {
-    if (err instanceof server.UserLoadError) {
+    if (err instanceof server.MemberLoadError) {
       throw new UsageError(`rotate: ${err.message}`);
     }
     throw err;

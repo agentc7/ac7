@@ -162,15 +162,17 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
 
   const isAssignee = current.assignee === viewer;
   const isOriginator = current.originator === viewer;
-  const isAdmin = b.userType === 'admin';
-  const isLeadLike = b.userType === 'operator' || b.userType === 'lead-agent';
+  const isAdmin = b.permissions.includes('members.manage');
+  const canCancelPerm = b.permissions.includes('objectives.cancel');
+  const canReassignPerm = b.permissions.includes('objectives.reassign');
+  const canWatchPerm = b.permissions.includes('objectives.watch');
   const isWatching = current.watchers.includes(viewer);
   const isTerminal = current.status === 'done' || current.status === 'cancelled';
   const canUpdateStatus = !isTerminal && (isAssignee || isAdmin);
   const canComplete = !isTerminal && isAssignee;
-  const canCancel = !isTerminal && (isAdmin || (isLeadLike && isOriginator));
-  const canReassign = !isTerminal && isAdmin;
-  const canManageWatchers = isAdmin || (isLeadLike && isOriginator);
+  const canCancel = !isTerminal && (canCancelPerm || isOriginator);
+  const canReassign = !isTerminal && canReassignPerm;
+  const canManageWatchers = canWatchPerm || isOriginator;
   const canDiscuss = isAssignee || isOriginator || isAdmin || isWatching;
   const hasAnyAction =
     canUpdateStatus || canComplete || canCancel || canReassign || canManageWatchers;

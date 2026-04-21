@@ -14,8 +14,8 @@
 
 import type { Objective, Teammate } from '@agentc7/sdk/types';
 import { useEffect } from 'preact/hooks';
-import { agentActivityError, startAgentActivitySubscribe } from '../lib/agent-activity.js';
 import { briefing } from '../lib/briefing.js';
+import { memberActivityError, startMemberActivitySubscribe } from '../lib/member-activity.js';
 import { objectives as objectivesSignal } from '../lib/objectives.js';
 import { roster as rosterSignal } from '../lib/roster.js';
 import { selectDmWith, selectFiles, selectObjectiveDetail, selectOverview } from '../lib/view.js';
@@ -30,13 +30,13 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
   const b = briefing.value;
   const rosterResp = rosterSignal.value;
   const objectives = objectivesSignal.value;
-  const errorMessage = agentActivityError.value;
+  const errorMessage = memberActivityError.value;
 
-  const isAdmin = b?.userType === 'admin';
+  const isAdmin = b?.permissions.includes('members.manage') ?? false;
 
   useEffect(() => {
     if (!isAdmin) return;
-    const teardown = startAgentActivitySubscribe({ name });
+    const teardown = startMemberActivitySubscribe({ name });
     return () => teardown();
   }, [name, isAdmin]);
 
@@ -100,11 +100,12 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
           >
             {name}
           </h1>
-          {teammate?.userType && (
+          {teammate && (
             <span
-              class={`badge ${teammate.userType === 'admin' ? 'solid' : teammate.userType === 'operator' || teammate.userType === 'lead-agent' ? 'ember' : 'soft'}`}
+              class={`badge ${teammate.permissions.includes('members.manage') ? 'solid' : teammate.permissions.includes('objectives.create') ? 'ember' : 'soft'}`}
+              title={teammate.role.description.length > 0 ? teammate.role.description : undefined}
             >
-              {formatUserType(teammate.userType)}
+              {teammate.role.title.toUpperCase()}
             </span>
           )}
           <span class={`badge ${isOnline ? 'soft' : 'muted'}`}>
@@ -223,10 +224,4 @@ function ObjectiveRefList({
       )}
     </div>
   );
-}
-
-function formatUserType(userType: string): string {
-  if (userType === 'lead-agent') return 'LEAD';
-  if (userType === 'operator') return 'OP';
-  return userType.toUpperCase();
 }

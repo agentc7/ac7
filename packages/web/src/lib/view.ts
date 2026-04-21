@@ -21,7 +21,7 @@ export type View =
   | { kind: 'objective-create' }
   | { kind: 'agent-detail'; name: string }
   | { kind: 'files'; path: string }
-  | { kind: 'users' };
+  | { kind: 'members' };
 
 export const view = signal<View>({ kind: 'thread', key: PRIMARY_THREAD });
 
@@ -104,9 +104,9 @@ export function selectFiles(path: string): void {
   isSidebarOpen.value = false;
 }
 
-/** Open the Users admin page. Admin-only; sidebar hides it for others. */
-export function selectUsers(): void {
-  view.value = { kind: 'users' };
+/** Open the Members admin page. Admin-only; sidebar hides it for others. */
+export function selectMembers(): void {
+  view.value = { kind: 'members' };
   isSidebarOpen.value = false;
 }
 

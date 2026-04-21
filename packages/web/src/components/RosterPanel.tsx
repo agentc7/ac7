@@ -19,17 +19,10 @@ export interface RosterPanelProps {
   viewer: string;
 }
 
-function userTypeBadgeClass(userType: string): string {
-  if (userType === 'admin') return 'badge solid';
-  if (userType === 'operator') return 'badge ember solid';
-  if (userType === 'lead-agent') return 'badge ember soft';
+function roleBadgeClass(permissions: readonly string[]): string {
+  if (permissions.includes('members.manage')) return 'badge solid';
+  if (permissions.includes('objectives.create')) return 'badge ember solid';
   return 'badge soft';
-}
-
-function formatUserType(userType: string): string {
-  if (userType === 'lead-agent') return 'LEAD';
-  if (userType === 'operator') return 'OP';
-  return userType.toUpperCase();
 }
 
 function avatarInitials(name: string): string {
@@ -52,7 +45,7 @@ export function RosterPanel({ viewer }: RosterPanelProps) {
     );
   }
   const connectedByName = new Map<string, Presence>(r.connected.map((a) => [a.name, a]));
-  const isAdmin = b?.userType === 'admin';
+  const isAdmin = b?.permissions.includes('members.manage') ?? false;
 
   return (
     <div
@@ -113,11 +106,13 @@ export function RosterPanel({ viewer }: RosterPanelProps) {
                         (you)
                       </span>
                     )}
-                    <span class={userTypeBadgeClass(t.userType)}>{formatUserType(t.userType)}</span>
+                    <span class={roleBadgeClass(t.permissions)}>{t.role.title.toUpperCase()}</span>
                   </div>
-                  <div style="font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase">
-                    {t.role}
-                  </div>
+                  {t.role.description.length > 0 && (
+                    <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);line-height:1.4">
+                      {t.role.description}
+                    </div>
+                  )}
                 </div>
               </div>
             );

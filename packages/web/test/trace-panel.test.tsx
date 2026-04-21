@@ -2,7 +2,7 @@
  * TracePanel render tests.
  *
  * We render the component with a stubbed client that returns
- * canned agent-activity rows, then assert:
+ * canned member-activity rows, then assert:
  *
  *   - LLM exchanges surface model, token counts, text blocks,
  *     and tool_use blocks
@@ -12,7 +12,7 @@
  * The director gate is enforced one level up in ObjectiveDetail
  * (client) and at the GET /agents/:name/activity server
  * endpoint. The server endpoint test in
- * apps/server/test/agent-activity.test.ts is the source of truth
+ * apps/server/test/member-activity.test.ts is the source of truth
  * for the gate.
  */
 
@@ -62,7 +62,7 @@ const objective: Objective = {
 
 const llmRow: ActivityRow = {
   id: 1,
-  userName: 'ALPHA-1',
+  memberName: 'ALPHA-1',
   createdAt: 1_700_000_000_500,
   event: {
     kind: 'llm_exchange',

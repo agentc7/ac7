@@ -155,8 +155,12 @@ describe('<Sidebar /> unread indicators', () => {
   function setRoster() {
     roster.value = {
       teammates: [
-        { name: 'me', role: 'individual-contributor', userType: 'admin' },
-        { name: 'build-bot', role: 'implementer', userType: 'agent' },
+        {
+          name: 'me',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
       ],
       connected: [],
     };

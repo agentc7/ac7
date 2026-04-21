@@ -10,7 +10,6 @@
  */
 
 import type { Objective, ObjectiveStatus } from '@agentc7/sdk/types';
-import { canCreateObjective } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import { briefing } from '../lib/briefing.js';
@@ -45,7 +44,7 @@ export function ObjectivesPanel({ viewer }: ObjectivesPanelProps) {
     }
   }, [loaded]);
 
-  const canCreate = b !== null && canCreateObjective(b.userType);
+  const canCreate = b?.permissions.includes('objectives.create') ?? false;
 
   if (!loaded && err === null) {
     return (

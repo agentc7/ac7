@@ -33,10 +33,10 @@ describe('Broker.register', () => {
 
   it('records role from the register context', async () => {
     const { broker } = makeBroker();
-    await broker.register('build-bot', { role: 'agent' });
+    await broker.register('build-bot', { role: { title: 'engineer', description: '' } });
     const agents = broker.listPresences();
     expect(agents).toHaveLength(1);
-    expect(agents[0]?.role).toBe('agent');
+    expect(agents[0]?.role?.title).toBe('engineer');
   });
 
   it('defaults role to null when no context is supplied', async () => {
@@ -47,15 +47,21 @@ describe('Broker.register', () => {
 
   it('allows the matching name to register idempotently', async () => {
     const { broker } = makeBroker();
-    await broker.register('alice', { role: 'individual-contributor', name: 'alice' });
-    await broker.register('alice', { role: 'individual-contributor', name: 'alice' });
+    await broker.register('alice', {
+      role: { title: 'commander', description: '' },
+      name: 'alice',
+    });
+    await broker.register('alice', {
+      role: { title: 'commander', description: '' },
+      name: 'alice',
+    });
     expect(broker.listPresences()).toHaveLength(1);
   });
 
   it('rejects register when agentId does not equal name', async () => {
     const { broker } = makeBroker();
     await expect(
-      broker.register('alice', { role: 'individual-contributor', name: 'mallory' }),
+      broker.register('alice', { role: { title: 'commander', description: '' }, name: 'mallory' }),
     ).rejects.toBeInstanceOf(PresenceIdentityError);
   });
 
@@ -65,20 +71,19 @@ describe('Broker.register', () => {
   });
 });
 
-describe('Broker.seedUsers', () => {
-  it('pre-populates the registry with every slot', () => {
+describe('Broker.seedMembers', () => {
+  it('pre-populates the registry with every member', () => {
     const { broker } = makeBroker();
-    broker.seedUsers([
-      { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' },
-      { name: 'ALPHA-1', role: 'implementer', userType: 'agent' },
-      { name: 'SIERRA', role: 'reviewer', userType: 'operator' },
+    broker.seedMembers([
+      { name: 'ACTUAL', role: { title: 'commander', description: '' } },
+      { name: 'ALPHA-1', role: { title: 'engineer', description: '' } },
+      { name: 'SIERRA', role: { title: 'reviewer', description: '' } },
     ]);
-    const agents = broker.listPresences();
-    expect(agents.map((a) => a.name).sort()).toEqual(['ACTUAL', 'ALPHA-1', 'SIERRA']);
-    expect(agents.find((a) => a.name === 'ACTUAL')?.role).toBe('individual-contributor');
-    expect(agents.find((a) => a.name === 'ACTUAL')?.userType).toBe('admin');
-    expect(agents.find((a) => a.name === 'SIERRA')?.userType).toBe('operator');
-    expect(agents.every((a) => a.connected === 0)).toBe(true);
+    const presences = broker.listPresences();
+    expect(presences.map((p) => p.name).sort()).toEqual(['ACTUAL', 'ALPHA-1', 'SIERRA']);
+    expect(presences.find((p) => p.name === 'ACTUAL')?.role?.title).toBe('commander');
+    expect(presences.find((p) => p.name === 'SIERRA')?.role?.title).toBe('reviewer');
+    expect(presences.every((p) => p.connected === 0)).toBe(true);
   });
 });
 
@@ -108,8 +113,14 @@ describe('Broker.subscribe identity', () => {
 describe('Broker.push DM sender-fanout', () => {
   it("delivers a DM to the sender's own agent when both are registered", async () => {
     const { broker } = makeBroker();
-    await broker.register('alice', { role: 'individual-contributor', name: 'alice' });
-    await broker.register('build-bot', { role: 'agent', name: 'build-bot' });
+    await broker.register('alice', {
+      role: { title: 'commander', description: '' },
+      name: 'alice',
+    });
+    await broker.register('build-bot', {
+      role: { title: 'engineer', description: '' },
+      name: 'build-bot',
+    });
 
     const aliceReceived: Message[] = [];
     const botReceived: Message[] = [];
@@ -142,7 +153,10 @@ describe('Broker.push DM sender-fanout', () => {
 
   it('does not double-deliver when the sender talks to themselves', async () => {
     const { broker } = makeBroker();
-    await broker.register('alice', { role: 'individual-contributor', name: 'alice' });
+    await broker.register('alice', {
+      role: { title: 'commander', description: '' },
+      name: 'alice',
+    });
     const received: Message[] = [];
     broker.subscribe(
       'alice',
@@ -161,7 +175,10 @@ describe('Broker.push DM sender-fanout', () => {
 
   it('is a no-op when the sender has no registered agent', async () => {
     const { broker } = makeBroker();
-    await broker.register('build-bot', { role: 'agent', name: 'build-bot' });
+    await broker.register('build-bot', {
+      role: { title: 'engineer', description: '' },
+      name: 'build-bot',
+    });
     const received: Message[] = [];
     broker.subscribe(
       'build-bot',
@@ -401,7 +418,7 @@ describe('Broker.subscribe', () => {
   it('auto-registers the agent if not previously known', async () => {
     const { broker } = makeBroker();
     broker.subscribe('autoreg', () => {});
-    expect(broker.hasUser('autoreg')).toBe(true);
+    expect(broker.hasMember('autoreg')).toBe(true);
   });
 
   it('unsubscribe stops further deliveries', async () => {

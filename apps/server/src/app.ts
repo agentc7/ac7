@@ -14,7 +14,7 @@
  *
  * Dual-auth = either `Authorization: Bearer <token>` (machine plane,
  * MCP link) or `Cookie: ac7_session=<id>` (human plane, web SPA).
- * Both resolve to the same `LoadedUser`, which downstream handlers
+ * Both resolve to the same `LoadedMember`, which downstream handlers
  * use to stamp authoritative `from` on pushes and to gate identity
  * checks on subscribe. All routes must carry `X-AC7-Protocol: 1` if
  * the header is present.
@@ -28,8 +28,8 @@ import {
   ActivityKindSchema,
   CancelObjectiveRequestSchema,
   CompleteObjectiveRequestSchema,
+  CreateMemberRequestSchema,
   CreateObjectiveRequestSchema,
-  CreateUserRequestSchema,
   DiscussObjectiveRequestSchema,
   FsMkdirRequestSchema,
   FsMoveRequestSchema,
@@ -41,8 +41,8 @@ import {
   PushSubscriptionPayloadSchema,
   ReassignObjectiveRequestSchema,
   TotpLoginRequestSchema,
+  UpdateMemberRequestSchema,
   UpdateObjectiveRequestSchema,
-  UpdateUserRequestSchema,
   UpdateWatchersRequestSchema,
   UploadActivityRequestSchema,
 } from '@agentc7/sdk/schemas';
@@ -53,39 +53,40 @@ import type {
   Objective,
   ObjectiveEvent,
   ObjectiveEventKind,
+  Permission,
   Role,
   Team,
   Teammate,
-  UserType,
 } from '@agentc7/sdk/types';
-import { isHuman } from '@agentc7/sdk/types';
+import { hasPermission } from '@agentc7/sdk/types';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { type Context, Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
 import { streamSSE } from 'hono/streaming';
-import type { ActivityStore } from './agent-activity.js';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
 import { type FilesystemStore, FsError, type ViewerContext } from './files/index.js';
 import type { Logger } from './logger.js';
+import type { ActivityStore } from './member-activity.js';
+import {
+  generateMemberToken,
+  type LoadedMember,
+  MemberLoadError,
+  type MemberStore,
+  resolvePermissions,
+  teammatesFromMembers,
+  type UpdateMemberPatch,
+} from './members.js';
 import { ObjectivesError, type ObjectivesStore } from './objectives.js';
 import type { PushSubscriptionStore } from './push/store.js';
 import { SESSION_COOKIE_NAME, SESSION_TTL_MS, type SessionStore } from './sessions.js';
-import {
-  generateUserToken,
-  type LoadedUser,
-  teammatesFromUsers,
-  UserLoadError,
-  type UserStore,
-} from './slots.js';
 import { generateSecret, otpauthUri, verifyCode as verifyTotpCode } from './totp.js';
 
 export interface AppOptions {
   broker: Broker;
-  slots: UserStore;
+  members: MemberStore;
   sessions: SessionStore;
   team: Team;
-  roles: Record<string, Role>;
   /**
    * Objectives store — the server's authoritative task state. The
    * `/objectives*` endpoints are registered iff this is provided,
@@ -94,11 +95,11 @@ export interface AppOptions {
    */
   objectives?: ObjectivesStore;
   /**
-   * Per-user agent activity store — append-only timeline of
-   * LLM exchanges, opaque HTTP, and objective lifecycle markers
-   * the runner ships up via the streaming uploader. The
-   * `/agents/:name/activity*` endpoints are registered iff
-   * this is provided, same opt-out pattern as `objectives`.
+   * Per-member activity store — append-only timeline of LLM
+   * exchanges, opaque HTTP, and objective lifecycle markers the
+   * runner ships up via the streaming uploader. The
+   * `/members/:name/activity*` endpoints are registered iff this is
+   * provided, same opt-out pattern as `objectives`.
    */
   activityStore?: ActivityStore;
   version: string;
@@ -156,14 +157,14 @@ export interface AppOptions {
    */
   maxFileSize?: number;
   /**
-   * Called after every successful user-store mutation (create /
+   * Called after every successful member-store mutation (create /
    * update / delete / rotate-token / enroll-totp) with no arguments.
    * The runtime passes a closure that rewrites the on-disk team
    * config atomically; tests can pass a no-op when they don't care
-   * about persistence. When omitted, user-mutation endpoints 501
+   * about persistence. When omitted, member-mutation endpoints 501
    * rather than mutating in-memory without a durable backing.
    */
-  persistUsers?: () => void;
+  persistMembers?: () => void;
   /**
    * Clock injection for tests — rate-limit book-keeping uses `now()`
    * so tests don't have to wall-clock-wait to see a lockout expire.
@@ -243,10 +244,9 @@ function isApiPath(pathname: string): boolean {
 export function createApp(options: AppOptions): Hono<AppBindings> {
   const {
     broker,
-    slots,
+    members,
     sessions,
     team,
-    roles,
     objectives,
     activityStore,
     version,
@@ -258,7 +258,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     vapidPublicKey,
     onPushed,
   } = options;
-  const { files, persistUsers } = options;
+  const { files, persistMembers } = options;
   const maxFileSize = Math.min(
     options.maxFileSize ?? DEFAULT_MAX_FILE_SIZE,
     HARD_CAP_MAX_FILE_SIZE,
@@ -266,7 +266,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
   const now = options.now ?? Date.now;
   const app = new Hono<AppBindings>();
 
-  const auth = createAuthMiddleware({ slots, sessions, logger });
+  const auth = createAuthMiddleware({ members, sessions, logger });
 
   // Unified lockout map — per-user buckets keyed on name plus a
   // global "codeless" bucket keyed on a fixed sentinel. Both obey
@@ -339,15 +339,15 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     if (!parsed.success) {
       return c.json({ error: 'invalid login payload', details: parsed.error.issues }, 400);
     }
-    const { user: providedName, code } = parsed.data;
+    const { member: providedName, code } = parsed.data;
 
     // Two paths:
-    //   1. `user` was provided → targeted login (CLI, scripts that
-    //      know their name). Uses the per-user rate-limit bucket.
-    //   2. `user` was omitted → codeless login (SPA). Server iterates
-    //      TOTP-enrolled slots to find a match. Uses the tighter
-    //      global `__codeless__` rate-limit bucket to compensate for
-    //      the multi-user effective attack surface.
+    //   1. `member` was provided → targeted login (CLI, scripts that
+    //      know their name). Uses the per-member rate-limit bucket.
+    //   2. `member` was omitted → codeless login (SPA). Server
+    //      iterates TOTP-enrolled members to find a match. Uses the
+    //      tighter global `__codeless__` rate-limit bucket to
+    //      compensate for the multi-member effective attack surface.
     const lockoutKey = providedName ?? CODELESS_LOCKOUT_KEY;
     const lockout = checkTotpLockout(lockoutKey);
     if (lockout.locked) {
@@ -357,41 +357,33 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       );
     }
 
-    // Resolve which user we're about to verify against.
-    // Targeted: look up by name (returns null on unknown/unenrolled).
-    // Codeless: iterate all TOTP-enrolled slots in config order and
-    // pick the first match. We iterate the full enrolled set even on
-    // success to keep the verify loop's timing signal low (teams
-    // have a handful of slots, not thousands, so cost is negligible).
-    let matchedSlot: LoadedUser | null = null;
+    // Resolve which member we're about to verify against.
+    let matched: LoadedMember | null = null;
     let matchedCounter = 0;
 
     if (providedName !== undefined) {
-      const user = slots.findByName(providedName);
-      if (user?.totpSecret) {
-        const verify = verifyTotpCode(user.totpSecret, code, user.totpLastCounter ?? 0, now());
+      const m = members.findByName(providedName);
+      if (m?.totpSecret) {
+        const verify = verifyTotpCode(m.totpSecret, code, m.totpLastCounter ?? 0, now());
         if (verify.ok) {
-          matchedSlot = user;
+          matched = m;
           matchedCounter = verify.counter;
         }
       }
     } else {
-      // Codeless: iterate every enrolled user. First ok-verify wins.
-      // Ambiguous collisions (two slots with the same current code in
-      // the same window) are statistically ~1-in-20K at 10 slots and
-      // resolve in 30s when codes rotate, so first-match is fine.
-      for (const user of slots.slots()) {
-        if (!user.totpSecret) continue;
-        const verify = verifyTotpCode(user.totpSecret, code, user.totpLastCounter ?? 0, now());
+      // Codeless: iterate every enrolled member. First ok-verify wins.
+      for (const m of members.members()) {
+        if (!m.totpSecret) continue;
+        const verify = verifyTotpCode(m.totpSecret, code, m.totpLastCounter ?? 0, now());
         if (verify.ok) {
-          matchedSlot = user;
+          matched = m;
           matchedCounter = verify.counter;
           break;
         }
       }
     }
 
-    if (!matchedSlot) {
+    if (!matched) {
       recordTotpFailure(lockoutKey);
       logger.warn('totp login rejected', {
         path: providedName ? 'targeted' : 'codeless',
@@ -400,16 +392,10 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       return c.json({ error: 'invalid code' }, 401);
     }
 
-    const matchedName = matchedSlot.name;
+    const matchedName = matched.name;
 
-    // Accept: persist the new counter, clear both lockout buckets
-    // (codeless on success + per-user in case the caller had been
-    // failing on the targeted path), mint a session.
-    slots.recordTotpAccept(matchedName, matchedCounter);
+    members.recordTotpAccept(matchedName, matchedCounter);
     clearTotpLockout(lockoutKey);
-    // If the caller was on the codeless path, also clear any stray
-    // per-user lockout for the matched user so a successful codeless
-    // login unblocks a legit user who'd been fat-fingering via CLI.
     if (providedName === undefined) {
       clearTotpLockout(matchedName);
     }
@@ -431,9 +417,9 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       expiresAt: session.expiresAt,
     });
     return c.json({
-      user: matchedName,
-      role: matchedSlot.role,
-      userType: matchedSlot.userType,
+      member: matchedName,
+      role: matched.role,
+      permissions: matched.permissions,
       expiresAt: session.expiresAt,
     });
   });
@@ -448,7 +434,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
   });
 
   app.get(PATHS.session, auth, (c) => {
-    const user = c.get('user');
+    const member = c.get('member');
     const sessionId = c.get('sessionId');
     // Cookie-auth requests have a sessionId so we can return expiresAt;
     // bearer-auth requests (machine plane) do not, and we report the
@@ -457,9 +443,9 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       ? (sessions.get(sessionId)?.expiresAt ?? now() + SESSION_TTL_MS)
       : Number.MAX_SAFE_INTEGER;
     return c.json({
-      user: user.name,
-      role: user.role,
-      userType: user.userType,
+      member: member.name,
+      role: member.role,
+      permissions: member.permissions,
       expiresAt,
     });
   });
@@ -467,31 +453,20 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
   // ─── Team endpoints (dual-auth) ────────────────────────────────
 
   app.get(PATHS.briefing, auth, (c) => {
-    const user = c.get('user');
-    const selfRole = roles[user.role];
-    if (!selfRole) {
-      // Shouldn't happen — config validation ensures every user role
-      // key exists in the roles map. Surface clearly if it does.
-      logger.error('briefing: unknown role for user', {
-        name: user.name,
-        role: user.role,
-      });
-      return c.json({ error: `unknown role '${user.role}' for user '${user.name}'` }, 500);
-    }
-    // Live open objectives for this user — included in the briefing so
-    // the link can bake them into its tool descriptions at startup.
+    const member = c.get('member');
+    // Live open objectives for this member — included in the briefing
+    // so the link can bake them into its tool descriptions at startup.
     // Active + blocked are both "on the plate"; done/cancelled drop off.
     const openObjectives: Objective[] = objectives
       ? [
-          ...objectives.list({ assignee: user.name, status: 'active' }),
-          ...objectives.list({ assignee: user.name, status: 'blocked' }),
+          ...objectives.list({ assignee: member.name, status: 'active' }),
+          ...objectives.list({ assignee: member.name, status: 'blocked' }),
         ]
       : [];
     const briefing = composeBriefing({
-      self: user,
-      selfRole,
+      self: member,
       team,
-      teammates: teammatesFromUsers(slots),
+      teammates: teammatesFromMembers(members),
       openObjectives,
     });
     return c.json(briefing);
@@ -499,7 +474,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
 
   app.get(PATHS.roster, auth, (c) => {
     return c.json({
-      teammates: teammatesFromUsers(slots),
+      teammates: teammatesFromMembers(members),
       connected: broker.listPresences(),
     });
   });
@@ -510,10 +485,10 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     if (!parsed.success) {
       return c.json({ error: 'invalid push payload', details: parsed.error.issues }, 400);
     }
-    if (parsed.data.to && !broker.hasUser(parsed.data.to)) {
+    if (parsed.data.to && !broker.hasMember(parsed.data.to)) {
       return c.json({ error: `no such agent: ${parsed.data.to}` }, 404);
     }
-    const user = c.get('user');
+    const member = c.get('member');
 
     // Attachment validation: every path must resolve, must be a file,
     // and the sender must have read access. The wire `size` / `mime`
@@ -521,7 +496,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     // sender can't lie about what they're attaching.
     const pushAttachmentsResult = canonicalizeAttachments(
       parsed.data.attachments,
-      toViewer(user),
+      toViewer(member),
       files,
     );
     if (!pushAttachmentsResult.ok) {
@@ -533,7 +508,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       ? { ...parsed.data, attachments: canonicalAttachments }
       : parsed.data;
 
-    const result = await broker.push(payload, { from: user.name });
+    const result = await broker.push(payload, { from: member.name });
 
     // Grant fanout — for every recipient that isn't the owner, record
     // a read grant keyed on the message id. The recipient set is the
@@ -544,16 +519,16 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       const recipients = new Set<string>();
       if (result.message.to) {
         recipients.add(result.message.to);
-        if (user.name !== result.message.to) recipients.add(user.name);
+        if (member.name !== result.message.to) recipients.add(member.name);
       } else {
-        for (const s of slots.slots()) recipients.add(s.name);
+        for (const s of members.members()) recipients.add(s.name);
       }
       grantAttachmentsTo(files, canonicalAttachments, recipients, result.message.id, logger);
     }
 
     logger.info('push delivered', {
       messageId: result.message.id,
-      from: user.name,
+      from: member.name,
       targetAgent: parsed.data.to ?? '*broadcast*',
       attachments: canonicalAttachments.length,
       sse: result.delivery.sse,
@@ -585,17 +560,17 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       if (!parsed.success) {
         return c.json({ error: 'invalid push subscription', details: parsed.error.issues }, 400);
       }
-      const user = c.get('user');
+      const member = c.get('member');
       const userAgent = c.req.header('User-Agent') ?? null;
       const row = pushStore.upsert({
-        userName: user.name,
+        memberName: member.name,
         endpoint: parsed.data.endpoint,
         p256dh: parsed.data.keys.p256dh,
         auth: parsed.data.keys.auth,
         userAgent,
       });
       logger.info('push subscription registered', {
-        name: user.name,
+        name: member.name,
         id: row.id,
       });
       return c.json({ id: row.id, endpoint: row.endpoint, createdAt: row.createdAt });
@@ -607,8 +582,8 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       if (!Number.isFinite(id) || id < 1) {
         return c.json({ error: 'invalid subscription id' }, 400);
       }
-      const user = c.get('user');
-      pushStore.deleteForUser(id, user.name);
+      const member = c.get('member');
+      pushStore.deleteForMember(id, member.name);
       return c.body(null, 204);
     });
   }
@@ -642,20 +617,22 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       objective: Objective,
       extraEvent?: ObjectiveEvent,
     ): Set<string> => {
-      const members = new Set<string>([objective.assignee, objective.originator]);
-      for (const w of objective.watchers) members.add(w);
-      for (const s of slots.slots()) {
-        if (s.userType === 'admin') members.add(s.name);
+      const names = new Set<string>([objective.assignee, objective.originator]);
+      for (const w of objective.watchers) names.add(w);
+      // Members with `members.manage` are implicit thread participants
+      // on every objective (observable-by-default for admins).
+      for (const m of members.members()) {
+        if (m.permissions.includes('members.manage')) names.add(m.name);
       }
       if (extraEvent?.kind === 'reassigned') {
         const fromCs = extraEvent.payload.from;
-        if (typeof fromCs === 'string') members.add(fromCs);
+        if (typeof fromCs === 'string') names.add(fromCs);
       }
       if (extraEvent?.kind === 'watcher_removed') {
         const cs = extraEvent.payload.name;
-        if (typeof cs === 'string') members.add(cs);
+        if (typeof cs === 'string') names.add(cs);
       }
-      return members;
+      return names;
     };
 
     const publishObjectiveEvent = async (
@@ -667,7 +644,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       const primaryTargets = objectiveThreadMembers(objective, event);
       const body = systemMessageForEvent(objective, event.kind, event);
       for (const target of primaryTargets) {
-        if (!broker.hasUser(target)) continue;
+        if (!broker.hasMember(target)) continue;
         try {
           await broker.push(
             {
@@ -730,7 +707,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     // equivalent explicit param today; watched objectives appear in
     // the default list.
     app.get(PATHS.objectives, auth, (c) => {
-      const user = c.get('user');
+      const member = c.get('member');
       const raw = {
         assignee: c.req.query('assignee'),
         status: c.req.query('status'),
@@ -741,19 +718,21 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
       const filter = parsed.data;
 
-      if (user.userType === 'agent') {
-        if (filter.assignee && filter.assignee !== user.name) {
-          return c.json({ error: 'agents may only list their own objectives' }, 403);
+      const canListAny = hasPermission(member.permissions, 'objectives.create');
+      if (!canListAny) {
+        if (filter.assignee && filter.assignee !== member.name) {
+          return c.json(
+            { error: 'members without objectives.create may only list their own objectives' },
+            403,
+          );
         }
-        // Default scope for an agent: assigned OR originated OR watching.
-        // App-level filter on the full list is fine at team scale
-        // where objective counts are in the dozens, not thousands.
+        // Default scope for a plain member: assigned OR originated OR watching.
         const all = objectives.list(filter.status ? { status: filter.status } : {});
         const scoped = all.filter(
           (o) =>
-            o.assignee === user.name ||
-            o.originator === user.name ||
-            o.watchers.includes(user.name),
+            o.assignee === member.name ||
+            o.originator === member.name ||
+            o.watchers.includes(member.name),
         );
         return c.json({ objectives: scoped });
       }
@@ -762,36 +741,32 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
 
     // GET /objectives/:id
     //
-    // An agent can view an objective if they're the assignee, the
-    // originator, or in the watcher list. Admin / operator /
-    // lead-agent can view any.
+    // A thread participant (assignee, originator, watcher) can always
+    // view. Anyone with `objectives.create` can view any.
     app.get(`${PATHS.objectives}/:id`, auth, (c) => {
-      const user = c.get('user');
+      const member = c.get('member');
       const id = c.req.param('id');
       const obj = objectives.get(id);
       if (!obj) return c.json({ error: `no such objective: ${id}` }, 404);
-      if (
-        user.userType === 'agent' &&
-        obj.assignee !== user.name &&
-        obj.originator !== user.name &&
-        !obj.watchers.includes(user.name)
-      ) {
+      const isParticipant =
+        obj.assignee === member.name ||
+        obj.originator === member.name ||
+        obj.watchers.includes(member.name);
+      if (!isParticipant && !hasPermission(member.permissions, 'objectives.create')) {
         return c.json(
-          {
-            error: 'agents may only view objectives they are assigned, originated, or watching',
-          },
+          { error: 'not a thread participant; viewing requires objectives.create' },
           403,
         );
       }
       return c.json({ objective: obj, events: objectives.events(id) });
     });
 
-    // POST /objectives (admin / operator / lead-agent)
+    // POST /objectives — requires `objectives.create`.
     app.post(PATHS.objectives, auth, async (c) => {
-      const user = c.get('user');
-      if (user.userType === 'agent') {
+      const member = c.get('member');
+      if (!hasPermission(member.permissions, 'objectives.create')) {
         return c.json(
-          { error: 'creating objectives requires admin, operator, or lead-agent userType' },
+          { error: 'creating objectives requires the objectives.create permission' },
           403,
         );
       }
@@ -801,21 +776,21 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         return c.json({ error: 'invalid objective payload', details: parsed.error.issues }, 400);
       }
       // Assignee must be a known user on the team.
-      if (!slots.findByName(parsed.data.assignee)) {
+      if (!members.findByName(parsed.data.assignee)) {
         return c.json({ error: `unknown assignee: ${parsed.data.assignee}` }, 400);
       }
       // Every initial watcher must also resolve — catch typos at
       // creation time, not on the first fanout attempt.
       if (Array.isArray(parsed.data.watchers)) {
         for (const w of parsed.data.watchers) {
-          if (!slots.findByName(w)) {
+          if (!members.findByName(w)) {
             return c.json({ error: `unknown watcher: ${w}` }, 400);
           }
         }
       }
       const createAttachmentsResult = canonicalizeAttachments(
         parsed.data.attachments,
-        toViewer(user),
+        toViewer(member),
         files,
       );
       if (!createAttachmentsResult.ok) {
@@ -826,10 +801,10 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
           ? { ...parsed.data, attachments: createAttachmentsResult.canonical }
           : parsed.data;
       try {
-        const { objective: created, events } = objectives.create(inputWithCanonical, user.name);
+        const { objective: created, events } = objectives.create(inputWithCanonical, member.name);
         logger.info('objective created', {
           id: created.id,
-          originator: user.name,
+          originator: member.name,
           assignee: created.assignee,
           attachments: created.attachments.length,
         });
@@ -843,7 +818,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         }
         queueMicrotask(() => {
           for (const ev of events) {
-            void publishObjectiveEvent(created, ev, user.name);
+            void publishObjectiveEvent(created, ev, member.name);
           }
         });
         return c.json(created);
@@ -853,14 +828,22 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
     });
 
-    // PATCH /objectives/:id (assignee OR admin)
+    // PATCH /objectives/:id — assignee, or a member with `objectives.cancel`.
     app.patch(`${PATHS.objectives}/:id`, auth, async (c) => {
-      const user = c.get('user');
+      const member = c.get('member');
       const id = c.req.param('id');
       const current = objectives.get(id);
       if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-      if (current.assignee !== user.name && user.userType !== 'admin') {
-        return c.json({ error: 'only the assignee or an admin may update this objective' }, 403);
+      if (
+        current.assignee !== member.name &&
+        !hasPermission(member.permissions, 'objectives.cancel')
+      ) {
+        return c.json(
+          {
+            error: 'only the assignee or a member with objectives.cancel may update this objective',
+          },
+          403,
+        );
       }
       const raw = await c.req.json().catch(() => null);
       const parsed = UpdateObjectiveRequestSchema.safeParse(raw);
@@ -868,7 +851,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         return c.json({ error: 'invalid update payload', details: parsed.error.issues }, 400);
       }
       try {
-        const { objective: updated, events } = objectives.update(id, parsed.data, user.name);
+        const { objective: updated, events } = objectives.update(id, parsed.data, member.name);
         // `events` can have 0-2 entries: 0 for a no-op (status=current,
         // no note), 1 for a single status transition or a note-only
         // update, 2 for a status transition + note in the same call.
@@ -877,7 +860,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         // block reason, etc.
         queueMicrotask(() => {
           for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, user.name);
+            void publishObjectiveEvent(updated, ev, member.name);
           }
         });
         return c.json(updated);
@@ -889,11 +872,11 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
 
     // POST /objectives/:id/complete (assignee only)
     app.post(`${PATHS.objectives}/:id/complete`, auth, async (c) => {
-      const user = c.get('user');
+      const member = c.get('member');
       const id = c.req.param('id');
       const current = objectives.get(id);
       if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-      if (current.assignee !== user.name) {
+      if (current.assignee !== member.name) {
         return c.json({ error: 'only the assignee may complete this objective' }, 403);
       }
       const raw = await c.req.json().catch(() => null);
@@ -902,10 +885,10 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         return c.json({ error: 'invalid complete payload', details: parsed.error.issues }, 400);
       }
       try {
-        const { objective: updated, events } = objectives.complete(id, parsed.data, user.name);
+        const { objective: updated, events } = objectives.complete(id, parsed.data, member.name);
         queueMicrotask(() => {
           for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, user.name);
+            void publishObjectiveEvent(updated, ev, member.name);
           }
         });
         return c.json(updated);
@@ -915,22 +898,15 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
     });
 
-    // POST /objectives/:id/cancel (originating operator/lead-agent or any admin)
+    // POST /objectives/:id/cancel — originator, or any member with `objectives.cancel`.
     app.post(`${PATHS.objectives}/:id/cancel`, auth, async (c) => {
-      const user = c.get('user');
+      const member = c.get('member');
       const id = c.req.param('id');
       const current = objectives.get(id);
       if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
-      const isOriginator = current.originator === user.name;
-      const isAdmin = user.userType === 'admin';
-      const isLeadLike = user.userType === 'operator' || user.userType === 'lead-agent';
-      if (!(isAdmin || (isLeadLike && isOriginator))) {
-        return c.json(
-          {
-            error: 'only the originating operator/lead-agent or an admin may cancel this objective',
-          },
-          403,
-        );
+      const isOriginator = current.originator === member.name;
+      if (!(isOriginator || hasPermission(member.permissions, 'objectives.cancel'))) {
+        return c.json({ error: 'cancel requires originator or objectives.cancel permission' }, 403);
       }
       const raw = await c.req.json().catch(() => ({}));
       const parsed = CancelObjectiveRequestSchema.safeParse(raw);
@@ -938,10 +914,10 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         return c.json({ error: 'invalid cancel payload', details: parsed.error.issues }, 400);
       }
       try {
-        const { objective: updated, events } = objectives.cancel(id, parsed.data, user.name);
+        const { objective: updated, events } = objectives.cancel(id, parsed.data, member.name);
         queueMicrotask(() => {
           for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, user.name);
+            void publishObjectiveEvent(updated, ev, member.name);
           }
         });
         return c.json(updated);
@@ -951,11 +927,11 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
     });
 
-    // POST /objectives/:id/reassign (admin only)
+    // POST /objectives/:id/reassign — requires `objectives.reassign`.
     app.post(`${PATHS.objectives}/:id/reassign`, auth, async (c) => {
-      const user = c.get('user');
-      if (user.userType !== 'admin') {
-        return c.json({ error: 'only an admin may reassign objectives' }, 403);
+      const member = c.get('member');
+      if (!hasPermission(member.permissions, 'objectives.reassign')) {
+        return c.json({ error: 'reassign requires the objectives.reassign permission' }, 403);
       }
       const id = c.req.param('id');
       const raw = await c.req.json().catch(() => null);
@@ -963,11 +939,11 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       if (!parsed.success) {
         return c.json({ error: 'invalid reassign payload', details: parsed.error.issues }, 400);
       }
-      if (!slots.findByName(parsed.data.to)) {
+      if (!members.findByName(parsed.data.to)) {
         return c.json({ error: `unknown assignee: ${parsed.data.to}` }, 400);
       }
       try {
-        const { objective: updated, events } = objectives.reassign(id, parsed.data, user.name);
+        const { objective: updated, events } = objectives.reassign(id, parsed.data, member.name);
         // Backfill attachment grants for the new assignee — they're
         // now a thread member and should be able to download
         // anything that was attached to the objective at creation.
@@ -982,7 +958,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         }
         queueMicrotask(() => {
           for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, user.name);
+            void publishObjectiveEvent(updated, ev, member.name);
           }
         });
         return c.json(updated);
@@ -1004,20 +980,15 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     // post-change thread membership (plus removed parties so they
     // get the exit notification).
     app.post(`${PATHS.objectives}/:id/watchers`, auth, async (c) => {
-      const user = c.get('user');
+      const member = c.get('member');
       const id = c.req.param('id');
       const current = objectives.get(id);
       if (!current) return c.json({ error: `no such objective: ${id}` }, 404);
 
-      const isOriginator = current.originator === user.name;
-      const isAdmin = user.userType === 'admin';
-      const isLeadLike = user.userType === 'operator' || user.userType === 'lead-agent';
-      if (!(isAdmin || (isLeadLike && isOriginator))) {
+      const isOriginator = current.originator === member.name;
+      if (!(isOriginator || hasPermission(member.permissions, 'objectives.watch'))) {
         return c.json(
-          {
-            error:
-              'only an admin or the originating operator/lead-agent may change watchers on this objective',
-          },
+          { error: 'watcher changes require originator or objectives.watch permission' },
           403,
         );
       }
@@ -1030,12 +1001,12 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
 
       // Validate every name in both lists.
       for (const cs of parsed.data.add ?? []) {
-        if (!slots.findByName(cs)) {
+        if (!members.findByName(cs)) {
           return c.json({ error: `unknown watcher: ${cs}` }, 400);
         }
       }
       for (const cs of parsed.data.remove ?? []) {
-        if (!slots.findByName(cs)) {
+        if (!members.findByName(cs)) {
           return c.json({ error: `unknown watcher: ${cs}` }, 400);
         }
       }
@@ -1044,7 +1015,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         const { objective: updated, events } = objectives.updateWatchers(
           id,
           parsed.data,
-          user.name,
+          member.name,
         );
         // Every watcher_added event carries a name; backfill attachment
         // grants for each newly-added watcher so they can read files
@@ -1063,7 +1034,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         }
         queueMicrotask(() => {
           for (const ev of events) {
-            void publishObjectiveEvent(updated, ev, user.name);
+            void publishObjectiveEvent(updated, ev, member.name);
           }
         });
         return c.json(updated);
@@ -1090,15 +1061,15 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     // renders its own posts because the web SSE handler does NOT
     // suppress self-echoes.
     app.post(`${PATHS.objectives}/:id/discuss`, auth, async (c) => {
-      const user = c.get('user');
+      const member = c.get('member');
       const id = c.req.param('id');
       const objective = objectives.get(id);
       if (!objective) return c.json({ error: `no such objective: ${id}` }, 404);
 
       const members = objectiveThreadMembers(objective);
-      if (!members.has(user.name)) {
+      if (!members.has(member.name)) {
         return c.json(
-          { error: `user '${user.name}' is not a member of objective ${id}'s thread` },
+          { error: `user '${member.name}' is not a member of objective ${id}'s thread` },
           403,
         );
       }
@@ -1111,7 +1082,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
 
       const discussAttachmentsResult = canonicalizeAttachments(
         parsed.data.attachments,
-        toViewer(user),
+        toViewer(member),
         files,
       );
       if (!discussAttachmentsResult.ok) {
@@ -1122,7 +1093,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       const threadKey = `obj:${id}`;
       let canonical: Message | null = null;
       for (const target of members) {
-        if (!broker.hasUser(target)) continue;
+        if (!broker.hasMember(target)) continue;
         try {
           const result = await broker.push(
             {
@@ -1137,7 +1108,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
               },
               ...(discussAttachments.length > 0 ? { attachments: discussAttachments } : {}),
             },
-            { from: user.name },
+            { from: member.name },
           );
           // Grab the first returned message as the canonical response
           // — every fanout push produces the same Message shape, and
@@ -1163,7 +1134,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
 
       if (!canonical) {
         // Shouldn't happen — the caller is at least a member, and
-        // `broker.hasUser` should be true for any active name.
+        // `broker.hasMember` should be true for any active name.
         // Return 202 semantics as 200 with an empty-ish body rather
         // than faking a Message shape.
         return c.json({ error: 'no thread members are currently registered with the broker' }, 503);
@@ -1177,21 +1148,21 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     if (!targetName) {
       return c.json({ error: 'name query parameter is required' }, 400);
     }
-    const user = c.get('user');
+    const member = c.get('member');
 
     // Identity check has to happen BEFORE we hand the stream to
     // streamSSE; otherwise the client sees 200 + an empty SSE stream
     // when we should be returning 403. `name` MUST equal the
     // caller's authenticated user name.
-    if (targetName !== user.name) {
+    if (targetName !== member.name) {
       logger.warn('subscribe rejected: identity mismatch', {
         targetName,
-        name: user.name,
+        name: member.name,
       });
       return c.json(
         {
           error:
-            `user '${user.name}' cannot subscribe to '${targetName}'; ` +
+            `user '${member.name}' cannot subscribe to '${targetName}'; ` +
             "the name query parameter must equal the caller's authenticated name",
         },
         403,
@@ -1220,7 +1191,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
             });
           }
         },
-        { role: user.role, name: user.name },
+        { role: member.role, name: member.name },
       );
 
       // Shutdown signal aborts all live streams so `http.Server.close()`
@@ -1234,10 +1205,10 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       stream.onAbort(() => {
         unsubscribe();
         shutdownSignal?.removeEventListener('abort', onShutdown);
-        logger.info('sse stream closed', { targetName, by: user.name });
+        logger.info('sse stream closed', { targetName, by: member.name });
       });
 
-      logger.info('sse stream opened', { targetName, by: user.name });
+      logger.info('sse stream opened', { targetName, by: member.name });
 
       // Initial comment so clients see the connection immediately, even
       // if no push arrives for a while.
@@ -1250,15 +1221,15 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       // exchange and re-push them if not.
       if (objectives) {
         const active = [
-          ...objectives.list({ assignee: user.name, status: 'active' }),
-          ...objectives.list({ assignee: user.name, status: 'blocked' }),
+          ...objectives.list({ assignee: member.name, status: 'active' }),
+          ...objectives.list({ assignee: member.name, status: 'blocked' }),
         ];
         const body =
           active.length > 0
-            ? `${user.name} online. ${active.length} active objective(s) on your plate.`
-            : `${user.name} online. No active objectives.`;
+            ? `${member.name} online. ${active.length} active objective(s) on your plate.`
+            : `${member.name} online. No active objectives.`;
         void broker.push(
-          { to: user.name, body, title: 'comms check', level: 'info' },
+          { to: member.name, body, title: 'comms check', level: 'info' },
           { from: 'ac7' },
         );
       }
@@ -1275,7 +1246,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
   });
 
   app.get(PATHS.history, auth, async (c) => {
-    const user = c.get('user');
+    const member = c.get('member');
 
     const withRaw = c.req.query('with');
     let withOther: string | undefined;
@@ -1297,7 +1268,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
 
     const eventLog = broker.getEventLog();
     const messages = await eventLog.query({
-      viewer: user.name,
+      viewer: member.name,
       with: withOther,
       limit,
       before,
@@ -1310,9 +1281,9 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
   // The runner streams decoded HTTP exchanges + objective lifecycle
   // markers here as they happen. Three endpoints:
   //
-  //   POST /users/:name/activity          — self upload only
-  //   GET  /users/:name/activity          — self OR admin
-  //   GET  /users/:name/activity/stream   — SSE live tail, self OR admin
+  //   POST /members/:name/activity          — self upload only
+  //   GET  /members/:name/activity          — self OR admin
+  //   GET  /members/:name/activity/stream   — SSE live tail, self OR admin
   //
   // The POST-self gate is strict: a user can only append its OWN
   // activity, regardless of userType. Admins read via GET; they
@@ -1322,20 +1293,20 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
   if (activityStore) {
     // Note: `AGENT_PATHS.activity` URL-encodes its argument (for
     // SDK client use), so we can't call it with `:name` here
-    // — Hono would see `%3Acallsign` and never bind a param. Use
+    // — Hono would see `%3Aname` and never bind a param. Use
     // the literal path for server-side route registration.
-    app.post('/users/:name/activity', auth, async (c) => {
-      const user = c.get('user');
-      const callsignRaw = c.req.param('name');
-      const parsedName = NameSchema.safeParse(callsignRaw);
+    app.post('/members/:name/activity', auth, async (c) => {
+      const member = c.get('member');
+      const nameRaw = c.req.param('name');
+      const parsedName = NameSchema.safeParse(nameRaw);
       if (!parsedName.success) {
         return c.json({ error: 'invalid name' }, 400);
       }
       const name = parsedName.data;
-      if (name !== user.name) {
+      if (name !== member.name) {
         return c.json(
           {
-            error: `user '${user.name}' cannot upload activity for '${name}'`,
+            error: `user '${member.name}' cannot upload activity for '${name}'`,
           },
           403,
         );
@@ -1366,18 +1337,21 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
     });
 
-    app.get('/users/:name/activity', auth, (c) => {
-      const user = c.get('user');
-      const callsignRaw = c.req.param('name');
-      const parsedName = NameSchema.safeParse(callsignRaw);
+    app.get('/members/:name/activity', auth, (c) => {
+      const member = c.get('member');
+      const nameRaw = c.req.param('name');
+      const parsedName = NameSchema.safeParse(nameRaw);
       if (!parsedName.success) {
         return c.json({ error: 'invalid name' }, 400);
       }
       const name = parsedName.data;
-      const isSelf = name === user.name;
-      const isAdmin = user.userType === 'admin';
-      if (!isSelf && !isAdmin) {
-        return c.json({ error: 'only the user itself or an admin may read this activity' }, 403);
+      const isSelf = name === member.name;
+      const canReadAny = hasPermission(member.permissions, 'activity.read');
+      if (!isSelf && !canReadAny) {
+        return c.json(
+          { error: 'reading activity requires activity.read permission, or self' },
+          403,
+        );
       }
       const fromRaw = c.req.query('from');
       const toRaw = c.req.query('to');
@@ -1411,7 +1385,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         }
       }
       const activity = activityStore.list({
-        userName: name,
+        memberName: name,
         from,
         to,
         kinds: kinds.length > 0 ? kinds : undefined,
@@ -1420,18 +1394,21 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       return c.json({ activity });
     });
 
-    app.get('/users/:name/activity/stream', auth, (c) => {
-      const user = c.get('user');
-      const callsignRaw = c.req.param('name');
-      const parsedName = NameSchema.safeParse(callsignRaw);
+    app.get('/members/:name/activity/stream', auth, (c) => {
+      const member = c.get('member');
+      const nameRaw = c.req.param('name');
+      const parsedName = NameSchema.safeParse(nameRaw);
       if (!parsedName.success) {
         return c.json({ error: 'invalid name' }, 400);
       }
       const name = parsedName.data;
-      const isSelf = name === user.name;
-      const isAdmin = user.userType === 'admin';
-      if (!isSelf && !isAdmin) {
-        return c.json({ error: 'only the user itself or an admin may stream this activity' }, 403);
+      const isSelf = name === member.name;
+      const canReadAny = hasPermission(member.permissions, 'activity.read');
+      if (!isSelf && !canReadAny) {
+        return c.json(
+          { error: 'streaming activity requires activity.read permission, or self' },
+          403,
+        );
       }
       return streamSSE(c, async (stream) => {
         const unsubscribe = activityStore.subscribe(name, async (row) => {
@@ -1455,11 +1432,11 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         stream.onAbort(() => {
           unsubscribe();
           shutdownSignal?.removeEventListener('abort', onShutdown);
-          logger.info('agent activity sse stream closed', { name, by: user.name });
+          logger.info('agent activity sse stream closed', { name, by: member.name });
         });
         logger.info('agent activity sse stream opened', {
           name,
-          by: user.name,
+          by: member.name,
         });
         await stream.writeSSE({ event: 'connected', data: name });
         while (!stream.aborted && !shutdownSignal?.aborted) {
@@ -1474,247 +1451,233 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
   // ─── User management endpoints ───────────────────────────────
   //
   // `GET /users` is dual-auth — every teammate can see who's on the
-  // team. Mutating verbs are admin-only and require `persistUsers`
+  // team. Mutating verbs are admin-only and require `persistMembers`
   // to be wired; without it, mutations would drift in-memory and lose
   // on restart so we 501 instead.
   //
-  // The server generates the bearer token + TOTP secret on create and
-  // on rotate; the plaintext is returned exactly once in the HTTP
-  // response. After that point only the hash and an encrypted TOTP
-  // secret exist on disk.
+  // The server generates the bearer token on create and rotate; the
+  // plaintext is returned exactly once in the HTTP response. After
+  // that only the hash lives on disk.
   //
-  // Self-mutation exceptions: any authenticated user can rotate their
-  // own token or re-enroll their own TOTP; admins can do it on behalf
-  // of anyone else. Agents (lead-agent, agent) can't enroll TOTP —
-  // they authenticate via bearer only.
+  // Self-mutation exceptions: any authenticated member can rotate
+  // their own token or (re-)enroll their own TOTP; members with
+  // `members.manage` can do it on behalf of anyone else.
 
-  app.get(PATHS.users, auth, (c) => {
-    return c.json({ users: teammatesFromUsers(slots) });
+  app.get(PATHS.members, auth, (c) => {
+    const member = c.get('member');
+    // Full member records (with instructions) require members.manage;
+    // otherwise return the public `Teammate` projection.
+    if (hasPermission(member.permissions, 'members.manage')) {
+      return c.json({ members: members.members().map(loadedToMember) });
+    }
+    return c.json({ members: teammatesFromMembers(members) });
   });
 
-  app.post(PATHS.users, auth, async (c) => {
-    const user = c.get('user');
-    if (user.userType !== 'admin') {
-      return c.json({ error: 'only admins may create users' }, 403);
+  app.post(PATHS.members, auth, async (c) => {
+    const member = c.get('member');
+    if (!hasPermission(member.permissions, 'members.manage')) {
+      return c.json({ error: 'creating members requires the members.manage permission' }, 403);
     }
-    if (!persistUsers) {
+    if (!persistMembers) {
       return c.json(
-        { error: 'user creation is not available (server missing persistUsers hook)' },
+        { error: 'member creation is not available (server missing persistMembers hook)' },
         501,
       );
     }
     const raw = await c.req.json().catch(() => null);
-    const parsed = CreateUserRequestSchema.safeParse(raw);
+    const parsed = CreateMemberRequestSchema.safeParse(raw);
     if (!parsed.success) {
-      return c.json({ error: 'invalid user payload', details: parsed.error.issues }, 400);
+      return c.json({ error: 'invalid member payload', details: parsed.error.issues }, 400);
     }
-    if (!Object.hasOwn(roles, parsed.data.role)) {
-      return c.json(
-        {
-          error: `unknown role '${parsed.data.role}' (team roles: ${Object.keys(roles).join(', ')})`,
-        },
-        400,
-      );
+    if (members.findByName(parsed.data.name)) {
+      return c.json({ error: `member '${parsed.data.name}' already exists` }, 409);
     }
-    if (slots.findByName(parsed.data.name)) {
-      return c.json({ error: `user '${parsed.data.name}' already exists` }, 409);
-    }
-    const token = generateUserToken();
-    const needsTotp = isHuman(parsed.data.userType);
-    const totpSecret = needsTotp ? generateSecret() : null;
+    let resolvedPerms: Permission[];
     try {
-      slots.addUser({
+      resolvedPerms = resolvePermissions(
+        parsed.data.permissions,
+        team.permissionPresets,
+        `create member '${parsed.data.name}'`,
+      );
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+    }
+    const token = generateMemberToken();
+    try {
+      members.addMember({
         name: parsed.data.name,
         role: parsed.data.role,
-        userType: parsed.data.userType,
+        instructions: parsed.data.instructions ?? '',
+        rawPermissions: [...parsed.data.permissions],
+        permissions: resolvedPerms,
         token,
-        totpSecret,
       });
     } catch (err) {
-      return c.json({ error: err instanceof Error ? err.message : 'failed to add user' }, 409);
+      return c.json({ error: err instanceof Error ? err.message : 'failed to add member' }, 409);
     }
-    persistUsers();
+    persistMembers();
     const teammate: Teammate = {
       name: parsed.data.name,
       role: parsed.data.role,
-      userType: parsed.data.userType,
+      permissions: resolvedPerms,
     };
-    // Seed the broker registry so the new user shows up in /roster
-    // without having to restart the server.
-    broker.seedUsers([teammate]);
-    logger.info('user created', {
+    broker.seedMembers([teammate]);
+    logger.info('member created', {
       name: teammate.name,
-      userType: teammate.userType,
       role: teammate.role,
-      createdBy: user.name,
+      permissions: teammate.permissions,
+      createdBy: member.name,
     });
-    return c.json({
-      user: teammate,
-      token,
-      ...(needsTotp && totpSecret
-        ? {
-            totpSecret,
-            totpUri: otpauthUri({
-              secret: totpSecret,
-              issuer: `ac7-${team.name}`,
-              label: parsed.data.name,
-            }),
-          }
-        : {}),
-    });
+    return c.json({ member: teammate, token });
   });
 
-  app.patch(`${PATHS.users}/:name`, auth, async (c) => {
-    const user = c.get('user');
-    if (user.userType !== 'admin') {
-      return c.json({ error: 'only admins may update users' }, 403);
+  app.patch(`${PATHS.members}/:name`, auth, async (c) => {
+    const member = c.get('member');
+    if (!hasPermission(member.permissions, 'members.manage')) {
+      return c.json({ error: 'updating members requires the members.manage permission' }, 403);
     }
-    if (!persistUsers) {
-      return c.json({ error: 'user updates are not available (persistUsers missing)' }, 501);
+    if (!persistMembers) {
+      return c.json({ error: 'member updates are not available (persistMembers missing)' }, 501);
     }
     const targetRaw = c.req.param('name');
     const parsedName = NameSchema.safeParse(targetRaw);
-    if (!parsedName.success) return c.json({ error: 'invalid user name' }, 400);
-    const target = slots.findByName(parsedName.data);
-    if (!target) return c.json({ error: `no such user: ${parsedName.data}` }, 404);
+    if (!parsedName.success) return c.json({ error: 'invalid member name' }, 400);
+    const target = members.findByName(parsedName.data);
+    if (!target) return c.json({ error: `no such member: ${parsedName.data}` }, 404);
 
     const raw = await c.req.json().catch(() => null);
-    const parsed = UpdateUserRequestSchema.safeParse(raw);
+    const parsed = UpdateMemberRequestSchema.safeParse(raw);
     if (!parsed.success) {
       return c.json({ error: 'invalid update payload', details: parsed.error.issues }, 400);
     }
-    if (parsed.data.role !== undefined && !Object.hasOwn(roles, parsed.data.role)) {
-      return c.json(
-        {
-          error: `unknown role '${parsed.data.role}' (team roles: ${Object.keys(roles).join(', ')})`,
-        },
-        400,
-      );
-    }
-    // Guard the last-admin invariant. Only an admin demoting
-    // themselves (or another admin) when they're the only admin
-    // triggers this.
-    if (
-      parsed.data.userType !== undefined &&
-      parsed.data.userType !== 'admin' &&
-      target.userType === 'admin'
-    ) {
-      const adminCount = slots.slots().filter((s) => s.userType === 'admin').length;
-      if (adminCount <= 1) {
-        return c.json(
-          { error: 'cannot demote the last admin — promote another user to admin first' },
-          409,
+    // Guard the last-admin invariant when changing permissions.
+    let nextPermissions: Permission[] | undefined;
+    let nextRaw: string[] | undefined;
+    if (parsed.data.permissions !== undefined) {
+      try {
+        nextPermissions = resolvePermissions(
+          parsed.data.permissions,
+          team.permissionPresets,
+          `update member '${target.name}'`,
         );
+      } catch (err) {
+        return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      nextRaw = [...parsed.data.permissions];
+      const losingManage =
+        target.permissions.includes('members.manage') &&
+        !nextPermissions.includes('members.manage');
+      if (losingManage) {
+        const adminCount = members
+          .members()
+          .filter((m) => m.permissions.includes('members.manage')).length;
+        if (adminCount <= 1) {
+          return c.json(
+            {
+              error:
+                'cannot remove members.manage from the last admin — promote someone else first',
+            },
+            409,
+          );
+        }
       }
     }
-    // Clearing TOTP when switching human → agent keeps the secret
-    // from outliving its relevance. Agents don't have TOTP anyway;
-    // leaving it would be dead config.
-    const patch: { role?: string; userType?: UserType } = {};
+    const patch: UpdateMemberPatch = {};
     if (parsed.data.role !== undefined) patch.role = parsed.data.role;
-    if (parsed.data.userType !== undefined) patch.userType = parsed.data.userType;
+    if (parsed.data.instructions !== undefined) patch.instructions = parsed.data.instructions;
+    if (nextPermissions !== undefined) {
+      patch.permissions = nextPermissions;
+      patch.rawPermissions = nextRaw;
+    }
     try {
-      slots.updateUser(parsedName.data, patch);
+      members.updateMember(parsedName.data, patch);
     } catch (err) {
-      if (err instanceof UserLoadError) return c.json({ error: err.message }, 400);
+      if (err instanceof MemberLoadError) return c.json({ error: err.message }, 400);
       throw err;
     }
-    if (parsed.data.userType !== undefined && !isHuman(parsed.data.userType)) {
-      slots.setTotpSecret(parsedName.data, null);
-    }
-    persistUsers();
-    const updated = slots.findByName(parsedName.data);
+    persistMembers();
+    const updated = members.findByName(parsedName.data);
     if (!updated) {
-      return c.json({ error: `user vanished after update: ${parsedName.data}` }, 500);
+      return c.json({ error: `member vanished after update: ${parsedName.data}` }, 500);
     }
-    logger.info('user updated', { name: updated.name, patch, updatedBy: user.name });
-    return c.json({
-      name: updated.name,
-      role: updated.role,
-      userType: updated.userType,
-    } as Teammate);
+    logger.info('member updated', { name: updated.name, patch, updatedBy: member.name });
+    return c.json(loadedToMember(updated));
   });
 
-  app.delete(`${PATHS.users}/:name`, auth, (c) => {
-    const user = c.get('user');
-    if (user.userType !== 'admin') {
-      return c.json({ error: 'only admins may delete users' }, 403);
+  app.delete(`${PATHS.members}/:name`, auth, (c) => {
+    const member = c.get('member');
+    if (!hasPermission(member.permissions, 'members.manage')) {
+      return c.json({ error: 'deleting members requires the members.manage permission' }, 403);
     }
-    if (!persistUsers) {
-      return c.json({ error: 'user deletion is not available (persistUsers missing)' }, 501);
+    if (!persistMembers) {
+      return c.json({ error: 'member deletion is not available (persistMembers missing)' }, 501);
     }
     const targetRaw = c.req.param('name');
     const parsedName = NameSchema.safeParse(targetRaw);
-    if (!parsedName.success) return c.json({ error: 'invalid user name' }, 400);
-    const target = slots.findByName(parsedName.data);
-    if (!target) return c.json({ error: `no such user: ${parsedName.data}` }, 404);
-    // Last-admin guard: you can't delete the only admin. Promoting
-    // another user first is the explicit recovery path.
-    if (target.userType === 'admin') {
-      const adminCount = slots.slots().filter((s) => s.userType === 'admin').length;
+    if (!parsedName.success) return c.json({ error: 'invalid member name' }, 400);
+    const target = members.findByName(parsedName.data);
+    if (!target) return c.json({ error: `no such member: ${parsedName.data}` }, 404);
+    if (target.permissions.includes('members.manage')) {
+      const adminCount = members
+        .members()
+        .filter((m) => m.permissions.includes('members.manage')).length;
       if (adminCount <= 1) {
-        return c.json({ error: 'cannot delete the last admin — promote another user first' }, 409);
+        return c.json({ error: 'cannot delete the last admin — promote someone else first' }, 409);
       }
     }
     try {
-      slots.removeUser(parsedName.data);
+      members.removeMember(parsedName.data);
     } catch (err) {
-      if (err instanceof UserLoadError) return c.json({ error: err.message }, 404);
+      if (err instanceof MemberLoadError) return c.json({ error: err.message }, 404);
       throw err;
     }
-    persistUsers();
-    logger.info('user deleted', { name: parsedName.data, deletedBy: user.name });
+    persistMembers();
+    logger.info('member deleted', { name: parsedName.data, deletedBy: member.name });
     return c.body(null, 204);
   });
 
-  app.post(`${PATHS.users}/:name/rotate-token`, auth, (c) => {
-    const user = c.get('user');
-    if (!persistUsers) {
-      return c.json({ error: 'rotate-token is not available (persistUsers missing)' }, 501);
+  app.post(`${PATHS.members}/:name/rotate-token`, auth, (c) => {
+    const member = c.get('member');
+    if (!persistMembers) {
+      return c.json({ error: 'rotate-token is not available (persistMembers missing)' }, 501);
     }
     const targetRaw = c.req.param('name');
     const parsedName = NameSchema.safeParse(targetRaw);
-    if (!parsedName.success) return c.json({ error: 'invalid user name' }, 400);
-    const target = slots.findByName(parsedName.data);
-    if (!target) return c.json({ error: `no such user: ${parsedName.data}` }, 404);
-    if (user.userType !== 'admin' && user.name !== target.name) {
-      return c.json({ error: 'rotate-token requires admin, or self' }, 403);
+    if (!parsedName.success) return c.json({ error: 'invalid member name' }, 400);
+    const target = members.findByName(parsedName.data);
+    if (!target) return c.json({ error: `no such member: ${parsedName.data}` }, 404);
+    if (!hasPermission(member.permissions, 'members.manage') && member.name !== target.name) {
+      return c.json({ error: 'rotate-token requires members.manage, or self' }, 403);
     }
-    const token = generateUserToken();
+    const token = generateMemberToken();
     try {
-      slots.rotateToken(parsedName.data, token);
+      members.rotateToken(parsedName.data, token);
     } catch (err) {
-      if (err instanceof UserLoadError) return c.json({ error: err.message }, 404);
+      if (err instanceof MemberLoadError) return c.json({ error: err.message }, 404);
       throw err;
     }
-    persistUsers();
-    logger.info('token rotated', { name: parsedName.data, rotatedBy: user.name });
+    persistMembers();
+    logger.info('token rotated', { name: parsedName.data, rotatedBy: member.name });
     return c.json({ token });
   });
 
-  app.post(`${PATHS.users}/:name/enroll-totp`, auth, (c) => {
-    const user = c.get('user');
-    if (!persistUsers) {
-      return c.json({ error: 'enroll-totp is not available (persistUsers missing)' }, 501);
+  app.post(`${PATHS.members}/:name/enroll-totp`, auth, (c) => {
+    const member = c.get('member');
+    if (!persistMembers) {
+      return c.json({ error: 'enroll-totp is not available (persistMembers missing)' }, 501);
     }
     const targetRaw = c.req.param('name');
     const parsedName = NameSchema.safeParse(targetRaw);
-    if (!parsedName.success) return c.json({ error: 'invalid user name' }, 400);
-    const target = slots.findByName(parsedName.data);
-    if (!target) return c.json({ error: `no such user: ${parsedName.data}` }, 404);
-    if (user.userType !== 'admin' && user.name !== target.name) {
-      return c.json({ error: 'enroll-totp requires admin, or self' }, 403);
-    }
-    if (!isHuman(target.userType)) {
-      return c.json(
-        { error: `user '${target.name}' is a ${target.userType} and cannot enroll in TOTP` },
-        409,
-      );
+    if (!parsedName.success) return c.json({ error: 'invalid member name' }, 400);
+    const target = members.findByName(parsedName.data);
+    if (!target) return c.json({ error: `no such member: ${parsedName.data}` }, 404);
+    if (!hasPermission(member.permissions, 'members.manage') && member.name !== target.name) {
+      return c.json({ error: 'enroll-totp requires members.manage, or self' }, 403);
     }
     const secret = generateSecret();
-    slots.setTotpSecret(parsedName.data, secret);
-    persistUsers();
-    logger.info('totp enrolled', { name: parsedName.data, enrolledBy: user.name });
+    members.setTotpSecret(parsedName.data, secret);
+    persistMembers();
+    logger.info('totp enrolled', { name: parsedName.data, enrolledBy: member.name });
     return c.json({
       totpSecret: secret,
       totpUri: otpauthUri({
@@ -1741,7 +1704,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         return c.json({ error: 'invalid path', details: parsedPath.error.issues }, 400);
       }
       try {
-        const entries = fsStore.list(parsedPath.data, toViewer(c.get('user')));
+        const entries = fsStore.list(parsedPath.data, toViewer(c.get('member')));
         return c.json({ entries });
       } catch (err) {
         return mapFsError(c, err);
@@ -1756,7 +1719,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         return c.json({ error: 'invalid path', details: parsedPath.error.issues }, 400);
       }
       try {
-        const entry = fsStore.stat(parsedPath.data, toViewer(c.get('user')));
+        const entry = fsStore.stat(parsedPath.data, toViewer(c.get('member')));
         if (!entry) return c.json({ error: `no such path: ${parsedPath.data}` }, 404);
         return c.json({ entry });
       } catch (err) {
@@ -1765,7 +1728,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     });
 
     app.get(PATHS.fsShared, auth, (c) => {
-      const entries = fsStore.listShared(toViewer(c.get('user')));
+      const entries = fsStore.listShared(toViewer(c.get('member')));
       return c.json({ entries });
     });
 
@@ -1785,7 +1748,10 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         return c.json({ error: 'invalid path', details: parsedPath.error.issues }, 400);
       }
       try {
-        const { entry, stream } = fsStore.openReadStream(parsedPath.data, toViewer(c.get('user')));
+        const { entry, stream } = fsStore.openReadStream(
+          parsedPath.data,
+          toViewer(c.get('member')),
+        );
         const webStream = nodeStreamToWebStream(stream);
         return new Response(webStream, {
           status: 200,
@@ -1823,7 +1789,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         const result = await fsStore.writeFile({
           path: parsedPath.data,
           mimeType: mime,
-          writer: toViewer(c.get('user')),
+          writer: toViewer(c.get('member')),
           source: nodeStream,
           collision: parsedCollide.data,
           maxSize: maxFileSize,
@@ -1842,7 +1808,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
       try {
         const recursive = parsed.data.recursive ?? false;
-        const entry = fsStore.mkdir(parsed.data.path, toViewer(c.get('user')), { recursive });
+        const entry = fsStore.mkdir(parsed.data.path, toViewer(c.get('member')), { recursive });
         return c.json({ entry });
       } catch (err) {
         return mapFsError(c, err);
@@ -1859,7 +1825,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       }
       const recursive = recursiveRaw === 'true' || recursiveRaw === '1';
       try {
-        await fsStore.remove(parsedPath.data, toViewer(c.get('user')), { recursive });
+        await fsStore.remove(parsedPath.data, toViewer(c.get('member')), { recursive });
         return c.body(null, 204);
       } catch (err) {
         return mapFsError(c, err);
@@ -1873,7 +1839,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
         return c.json({ error: 'invalid move payload', details: parsed.error.issues }, 400);
       }
       try {
-        const entry = fsStore.move(parsed.data.from, parsed.data.to, toViewer(c.get('user')));
+        const entry = fsStore.move(parsed.data.from, parsed.data.to, toViewer(c.get('member')));
         return c.json({ entry });
       } catch (err) {
         return mapFsError(c, err);
@@ -1976,8 +1942,8 @@ function checkObjectiveContext(
   });
 }
 
-/** Re-export so `LoadedUser` consumers don't have to dig into slots.ts. */
-export type { LoadedUser };
+/** Re-export so `LoadedMember` consumers don't have to dig into slots.ts. */
+export type { LoadedMember };
 
 /**
  * Validate + canonicalize a list of attachment claims. Server
@@ -2067,13 +2033,28 @@ function grantAttachmentsTo(
 }
 
 /**
- * Project a LoadedUser onto the smaller shape the filesystem layer
+ * Project a LoadedMember onto the smaller shape the filesystem layer
  * consumes. The store only needs name + userType for permission
  * checks — keeping the surface lean makes it trivial to unit-test
  * without constructing a full user record.
  */
-function toViewer(user: LoadedUser): ViewerContext {
-  return { name: user.name, userType: user.userType };
+function toViewer(member: LoadedMember): ViewerContext {
+  return { name: member.name, permissions: member.permissions };
+}
+
+/** Project a LoadedMember into the public `Member` wire shape. */
+function loadedToMember(m: LoadedMember): {
+  name: string;
+  role: Role;
+  permissions: readonly Permission[];
+  instructions: string;
+} {
+  return {
+    name: m.name,
+    role: m.role,
+    permissions: m.permissions,
+    instructions: m.instructions,
+  };
 }
 
 /**
@@ -2117,6 +2098,7 @@ function nodeStreamToWebStream(stream: Readable): ReadableStream<Uint8Array> {
  * the characters `"\` are replaced with `_` to keep the header safe.
  */
 function encodeFilenameForHeader(name: string): string {
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentional — strip control chars from header values
   return name.replace(/[\x00-\x1f"\\]/g, '_');
 }
 

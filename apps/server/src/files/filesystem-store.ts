@@ -28,7 +28,7 @@
  */
 
 import type { Readable } from 'node:stream';
-import type { FsEntry, UserType } from '@agentc7/sdk/types';
+import type { FsEntry, Permission } from '@agentc7/sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from '../db.js';
 import type { BlobStore } from './blob-store.js';
 import { FsError } from './errors.js';
@@ -110,7 +110,7 @@ function rowToEntry(row: FsEntryRow): FsEntry {
 
 export interface ViewerContext {
   name: string;
-  userType: UserType;
+  permissions: readonly Permission[];
 }
 
 export type WriteCollisionStrategy = 'error' | 'overwrite' | 'suffix';
@@ -247,13 +247,13 @@ class SqliteFilesystemStore implements FilesystemStore {
   }
 
   private canRead(path: string, viewer: ViewerContext): boolean {
-    if (viewer.userType === 'admin') return true;
+    if (viewer.permissions.includes('members.manage')) return true;
     if (this.ownsPath(path, viewer)) return true;
     return this.hasGrant(path, viewer.name);
   }
 
   private canWrite(path: string, viewer: ViewerContext): boolean {
-    if (viewer.userType === 'admin') return true;
+    if (viewer.permissions.includes('members.manage')) return true;
     return this.ownsPath(path, viewer);
   }
 
@@ -279,17 +279,17 @@ class SqliteFilesystemStore implements FilesystemStore {
       // their own. We query all top-level directories and filter rather
       // than eagerly materializing homes for every user on the team.
       const rows = this.listHomesStmt.all() as unknown as FsEntryRow[];
-      if (viewer.userType === 'admin') return rows.map(rowToEntry);
+      if (viewer.permissions.includes('members.manage')) return rows.map(rowToEntry);
       return rows.filter((r) => r.owner === viewer.name).map(rowToEntry);
     }
 
-    if (viewer.userType !== 'admin' && !this.ownsPath(normalized, viewer)) {
+    if (!viewer.permissions.includes('members.manage') && !this.ownsPath(normalized, viewer)) {
       throw new FsError('forbidden', `cannot list ${normalized}`);
     }
     const target = this.getEntryStmt.get(normalized) as FsEntryRow | undefined;
     if (!target) {
       // Owner listing their own non-existent home is fine — return empty.
-      if (this.ownsPath(normalized, viewer) || viewer.userType === 'admin') {
+      if (this.ownsPath(normalized, viewer) || viewer.permissions.includes('members.manage')) {
         return [];
       }
       throw new FsError('not_found', `no such path: ${normalized}`);

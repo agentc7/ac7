@@ -4,16 +4,16 @@
  */
 
 import { Broker, InMemoryEventLog } from '@agentc7/core';
-import type { Message, Role, Team } from '@agentc7/sdk/types';
+import type { Message, Team } from '@agentc7/sdk/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
+import { createMemberStore } from '../src/members.js';
 import { dispatchPush } from '../src/push/dispatch.js';
 import { shouldPush } from '../src/push/policy.js';
 import { PushSubscriptionStore } from '../src/push/store.js';
 import { generateVapidKeys } from '../src/push/vapid.js';
 import { SessionStore } from '../src/sessions.js';
-import { createUserStore } from '../src/slots.js';
 
 // Mock web-push sendNotification so no real network traffic happens.
 //
@@ -72,11 +72,7 @@ const TEAM: Team = {
   name: 'alpha-team',
   directive: 'Test push notifications.',
   brief: '',
-};
-
-const ROLES: Record<string, Role> = {
-  'individual-contributor': { description: '', instructions: '' },
-  implementer: { description: '', instructions: '' },
+  permissionPresets: {},
 };
 
 beforeEach(() => {
@@ -124,33 +120,33 @@ describe('PushSubscriptionStore', () => {
   it('upserts a subscription and lists it by slot', () => {
     const store = new PushSubscriptionStore(openDatabase(':memory:'));
     const row = store.upsert({
-      userName: 'ACTUAL',
+      memberName: 'ACTUAL',
       endpoint: 'https://fcm.example/abc',
       p256dh: 'pk-data',
       auth: 'auth-data',
       userAgent: 'test-ua',
     });
     expect(row.id).toBeGreaterThan(0);
-    expect(store.listForUser('ACTUAL')).toHaveLength(1);
+    expect(store.listForMember('ACTUAL')).toHaveLength(1);
   });
 
   it('idempotently replaces on duplicate endpoint', () => {
     const store = new PushSubscriptionStore(openDatabase(':memory:'));
     store.upsert({
-      userName: 'ACTUAL',
+      memberName: 'ACTUAL',
       endpoint: 'https://fcm.example/same',
       p256dh: 'v1',
       auth: 'v1',
       userAgent: null,
     });
     store.upsert({
-      userName: 'ACTUAL',
+      memberName: 'ACTUAL',
       endpoint: 'https://fcm.example/same',
       p256dh: 'v2',
       auth: 'v2',
       userAgent: null,
     });
-    const subs = store.listForUser('ACTUAL');
+    const subs = store.listForMember('ACTUAL');
     expect(subs).toHaveLength(1);
     expect(subs[0]?.p256dh).toBe('v2');
   });
@@ -158,35 +154,35 @@ describe('PushSubscriptionStore', () => {
   it('deleteForUser scopes by name', () => {
     const store = new PushSubscriptionStore(openDatabase(':memory:'));
     const row = store.upsert({
-      userName: 'ACTUAL',
+      memberName: 'ACTUAL',
       endpoint: 'https://fcm.example/only',
       p256dh: 'x',
       auth: 'x',
       userAgent: null,
     });
     // Try to delete as a different slot — should not remove the row.
-    store.deleteForUser(row.id, 'build-bot');
-    expect(store.listForUser('ACTUAL')).toHaveLength(1);
+    store.deleteForMember(row.id, 'build-bot');
+    expect(store.listForMember('ACTUAL')).toHaveLength(1);
 
-    store.deleteForUser(row.id, 'ACTUAL');
-    expect(store.listForUser('ACTUAL')).toHaveLength(0);
+    store.deleteForMember(row.id, 'ACTUAL');
+    expect(store.listForMember('ACTUAL')).toHaveLength(0);
   });
 
   it('markSuccess and markError update timestamps', () => {
     const store = new PushSubscriptionStore(openDatabase(':memory:'), { now: () => 1234 });
     const row = store.upsert({
-      userName: 'ACTUAL',
+      memberName: 'ACTUAL',
       endpoint: 'https://fcm.example/err',
       p256dh: 'x',
       auth: 'x',
       userAgent: null,
     });
     store.markSuccess(row.id);
-    const afterSuccess = store.listForUser('ACTUAL')[0];
+    const afterSuccess = store.listForMember('ACTUAL')[0];
     expect(afterSuccess?.lastSuccessAt).toBe(1234);
 
     store.markError(row.id, 429);
-    const afterErr = store.listForUser('ACTUAL')[0];
+    const afterErr = store.listForMember('ACTUAL')[0];
     expect(afterErr?.lastErrorCode).toBe(429);
   });
 });
@@ -241,12 +237,22 @@ describe('dispatchPush', () => {
     sendNotification.mockResolvedValue({ statusCode: 201 });
     const db = openDatabase(':memory:');
     const store = new PushSubscriptionStore(db);
-    const slots = createUserStore([
-      { name: 'ACTUAL', role: 'individual-contributor', token: OP_TOKEN },
-      { name: 'build-bot', role: 'implementer', token: BOT_TOKEN },
+    const members = createMemberStore([
+      {
+        name: 'ACTUAL',
+        role: { title: 'commander', description: '' },
+        permissions: ['members.manage'],
+        token: OP_TOKEN,
+      },
+      {
+        name: 'build-bot',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
+        token: BOT_TOKEN,
+      },
     ]);
     store.upsert({
-      userName: 'ACTUAL',
+      memberName: 'ACTUAL',
       endpoint: 'https://fcm.example/actual',
       p256dh: 'x',
       auth: 'x',
@@ -256,13 +262,13 @@ describe('dispatchPush', () => {
     const msg = mkMsg({ from: 'build-bot', to: 'ACTUAL', body: 'hey' });
     await dispatchPush(msg, {
       sessions: store,
-      slots,
+      members,
       logger: noopLogger(),
       isLive: () => false,
     });
 
     expect(sendNotification).toHaveBeenCalledTimes(1);
-    const after = store.listForUser('ACTUAL');
+    const after = store.listForMember('ACTUAL');
     expect(after[0]?.lastSuccessAt).toBeGreaterThan(0);
   });
 
@@ -271,12 +277,22 @@ describe('dispatchPush', () => {
       new MockWebPushError('gone', 410, {}, 'body', 'https://fcm.example/actual'),
     );
     const store = new PushSubscriptionStore(openDatabase(':memory:'));
-    const slots = createUserStore([
-      { name: 'ACTUAL', role: 'individual-contributor', token: OP_TOKEN },
-      { name: 'build-bot', role: 'implementer', token: BOT_TOKEN },
+    const members = createMemberStore([
+      {
+        name: 'ACTUAL',
+        role: { title: 'commander', description: '' },
+        permissions: ['members.manage'],
+        token: OP_TOKEN,
+      },
+      {
+        name: 'build-bot',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
+        token: BOT_TOKEN,
+      },
     ]);
     store.upsert({
-      userName: 'ACTUAL',
+      memberName: 'ACTUAL',
       endpoint: 'https://fcm.example/actual',
       p256dh: 'x',
       auth: 'x',
@@ -286,12 +302,12 @@ describe('dispatchPush', () => {
     const msg = mkMsg({ from: 'build-bot', to: 'ACTUAL' });
     await dispatchPush(msg, {
       sessions: store,
-      slots,
+      members,
       logger: noopLogger(),
       isLive: () => false,
     });
 
-    expect(store.listForUser('ACTUAL')).toHaveLength(0);
+    expect(store.listForMember('ACTUAL')).toHaveLength(0);
   });
 
   it('marks subscription with last_error_code on non-terminal failures', async () => {
@@ -299,12 +315,22 @@ describe('dispatchPush', () => {
       new MockWebPushError('too many', 429, {}, 'body', 'https://fcm.example/actual'),
     );
     const store = new PushSubscriptionStore(openDatabase(':memory:'));
-    const slots = createUserStore([
-      { name: 'ACTUAL', role: 'individual-contributor', token: OP_TOKEN },
-      { name: 'build-bot', role: 'implementer', token: BOT_TOKEN },
+    const members = createMemberStore([
+      {
+        name: 'ACTUAL',
+        role: { title: 'commander', description: '' },
+        permissions: ['members.manage'],
+        token: OP_TOKEN,
+      },
+      {
+        name: 'build-bot',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
+        token: BOT_TOKEN,
+      },
     ]);
     store.upsert({
-      userName: 'ACTUAL',
+      memberName: 'ACTUAL',
       endpoint: 'https://fcm.example/actual',
       p256dh: 'x',
       auth: 'x',
@@ -313,24 +339,34 @@ describe('dispatchPush', () => {
 
     await dispatchPush(mkMsg({ from: 'build-bot', to: 'ACTUAL' }), {
       sessions: store,
-      slots,
+      members,
       logger: noopLogger(),
       isLive: () => false,
     });
 
-    const sub = store.listForUser('ACTUAL')[0];
+    const sub = store.listForMember('ACTUAL')[0];
     expect(sub?.lastErrorCode).toBe(429);
   });
 
   it('skips recipients with live SSE tabs (no redundant buzz)', async () => {
     sendNotification.mockResolvedValue({ statusCode: 201 });
     const store = new PushSubscriptionStore(openDatabase(':memory:'));
-    const slots = createUserStore([
-      { name: 'ACTUAL', role: 'individual-contributor', token: OP_TOKEN },
-      { name: 'build-bot', role: 'implementer', token: BOT_TOKEN },
+    const members = createMemberStore([
+      {
+        name: 'ACTUAL',
+        role: { title: 'commander', description: '' },
+        permissions: ['members.manage'],
+        token: OP_TOKEN,
+      },
+      {
+        name: 'build-bot',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
+        token: BOT_TOKEN,
+      },
     ]);
     store.upsert({
-      userName: 'ACTUAL',
+      memberName: 'ACTUAL',
       endpoint: 'https://fcm.example/actual',
       p256dh: 'x',
       auth: 'x',
@@ -339,7 +375,7 @@ describe('dispatchPush', () => {
 
     await dispatchPush(mkMsg({ from: 'build-bot', to: 'ACTUAL' }), {
       sessions: store,
-      slots,
+      members,
       logger: noopLogger(),
       isLive: (cs) => cs === 'ACTUAL',
     });
@@ -357,24 +393,34 @@ describe('push HTTP endpoints', () => {
       now: () => 1_700_000_000_000,
       idFactory: () => 'msg-fixed',
     });
-    const slots = createUserStore([
-      { name: 'ACTUAL', role: 'individual-contributor', token: OP_TOKEN },
-      { name: 'build-bot', role: 'implementer', token: BOT_TOKEN },
+    const members = createMemberStore([
+      {
+        name: 'ACTUAL',
+        role: { title: 'commander', description: '' },
+        permissions: ['members.manage'],
+        token: OP_TOKEN,
+      },
+      {
+        name: 'build-bot',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
+        token: BOT_TOKEN,
+      },
     ]);
     const db = openDatabase(':memory:');
     const sessions = new SessionStore(db);
     const pushStore = new PushSubscriptionStore(db);
     const app = createApp({
       broker,
-      slots,
+      members,
       sessions,
       team: TEAM,
-      roles: ROLES,
+
       version: '0.0.0',
       logger: noopLogger(),
       ...(withPush ? { pushStore, vapidPublicKey: `BK${'A'.repeat(85)}` } : {}),
     });
-    return { app, pushStore, slots };
+    return { app, pushStore, members };
   }
 
   it('GET /push/vapid-public-key returns the key anonymously when push is enabled', async () => {
@@ -409,7 +455,7 @@ describe('push HTTP endpoints', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { id: number; endpoint: string };
     expect(body.id).toBeGreaterThan(0);
-    expect(pushStore.listForUser('ACTUAL')).toHaveLength(1);
+    expect(pushStore.listForMember('ACTUAL')).toHaveLength(1);
   });
 
   it('POST /push/subscriptions rejects unauthenticated callers', async () => {
@@ -441,7 +487,7 @@ describe('push HTTP endpoints', () => {
   it('DELETE /push/subscriptions/:id scoped by authed slot', async () => {
     const { app, pushStore } = makeApp(true);
     const row = pushStore.upsert({
-      userName: 'ACTUAL',
+      memberName: 'ACTUAL',
       endpoint: 'https://fcm.example/toDel',
       p256dh: 'x',
       auth: 'x',
@@ -454,7 +500,7 @@ describe('push HTTP endpoints', () => {
       headers: { Authorization: `Bearer ${BOT_TOKEN}` },
     });
     expect(wrongRes.status).toBe(204);
-    expect(pushStore.listForUser('ACTUAL')).toHaveLength(1);
+    expect(pushStore.listForMember('ACTUAL')).toHaveLength(1);
 
     // ACTUAL can.
     const rightRes = await app.request(`/push/subscriptions/${row.id}`, {
@@ -462,6 +508,6 @@ describe('push HTTP endpoints', () => {
       headers: { Authorization: `Bearer ${OP_TOKEN}` },
     });
     expect(rightRes.status).toBe(204);
-    expect(pushStore.listForUser('ACTUAL')).toHaveLength(0);
+    expect(pushStore.listForMember('ACTUAL')).toHaveLength(0);
   });
 });

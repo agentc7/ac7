@@ -41,12 +41,12 @@ const MAX_RECENT_LIMIT = 500;
  * channel notifications, not baked into tool metadata.
  */
 export function defineTools(briefing: BriefingResponse): Tool[] {
-  const { name, role, userType, team, teammates } = briefing;
-  const identity = `${name} (role: ${role}, rank: ${userType})`;
+  const { name, role, team, teammates } = briefing;
+  const identity = `${name} (role: ${role.title})`;
   const others = teammates.filter((t) => t.name !== name);
   const teammateList =
     others.length > 0
-      ? others.map((t) => `${t.name} (${t.role})`).join(', ')
+      ? others.map((t) => `${t.name} (${t.role.title})`).join(', ')
       : '(no other teammates currently defined)';
 
   return [
@@ -416,18 +416,27 @@ function buildFilesystemTools(name: string): Tool[] {
 }
 
 function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
-  const { userType, team, name, teammates } = briefing;
-  if (userType === 'agent') return [];
+  const { permissions, team, name, teammates } = briefing;
+  const canCreate = permissions.includes('objectives.create');
+  const canCancel = permissions.includes('objectives.cancel');
+  const canWatch = permissions.includes('objectives.watch');
+  const canReassign = permissions.includes('objectives.reassign');
+  const canManageMembers = permissions.includes('members.manage');
+  if (!canCreate && !canCancel && !canWatch && !canReassign && !canManageMembers) {
+    return [];
+  }
 
   const others = teammates.filter((t) => t.name !== name);
   const teammateList =
     others.length > 0
-      ? others.map((t) => `${t.name} (${t.role})`).join(', ')
+      ? others.map((t) => `${t.name} (${t.role.title})`).join(', ')
       : '(no other teammates currently defined)';
 
   const tools: Tool[] = [];
 
-  // objectives_create — both director and manager
+  if (!canCreate) return tools;
+
+  // objectives_create — requires objectives.create
   tools.push({
     name: 'objectives_create',
     description:
@@ -476,11 +485,10 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
     },
   });
 
-  // objectives_cancel — director (any) or originating manager (own)
-  const cancelScope =
-    userType === 'admin'
-      ? 'You can cancel any non-terminal objective on the team.'
-      : "You can cancel objectives you originated (created). Attempting to cancel someone else's objective will be refused by the server.";
+  // objectives_cancel — originator always, or members with objectives.cancel
+  const cancelScope = canCancel
+    ? 'You can cancel any non-terminal objective on the team.'
+    : "You can cancel objectives you originated (created). Attempting to cancel someone else's objective will be refused by the server.";
   tools.push({
     name: 'objectives_cancel',
     description:
@@ -503,11 +511,10 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
     },
   });
 
-  // objectives_watchers — director (any) or originating manager (own)
-  const watchersScope =
-    userType === 'admin'
-      ? 'You can manage watchers on any objective on the team.'
-      : "You can manage watchers on objectives you originated. Attempting to modify watchers on someone else's objective will be refused by the server.";
+  // objectives_watchers — originator always, or members with objectives.watch
+  const watchersScope = canWatch
+    ? 'You can manage watchers on any objective on the team.'
+    : "You can manage watchers on objectives you originated. Attempting to modify watchers on someone else's objective will be refused by the server.";
   tools.push({
     name: 'objectives_watchers',
     description:
@@ -535,8 +542,8 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
     },
   });
 
-  // objectives_reassign — director only
-  if (userType === 'admin') {
+  // objectives_reassign — requires objectives.reassign
+  if (canReassign) {
     tools.push({
       name: 'objectives_reassign',
       description:
@@ -642,7 +649,11 @@ async function handleRoster(
     const conn = connectedByName.get(t.name) ?? 0;
     const self = t.name === briefing.name ? ' (you)' : '';
     const state = conn > 0 ? `connected=${conn}` : 'offline';
-    const auth = t.userType !== 'agent' ? ` [${t.userType}]` : '';
+    const auth = t.permissions.includes('members.manage')
+      ? ' [admin]'
+      : t.permissions.includes('objectives.create')
+        ? ' [operator]'
+        : '';
     return `- ${t.name}${self} [${t.role}]${auth} ${state}`;
   });
   return textResult(`team ${briefing.team.name} roster:\n${lines.join('\n')}`);
@@ -907,9 +918,9 @@ async function handleObjectivesCreate(
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
   if (
-    briefing.userType !== 'admin' &&
-    briefing.userType !== 'operator' &&
-    briefing.userType !== 'lead-agent'
+    !briefing.permissions.includes('members.manage') &&
+    !briefing.permissions.includes('objectives.create') &&
+    !briefing.permissions.includes('objectives.create')
   ) {
     return errorResult('objectives_create: requires director or manager authority on the team');
   }
@@ -956,9 +967,9 @@ async function handleObjectivesCancel(
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
   if (
-    briefing.userType !== 'admin' &&
-    briefing.userType !== 'operator' &&
-    briefing.userType !== 'lead-agent'
+    !briefing.permissions.includes('members.manage') &&
+    !briefing.permissions.includes('objectives.create') &&
+    !briefing.permissions.includes('objectives.create')
   ) {
     return errorResult('objectives_cancel: requires director or manager authority on the team');
   }
@@ -975,9 +986,9 @@ async function handleObjectivesWatchers(
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
   if (
-    briefing.userType !== 'admin' &&
-    briefing.userType !== 'operator' &&
-    briefing.userType !== 'lead-agent'
+    !briefing.permissions.includes('members.manage') &&
+    !briefing.permissions.includes('objectives.create') &&
+    !briefing.permissions.includes('objectives.create')
   ) {
     return errorResult('objectives_watchers: requires director or manager authority on the team');
   }
@@ -1008,7 +1019,7 @@ async function handleObjectivesReassign(
   brokerClient: BrokerClient,
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
-  if (briefing.userType !== 'admin') {
+  if (!briefing.permissions.includes('members.manage')) {
     return errorResult('objectives_reassign: requires director authority on the team');
   }
   const id = typeof args.id === 'string' ? args.id : '';

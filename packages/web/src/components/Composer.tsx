@@ -230,6 +230,7 @@ export function Composer({ viewer }: ComposerProps) {
   };
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: drop zone wraps composer; keyboard users use the "Browse files" button
     <div
       class="flex-shrink-0"
       style={`background:${dragging.value ? 'var(--bg-alt)' : 'var(--ice)'};border-top:1px solid var(--rule);padding:12px max(0.75rem,env(safe-area-inset-right)) max(0.75rem,env(safe-area-inset-bottom)) max(0.75rem,env(safe-area-inset-left));overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation;transition:background 120ms`}

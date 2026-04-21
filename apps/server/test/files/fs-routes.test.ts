@@ -11,13 +11,13 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Broker, InMemoryEventLog } from '@agentc7/core';
-import type { FsEntry, Role, Team } from '@agentc7/sdk/types';
+import type { FsEntry, Team } from '@agentc7/sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
+import { createMemberStore } from '../../src/members.js';
 import { SessionStore } from '../../src/sessions.js';
-import { createUserStore } from '../../src/slots.js';
 
 const ALICE_TOKEN = 'ac7_test_alice_secret';
 const BOB_TOKEN = 'ac7_test_bob_secret';
@@ -27,11 +27,10 @@ const TEAM: Team = {
   name: 'files-team',
   directive: 'Exercise filesystem endpoints.',
   brief: '',
+  permissionPresets: {},
 };
 
-const ROLES: Record<string, Role> = {
-  worker: { description: '', instructions: '' },
-};
+const WORKER_ROLE = { title: 'worker', description: '' };
 
 const tmpDirs: string[] = [];
 
@@ -47,29 +46,33 @@ function makeApp() {
     now: () => 1_700_000_000_000,
     idFactory: () => 'msg-fixed',
   });
-  const slots = createUserStore([
-    { name: 'alice', role: 'worker', token: ALICE_TOKEN },
-    { name: 'bob', role: 'worker', token: BOB_TOKEN },
-    { name: 'diana', role: 'worker', userType: 'admin', token: DIRECTOR_TOKEN },
+  const members = createMemberStore([
+    { name: 'alice', role: WORKER_ROLE, permissions: [], token: ALICE_TOKEN },
+    { name: 'bob', role: WORKER_ROLE, permissions: [], token: BOB_TOKEN },
+    {
+      name: 'diana',
+      role: WORKER_ROLE,
+      permissions: ['members.manage'],
+      token: DIRECTOR_TOKEN,
+    },
   ]);
-  // Pre-seed the broker with every slot so targeted pushes (bob is the
-  // to on the attachment-grant test) don't 404 on `broker.hasUser`.
-  broker.seedUsers(slots.slots());
+  // Pre-seed the broker with every member so targeted pushes don't 404
+  // on `broker.hasMember`.
+  broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db);
   const blobDir = mkdtempSync(join(tmpdir(), 'ac7-fsroute-'));
   tmpDirs.push(blobDir);
   const blobs = new LocalBlobStore(blobDir);
   const files = createSqliteFilesystemStore({ db, blobs });
-  for (const s of slots.slots()) {
-    files.ensureHome(s.name);
+  for (const m of members.members()) {
+    files.ensureHome(m.name);
   }
   const app = createApp({
     broker,
-    slots,
+    members,
     sessions,
     team: TEAM,
-    roles: ROLES,
     files,
     version: '0.0.0',
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },

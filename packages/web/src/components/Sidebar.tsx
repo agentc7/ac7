@@ -19,8 +19,8 @@
  * dot is the canonical .dot pattern. Unread badge is .badge.solid.
  */
 
-import type { Teammate, UserType } from '@agentc7/sdk/types';
-import { canManageUsers } from '@agentc7/sdk/types';
+import type { Teammate } from '@agentc7/sdk/types';
+import { hasPermission } from '@agentc7/sdk/types';
 import type { ComponentChildren } from 'preact';
 import { briefing } from '../lib/briefing.js';
 import { dmThreadKey, messagesByThread, PRIMARY_THREAD } from '../lib/messages.js';
@@ -33,10 +33,10 @@ import {
   isSidebarOpen,
   selectDmWith,
   selectFiles,
+  selectMembers,
   selectObjectivesList,
   selectOverview,
   selectThread,
-  selectUsers,
   view,
 } from '../lib/view.js';
 
@@ -58,11 +58,10 @@ function UnreadBadge({ count }: { count: number }) {
   );
 }
 
-/** Short tag for the teammate row. Plain agents have no tag. */
-function userTypeBadge(userType: UserType): string | null {
-  if (userType === 'admin') return 'A';
-  if (userType === 'operator') return 'OP';
-  if (userType === 'lead-agent') return 'LEAD';
+/** Short tag for the teammate row, summarizing their privilege level. */
+function privilegeBadge(permissions: readonly string[]): string | null {
+  if (permissions.includes('members.manage')) return 'A';
+  if (permissions.includes('objectives.create')) return 'OP';
   return null;
 }
 
@@ -88,8 +87,8 @@ export function Sidebar({ viewer }: SidebarProps) {
   const objectivesActive =
     v.kind === 'objectives-list' || v.kind === 'objective-detail' || v.kind === 'objective-create';
   const filesActive = v.kind === 'files';
-  const usersActive = v.kind === 'users';
-  const isAdmin = b !== null && canManageUsers(b.userType);
+  const membersActive = v.kind === 'members';
+  const isAdmin = b !== null && hasPermission(b.permissions, 'members.manage');
   const activeObjectiveCount = objectives.value.filter(
     (o) => o.assignee === viewer && (o.status === 'active' || o.status === 'blocked'),
   ).length;
@@ -147,8 +146,8 @@ export function Sidebar({ viewer }: SidebarProps) {
           {isAdmin && (
             <NavLink
               label="Users"
-              active={usersActive}
-              onClick={selectUsers}
+              active={membersActive}
+              onClick={selectMembers}
               ariaLabel="Manage users"
             />
           )}
@@ -184,7 +183,7 @@ export function Sidebar({ viewer }: SidebarProps) {
             const online = connected > 0;
             const active = v.kind === 'thread' && v.key === dmThreadKey(t.name);
             const unread = unreadCount(dmThreadKey(t.name), viewer, lastRead, msgMap);
-            const auth = userTypeBadge(t.userType);
+            const auth = privilegeBadge(t.permissions);
             return (
               <li key={t.name}>
                 <button
@@ -195,7 +194,7 @@ export function Sidebar({ viewer }: SidebarProps) {
                       ? `Message ${t.name} (${online ? 'online' : 'offline'}, ${unread} unread)`
                       : `Message ${t.name} (${online ? 'online' : 'offline'})`
                   }
-                  title={`${t.name} · ${online ? 'online' : 'offline'} · ${t.role} · ${t.userType}`}
+                  title={`${t.name} · ${online ? 'online' : 'offline'} · ${t.role.title}`}
                   class={`navitem w-full${active ? ' active' : ''}`}
                   style={`text-align:left;font-weight:${active ? 700 : 500}`}
                 >

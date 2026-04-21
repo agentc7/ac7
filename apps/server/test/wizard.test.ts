@@ -1,25 +1,20 @@
 /**
  * First-run wizard tests.
  *
- * The wizard collects a team + first admin, auto-enrolls the admin
- * in TOTP, and writes the config. We stub stdin with a scripted
- * queue so each test drives the exact sequence of prompts the
- * wizard asks. Tests also pin the TOTP secret + clock so the
- * verification step is deterministic.
+ * The wizard collects a team + first admin member, auto-enrolls the
+ * admin in TOTP, and writes the config. Tests stub stdin with a
+ * scripted queue so each test drives the exact sequence of prompts
+ * the wizard asks, and pin the TOTP secret + clock so verification
+ * is deterministic.
  */
 
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadTeamConfigFromFile, UserLoadError } from '../src/slots.js';
+import { loadTeamConfigFromFile, MemberLoadError } from '../src/members.js';
 import { currentCode } from '../src/totp.js';
-import {
-  DEFAULT_ROLES,
-  type RunWizardOptions,
-  runFirstRunWizard,
-  type WizardIO,
-} from '../src/wizard.js';
+import { type RunWizardOptions, runFirstRunWizard, type WizardIO } from '../src/wizard.js';
 
 interface MockIO extends WizardIO {
   output: string[];
@@ -48,12 +43,7 @@ function mockIO(scripted: string[], isInteractive = true): MockIO {
   };
 }
 
-/**
- * A deterministic TOTP secret + clock pair. `currentCode(SECRET, T)`
- * produces a known code the mock IO can submit without guesswork.
- * 160 bits of entropy, base32-encoded, matching what `generateSecret`
- * would emit.
- */
+/** Deterministic TOTP secret + clock pair for reproducible code verification. */
 const FIXED_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
 const FIXED_NOW_MS = 1_700_000_000_000;
 
@@ -83,39 +73,40 @@ describe('runFirstRunWizard', () => {
     };
   }
 
+  // Happy-path script: team name (default), directive, brief (skip),
+  // admin name (default), role title (default), role description (skip),
+  // press enter after token banner, TOTP code.
+  function happyScript(code: string, overrides: Partial<Record<string, string>> = {}): string[] {
+    return [
+      overrides.teamName ?? '',
+      overrides.directive ?? 'Ship the payment service',
+      overrides.brief ?? '',
+      overrides.adminName ?? '',
+      overrides.roleTitle ?? '',
+      overrides.roleDescription ?? '',
+      '',
+      code,
+    ];
+  }
+
   it('creates a team + first admin and writes a loadable config', async () => {
     const configPath = tmpConfigPath();
     const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
-    const io = mockIO([
-      // team name (accept default 'my-team')
-      '',
-      // directive (required)
-      'Ship the payment service',
-      // brief (skip)
-      '',
-      // admin name (accept default 'admin')
-      '',
-      // admin role (accept default 'admin')
-      '',
-      // press enter after token banner
-      '',
-      // TOTP confirmation code
-      code,
-    ]);
+    const io = mockIO(happyScript(code));
 
     const config = await runFirstRunWizard(wizardOpts(configPath, io));
 
-    // Returned TeamConfig is fully populated.
     expect(config.team.name).toBe('my-team');
     expect(config.team.directive).toBe('Ship the payment service');
     expect(config.team.brief).toBe('');
+    expect(config.team.permissionPresets).toBeDefined();
     expect(config.store.size()).toBe(1);
     expect(config.store.hasAdmin()).toBe(true);
 
-    const admin = config.store.findByName('admin');
+    const admin = config.store.findByName('ACTUAL');
     expect(admin).toBeTruthy();
-    expect(admin?.userType).toBe('admin');
-    expect(admin?.role).toBe('admin');
+    expect(admin?.permissions).toContain('members.manage');
+    expect(admin?.role.title).toBe('commander');
     expect(admin?.totpSecret).toBe(FIXED_TOTP_SECRET);
     expect(admin?.totpLastCounter).toBe(0);
 
@@ -123,101 +114,75 @@ describe('runFirstRunWizard', () => {
     const reloaded = loadTeamConfigFromFile(configPath);
     expect(reloaded.store.size()).toBe(1);
     const resolved = reloaded.store.resolve('ac7_test_fixed_token');
-    expect(resolved?.name).toBe('admin');
-    expect(resolved?.userType).toBe('admin');
+    expect(resolved?.name).toBe('ACTUAL');
+    expect(resolved?.permissions).toContain('members.manage');
 
-    // No unconsumed scripted input — means the wizard asked exactly
-    // the seven prompts we set up.
     expect(io.remaining()).toBe(0);
   });
 
-  it('ships all four default roles in the generated config', async () => {
+  it('ships admin + operator permission presets in the generated config', async () => {
     const configPath = tmpConfigPath();
     const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
-    const io = mockIO(['', 'Ship', '', '', '', '', code]);
+    const io = mockIO(happyScript(code));
     const config = await runFirstRunWizard(wizardOpts(configPath, io));
 
-    const roleKeys = Object.keys(config.roles).sort();
-    expect(roleKeys).toEqual(['admin', 'implementer', 'reviewer', 'watcher']);
-    for (const key of Object.keys(DEFAULT_ROLES)) {
-      expect(config.roles[key]).toBeDefined();
-    }
+    expect(config.team.permissionPresets.admin).toBeDefined();
+    expect(config.team.permissionPresets.admin).toContain('members.manage');
+    expect(config.team.permissionPresets.operator).toContain('objectives.create');
   });
 
-  it('adds a placeholder entry for a custom role', async () => {
+  it('accepts a custom admin role title', async () => {
     const configPath = tmpConfigPath();
     const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
-    const io = mockIO([
-      '',
-      'Ship',
-      '',
-      'chief',
-      // custom role 'operator-general' (not in DEFAULT_ROLES)
-      'operator-general',
-      '',
-      code,
-    ]);
+    const io = mockIO(happyScript(code, { roleTitle: 'chief', roleDescription: 'Runs the ship' }));
     const config = await runFirstRunWizard(wizardOpts(configPath, io));
-    expect(config.roles['operator-general']).toBeDefined();
-    expect(config.roles['operator-general']?.description).toContain('custom role');
-    // The default roles still ship alongside the custom one.
-    expect(config.roles.admin).toBeDefined();
+
+    const admin = config.store.findByName('ACTUAL');
+    expect(admin?.role.title).toBe('chief');
+    expect(admin?.role.description).toBe('Runs the ship');
   });
 
   it('re-prompts on an invalid admin name and keeps going', async () => {
     const configPath = tmpConfigPath();
     const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
     const io = mockIO([
-      '',
-      'Ship',
-      '',
-      // invalid name — rejected
-      'has spaces',
-      // valid name
-      'chief',
-      '',
+      '', // team name
+      'Ship', // directive
+      '', // brief
+      'has spaces', // bad name, rejected
+      'chief', // good name
+      '', // role title (default)
+      '', // role description (skip)
       '',
       code,
     ]);
     const config = await runFirstRunWizard(wizardOpts(configPath, io));
     expect(config.store.findByName('chief')).toBeTruthy();
-    // Re-prompt emitted a helpful message.
     expect(io.output.some((l) => l.includes('alphanumeric with . _ -'))).toBe(true);
   });
 
   it('re-prompts on a bad TOTP code and succeeds on retry', async () => {
     const configPath = tmpConfigPath();
     const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
-    const io = mockIO([
-      '',
-      'Ship',
-      '',
-      '',
-      '',
-      '',
-      // first attempt — wrong code
-      '000000',
-      // second attempt — correct
-      code,
-    ]);
+    const io = mockIO([...happyScript('000000'), code]);
     const config = await runFirstRunWizard(wizardOpts(configPath, io));
     expect(config.store.size()).toBe(1);
     expect(io.output.some((l) => l.includes('try again'))).toBe(true);
   });
 
-  it('aborts with UserLoadError after repeated bad TOTP codes', async () => {
+  it('aborts with MemberLoadError after repeated bad TOTP codes', async () => {
     const configPath = tmpConfigPath();
-    const io = mockIO(['', 'Ship', '', '', '', '', '000000', '111111', '222222']);
+    const io = mockIO([...happyScript('000000'), '111111', '222222']);
     await expect(runFirstRunWizard(wizardOpts(configPath, io))).rejects.toBeInstanceOf(
-      UserLoadError,
+      MemberLoadError,
     );
   });
 
-  it('throws UserLoadError when the IO is non-interactive', async () => {
+  it('throws MemberLoadError when the IO is non-interactive', async () => {
     const configPath = tmpConfigPath();
     const io = mockIO([], false);
     await expect(runFirstRunWizard(wizardOpts(configPath, io))).rejects.toMatchObject({
-      name: 'UserLoadError',
+      name: 'MemberLoadError',
       message: expect.stringContaining('not a TTY'),
     });
   });
@@ -225,19 +190,19 @@ describe('runFirstRunWizard', () => {
   it('reloads the written config and resolves the plaintext token', async () => {
     const configPath = tmpConfigPath();
     const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
-    const io = mockIO(['', 'Ship', '', '', '', '', code]);
+    const io = mockIO(happyScript(code));
     await runFirstRunWizard(wizardOpts(configPath, io));
 
     const reloaded = loadTeamConfigFromFile(configPath);
     const resolved = reloaded.store.resolve('ac7_test_fixed_token');
     expect(resolved).toBeTruthy();
-    expect(resolved?.userType).toBe('admin');
+    expect(resolved?.permissions).toContain('members.manage');
 
-    // And the on-disk JSON shape: `users:` top-level array, single entry.
+    // And the on-disk JSON shape: `members:` top-level array, single entry.
     const raw = JSON.parse(readFileSync(configPath, 'utf8')) as {
-      users: Array<{ name: string; userType: string }>;
+      members: Array<{ name: string; permissions: string[] }>;
     };
-    expect(raw.users).toHaveLength(1);
-    expect(raw.users[0]?.userType).toBe('admin');
+    expect(raw.members).toHaveLength(1);
+    expect(raw.members[0]?.permissions).toContain('admin');
   });
 });

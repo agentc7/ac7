@@ -45,9 +45,8 @@ export async function runServeCommand(
   const config = await loadOrCreateTeamConfig(server, configPath, stdout);
 
   const running = await server.runServer({
-    slots: config.store,
+    members: config.store,
     team: config.team,
-    roles: config.roles,
     port,
     host,
     dbPath,
@@ -56,11 +55,11 @@ export async function runServeCommand(
     onListen: (info) => {
       stdout(
         `ac7-server listening on http://${info.address}:${info.port}\n` +
-          `  team: ${config.team.name}\n` +
-          `  directive:  ${config.team.directive}\n` +
-          `  config:   ${configPath}\n` +
-          `  db:       ${dbPath}\n` +
-          `  slots:    ${config.store.size()} (${config.store.names().join(', ')})`,
+          `  team:      ${config.team.name}\n` +
+          `  directive: ${config.team.directive}\n` +
+          `  config:    ${configPath}\n` +
+          `  db:        ${dbPath}\n` +
+          `  members:   ${config.store.size()} (${config.store.names().join(', ')})`,
       );
     },
   });
@@ -98,7 +97,7 @@ async function loadOrCreateTeamConfig(
     if (err instanceof server.ConfigNotFoundError) {
       return runWizardOrFail(server, configPath);
     }
-    if (err instanceof server.UserLoadError) {
+    if (err instanceof server.MemberLoadError) {
       throw new UsageError(`serve: ${err.message}`);
     }
     throw err;
@@ -122,7 +121,7 @@ async function runWizardOrFail(
   try {
     return await server.runFirstRunWizard({ configPath, io });
   } catch (err) {
-    if (err instanceof server.UserLoadError) {
+    if (err instanceof server.MemberLoadError) {
       throw new UsageError(`serve: ${err.message}`);
     }
     throw err;

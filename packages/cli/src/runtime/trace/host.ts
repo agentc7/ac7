@@ -30,6 +30,7 @@ import { extractEntries, type HttpExchange } from './anthropic.js';
 import { type Http1Exchange, Http1Reassembler } from './http1-reassembler.js';
 import { type CertPool, createCertPool, createTraceCa, type TraceCa } from './mitm/ca.js';
 import { type ProxyRelay, startProxyRelay } from './proxy.js';
+import { looksLikeSseStream, reassembleAnthropicSse } from './sse.js';
 
 export interface TraceHostOptions {
   brokerClient: BrokerClient;
@@ -262,6 +263,14 @@ function decodeBodyForExchange(body: Buffer): unknown {
     } catch {
       /* fall through */
     }
+  }
+  // Anthropic `/v1/messages` with `stream: true` returns an SSE
+  // body. Reassemble it into the same JSON shape the non-streaming
+  // path would have produced so `buildAnthropicEntry` can read
+  // `usage`, `content`, and `stop_reason` the same way.
+  if (looksLikeSseStream(text)) {
+    const reassembled = reassembleAnthropicSse(text);
+    if (reassembled) return reassembled;
   }
   return text;
 }

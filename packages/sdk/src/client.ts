@@ -9,15 +9,15 @@
 import {
   AUTH_HEADER,
   FS_PATHS,
+  MEMBER_PATHS,
   OBJECTIVE_PATHS,
   PATHS,
   PROTOCOL_HEADER,
   PROTOCOL_VERSION,
-  USER_PATHS,
 } from './protocol.js';
 import {
   BriefingResponseSchema,
-  CreateUserResponseSchema,
+  CreateMemberResponseSchema,
   EnrollTotpResponseSchema,
   FsEntryResponseSchema,
   FsListResponseSchema,
@@ -26,8 +26,9 @@ import {
   HealthResponseSchema,
   HistoryResponseSchema,
   ListActivityResponseSchema,
+  ListMembersResponseSchema,
   ListObjectivesResponseSchema,
-  ListUsersResponseSchema,
+  MemberSchema,
   MessageSchema,
   ObjectiveSchema,
   PushPayloadSchema,
@@ -36,7 +37,6 @@ import {
   RosterResponseSchema,
   RotateTokenResponseSchema,
   SessionResponseSchema,
-  TeammateSchema,
   UploadActivityResponseSchema,
   VapidPublicKeyResponseSchema,
 } from './schemas.js';
@@ -44,9 +44,9 @@ import type {
   ActivityRow,
   BriefingResponse,
   CancelObjectiveRequest,
+  CreateMemberRequest,
+  CreateMemberResponse,
   CreateObjectiveRequest,
-  CreateUserRequest,
-  CreateUserResponse,
   DiscussObjectiveRequest,
   EnrollTotpResponse,
   FsEntry,
@@ -56,6 +56,7 @@ import type {
   HistoryQuery,
   ListActivityQuery,
   ListObjectivesQuery,
+  Member,
   Message,
   Objective,
   PushPayload,
@@ -66,10 +67,9 @@ import type {
   RosterResponse,
   RotateTokenResponse,
   SessionResponse,
-  Teammate,
   TotpLoginRequest,
+  UpdateMemberRequest,
   UpdateObjectiveRequest,
-  UpdateUserRequest,
   UpdateWatchersRequest,
   UploadActivityRequest,
   UploadActivityResponse,
@@ -186,7 +186,7 @@ export class Client {
 
   /**
    * Exchange a TOTP code for a session. Succeeds → server sets the
-   * `ac7_session` cookie and returns the authenticated slot info.
+   * `ac7_session` cookie and returns the authenticated member info.
    * Failure modes: wrong/stale code → 401, malformed → 400,
    * too-many-attempts → 429.
    */
@@ -217,7 +217,7 @@ export class Client {
   }
 
   /**
-   * Fetch the current session's slot/role/expiry. Used by the SPA on
+   * Fetch the current session's member/role/expiry. Used by the SPA on
    * mount to rehydrate its session signal before showing any UI.
    * Returns null on 401 (no / expired session) so callers can treat
    * "not signed in" as a first-class state without catching errors.
@@ -246,7 +246,7 @@ export class Client {
 
   /**
    * Register (or refresh) a push subscription for the current
-   * authenticated slot. Subsequent calls with the same endpoint
+   * authenticated member. Subsequent calls with the same endpoint
    * replace the existing row.
    */
   async registerPushSubscription(
@@ -262,7 +262,7 @@ export class Client {
 
   /**
    * Remove a push subscription by its database id. Scoped to the
-   * authenticated slot server-side.
+   * authenticated member server-side.
    */
   async deletePushSubscription(id: number): Promise<void> {
     const resp = await this.request(`${PATHS.pushSubscriptions}/${id}`, {
@@ -279,12 +279,13 @@ export class Client {
   }
 
   /**
-   * Fetch the team-context briefing for the authenticated slot.
+   * Fetch the team-context briefing for the authenticated member.
    *
-   * Returns the caller's name, role, authority, team
-   * (name/directive/brief), list of teammates, open objectives currently
-   * on the caller's plate, and a pre-composed `instructions` string
-   * ready for `new Server({instructions})` in the MCP link.
+   * Returns the caller's name, role, permissions, team
+   * (name/directive/brief/presets), list of teammates, open objectives
+   * currently on the caller's plate, and the member's personal
+   * `instructions` string ready for `new Server({instructions})` in
+   * the MCP link.
    */
   async briefing(): Promise<BriefingResponse> {
     const resp = await this.request(PATHS.briefing, { method: 'GET' });
@@ -292,10 +293,10 @@ export class Client {
   }
 
   /**
-   * List all slots defined on the team (including any not currently
-   * connected) plus the runtime connection state of each registered
-   * agent. Use this for the team roster view in the web UI and for
-   * the `roster` MCP tool exposed by the runner.
+   * List all members defined on the team (including any not currently
+   * connected) plus the runtime connection state of each one. Use
+   * this for the team roster view in the web UI and for the `roster`
+   * MCP tool exposed by the runner.
    */
   async roster(): Promise<RosterResponse> {
     const resp = await this.request(PATHS.roster, { method: 'GET' });
@@ -305,10 +306,10 @@ export class Client {
   // ─────────────────────── Objectives ───────────────────────
 
   /**
-   * List objectives. IndividualContributors see only their own unless they hold
-   * manager+ authority server-side, in which case the `assignee`
-   * filter accepts any name. Pass `status` to scope to a single
-   * lifecycle state; omit to see all.
+   * List objectives. Members without `objectives.create` see only
+   * their own; members with that permission can filter by any
+   * `assignee` name. Pass `status` to scope to a single lifecycle
+   * state; omit to see all.
    */
   async listObjectives(query: ListObjectivesQuery = {}): Promise<Objective[]> {
     const params = new URLSearchParams();
@@ -328,7 +329,7 @@ export class Client {
 
   /**
    * Create (and atomically assign) an objective. Requires the caller
-   * to hold `manager` or `director` authority server-side.
+   * to hold the `objectives.create` permission.
    */
   async createObjective(payload: CreateObjectiveRequest): Promise<Objective> {
     const resp = await this.request(PATHS.objectives, {
@@ -367,8 +368,8 @@ export class Client {
   }
 
   /**
-   * Terminally cancel an objective. Originating manager+ or any
-   * director.
+   * Terminally cancel an objective. Originator, or any member with
+   * `objectives.cancel`.
    */
   async cancelObjective(id: string, payload: CancelObjectiveRequest = {}): Promise<Objective> {
     const resp = await this.request(OBJECTIVE_PATHS.cancel(id), {
@@ -380,8 +381,8 @@ export class Client {
   }
 
   /**
-   * Reassign an objective to a different slot. Director only. Pushes
-   * to both old and new assignee.
+   * Reassign an objective to a different member. Requires
+   * `objectives.reassign`. Pushes to both old and new assignee.
    */
   async reassignObjective(id: string, payload: ReassignObjectiveRequest): Promise<Objective> {
     const resp = await this.request(OBJECTIVE_PATHS.reassign(id), {
@@ -393,9 +394,9 @@ export class Client {
   }
 
   /**
-   * Add and/or remove watchers on an objective. Director or the
-   * originating manager+ only. Every name must resolve to a
-   * known team slot. Empty add/remove arrays are no-ops; the
+   * Add and/or remove watchers on an objective. Originator or any
+   * member with `objectives.watch`. Every name must resolve to a
+   * known team member. Empty add/remove arrays are no-ops; the
    * server still returns the updated objective for sync purposes.
    */
   async updateObjectiveWatchers(id: string, payload: UpdateWatchersRequest): Promise<Objective> {
@@ -409,9 +410,9 @@ export class Client {
 
   /**
    * Post a discussion message into an objective's thread. Fans out to
-   * every member of the thread (originator + assignee + directors +
-   * explicit watchers) via their SSE streams, scoped to thread key
-   * `obj:<id>`. Caller must already be a thread member server-side.
+   * every member of the thread (originator + assignee + explicit
+   * watchers) via their SSE streams, scoped to thread key `obj:<id>`.
+   * Caller must already be a thread member server-side.
    */
   async discussObjective(id: string, payload: DiscussObjectiveRequest): Promise<Message> {
     const resp = await this.request(OBJECTIVE_PATHS.discuss(id), {
@@ -423,16 +424,16 @@ export class Client {
   }
 
   /**
-   * Append activity events for `name`. Only the user itself may POST
-   * its own activity (server returns 403 for any other caller). Used
-   * by the agent runner's streaming uploader to ship decoded HTTP
+   * Append activity events for `name`. Only the member itself may
+   * POST its own activity (server returns 403 for any other caller).
+   * Used by the runner's streaming uploader to ship decoded HTTP
    * exchanges + objective lifecycle markers to the broker in real time.
    */
   async uploadActivity(
     name: string,
     payload: UploadActivityRequest,
   ): Promise<UploadActivityResponse> {
-    const resp = await this.request(USER_PATHS.activity(name), {
+    const resp = await this.request(MEMBER_PATHS.activity(name), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
@@ -441,10 +442,10 @@ export class Client {
   }
 
   /**
-   * List activity events for `name`. Readable by the user itself OR
-   * any admin (other callers get 403). Supports range filtering by
-   * `from`/`to` timestamps and by kind. Returns newest-first up to
-   * `limit` rows.
+   * List activity events for `name`. Readable by the member itself OR
+   * by any member with `activity.read` (other callers get 403).
+   * Supports range filtering by `from`/`to` timestamps and by kind.
+   * Returns newest-first up to `limit` rows.
    *
    * Objective traces are a view over this endpoint: query with
    * `from=objective.openedAt`, `to=objective.closedAt`, and
@@ -461,57 +462,58 @@ export class Client {
     }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const qs = params.toString();
-    const path = qs ? `${USER_PATHS.activity(name)}?${qs}` : USER_PATHS.activity(name);
+    const path = qs ? `${MEMBER_PATHS.activity(name)}?${qs}` : MEMBER_PATHS.activity(name);
     const resp = await this.request(path, { method: 'GET' });
     return ListActivityResponseSchema.parse(await this.json(resp)).activity;
   }
 
-  // ─────────────────────── Users ──────────────────────────────────
+  // ─────────────────────── Members ──────────────────────────────
 
   /**
-   * List all users on the team — names, roles, userTypes. Dual-auth
-   * (everyone sees the roster); identical payload to `roster()`
-   * without the presence data.
+   * List all members on the team — name, role, permissions,
+   * instructions. Requires `members.manage` (admin scope); non-admins
+   * should use `roster()` for the public subset.
    */
-  async listUsers(): Promise<Teammate[]> {
-    const resp = await this.request(PATHS.users, { method: 'GET' });
-    return ListUsersResponseSchema.parse(await this.json(resp)).users;
+  async listMembers(): Promise<Member[]> {
+    const resp = await this.request(PATHS.members, { method: 'GET' });
+    return ListMembersResponseSchema.parse(await this.json(resp)).members;
   }
 
   /**
-   * Create a new user. Admin-only. Returns the new user plus the
-   * plaintext bearer token (shown once); for humans also returns the
-   * TOTP secret + otpauth URI so the UI can render a QR.
+   * Create a new member. Requires `members.manage`. Returns the new
+   * member plus the plaintext bearer token (shown once). TOTP is
+   * optional and enrolled separately via `enrollTotp(name)`.
    */
-  async createUser(payload: CreateUserRequest): Promise<CreateUserResponse> {
-    const resp = await this.request(PATHS.users, {
+  async createMember(payload: CreateMemberRequest): Promise<CreateMemberResponse> {
+    const resp = await this.request(PATHS.members, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    return CreateUserResponseSchema.parse(await this.json(resp));
+    return CreateMemberResponseSchema.parse(await this.json(resp));
   }
 
   /**
-   * Update an existing user's userType or role. Admin-only. Enforces
-   * the "at least one admin must remain" invariant on demotion.
+   * Update an existing member's role, instructions, or permissions.
+   * Requires `members.manage`. Enforces the "at least one member with
+   * `members.manage` must remain" invariant on permission changes.
    */
-  async updateUser(name: string, payload: UpdateUserRequest): Promise<Teammate> {
-    const resp = await this.request(USER_PATHS.one(name), {
+  async updateMember(name: string, payload: UpdateMemberRequest): Promise<Member> {
+    const resp = await this.request(MEMBER_PATHS.one(name), {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    return TeammateSchema.parse(await this.json(resp));
+    return MemberSchema.parse(await this.json(resp));
   }
 
-  /** Delete a user. Admin-only. Enforces the last-admin invariant. */
-  async deleteUser(name: string): Promise<void> {
-    const resp = await this.request(USER_PATHS.one(name), { method: 'DELETE' });
+  /** Delete a member. Requires `members.manage`. Enforces the last-admin invariant. */
+  async deleteMember(name: string): Promise<void> {
+    const resp = await this.request(MEMBER_PATHS.one(name), { method: 'DELETE' });
     if (!resp.ok) {
       const body = await resp.text().catch(() => '');
       throw new ClientError(
-        `deleteUser failed: ${resp.status} ${resp.statusText}`,
+        `deleteMember failed: ${resp.status} ${resp.statusText}`,
         resp.status,
         body,
       );
@@ -519,22 +521,22 @@ export class Client {
   }
 
   /**
-   * Rotate a user's bearer token. Admin or self. Returns the new
-   * plaintext (shown once); the previous token is invalidated.
+   * Rotate a member's bearer token. Requires `members.manage` OR
+   * self. Returns the new plaintext (shown once); the previous token
+   * is invalidated.
    */
   async rotateToken(name: string): Promise<RotateTokenResponse> {
-    const resp = await this.request(USER_PATHS.rotateToken(name), { method: 'POST' });
+    const resp = await this.request(MEMBER_PATHS.rotateToken(name), { method: 'POST' });
     return RotateTokenResponseSchema.parse(await this.json(resp));
   }
 
   /**
-   * (Re-)enroll a human user in TOTP. Admin or self. Agents (lead-agent,
-   * agent) are rejected with 409 — they authenticate via bearer token
-   * only. Returns a fresh secret + otpauth URI; any prior enrollment
-   * is replaced.
+   * (Re-)enroll a member in TOTP. Requires `members.manage` OR self.
+   * Any member may enroll — TOTP is no longer gated by type. Returns
+   * a fresh secret + otpauth URI; any prior enrollment is replaced.
    */
   async enrollTotp(name: string): Promise<EnrollTotpResponse> {
-    const resp = await this.request(USER_PATHS.enrollTotp(name), { method: 'POST' });
+    const resp = await this.request(MEMBER_PATHS.enrollTotp(name), { method: 'POST' });
     return EnrollTotpResponseSchema.parse(await this.json(resp));
   }
 
@@ -564,8 +566,9 @@ export class Client {
 
   /**
    * List the immediate children of `path`. Directories are returned
-   * first, alphabetized within each group. Directors see every home
-   * when listing `/`; everyone else sees only their own home.
+   * first, alphabetized within each group. Members with
+   * `members.manage` see every home when listing `/`; everyone else
+   * sees only their own home.
    */
   async fsList(path: string): Promise<FsEntry[]> {
     const qs = new URLSearchParams({ path });
@@ -617,8 +620,8 @@ export class Client {
 
   /**
    * Upload a file. The sender must have write access to the target
-   * path (owns the containing home, or is a director). Parent
-   * directories are auto-created.
+   * path (owns the containing home, or holds `members.manage`).
+   * Parent directories are auto-created.
    */
   async fsWrite(input: FsWriteInput): Promise<FsWriteResponse> {
     const qs = new URLSearchParams({
@@ -676,7 +679,7 @@ export class Client {
   }
 
   /**
-   * Open a long-lived SSE subscription for the caller's user `name`
+   * Open a long-lived SSE subscription for the caller's member `name`
    * and yield messages as they arrive. Aborts cleanly when `signal`
    * is triggered. The server rejects `name` that doesn't match the
    * authenticated identity with 403.

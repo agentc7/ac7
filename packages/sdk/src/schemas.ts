@@ -7,21 +7,12 @@
  */
 
 import { z } from 'zod';
+import { PERMISSIONS } from './types.js';
 
 export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'error', 'critical']);
 
-export const UserTypeSchema = z.enum(['admin', 'operator', 'lead-agent', 'agent']);
-
 /**
- * A role label — freeform string, 1-64 chars. No fixed enum;
- * deployments define their own role names in the team config.
- * Suggested defaults (shipped by the wizard): `admin`, `implementer`,
- * `reviewer`, `watcher`.
- */
-export const RoleNameSchema = z.string().min(1).max(64);
-
-/**
- * User names — alphanumeric plus `.`, `_`, `-`, 1-128 chars.
+ * Member names — alphanumeric plus `.`, `_`, `-`, 1-128 chars.
  */
 export const NameSchema = z
   .string()
@@ -29,27 +20,53 @@ export const NameSchema = z
   .max(128)
   .regex(/^[a-zA-Z0-9._-]+$/, 'name must be alphanumeric with . _ - allowed');
 
+/** One of the seven gated permissions. Extend `PERMISSIONS` to grow. */
+export const PermissionSchema = z.enum(PERMISSIONS);
+
+/**
+ * Team-level named permission bundles. Keys are preset names
+ * (short freeform strings), values are arrays of resolved leaf
+ * permissions. Members reference preset names; the server resolves
+ * at load time.
+ */
+export const PermissionPresetsSchema = z.record(
+  z.string().min(1).max(64),
+  z.array(PermissionSchema),
+);
+
+/**
+ * A role is a short label + prose description, per-member. Unlike
+ * the previous role model, there's no instructions template here —
+ * instructions are personal to the member.
+ */
+export const RoleSchema = z.object({
+  title: z.string().min(1).max(64),
+  description: z.string().max(512).default(''),
+});
+
 export const TeamSchema = z.object({
   name: z.string().min(1).max(128),
   directive: z.string().min(1).max(512),
   brief: z.string().max(4096).default(''),
+  permissionPresets: PermissionPresetsSchema.default({}),
 });
 
-export const RoleSchema = z.object({
-  description: z.string().max(512).default(''),
-  instructions: z.string().max(8192).default(''),
-});
-
-export const UserSchema = z.object({
-  name: NameSchema,
-  role: RoleNameSchema,
-  userType: UserTypeSchema,
-});
-
+/**
+ * Public projection of a team member — what teammates see in the
+ * roster and briefing. Omits `instructions` (private to the member).
+ */
 export const TeammateSchema = z.object({
   name: NameSchema,
-  role: RoleNameSchema,
-  userType: UserTypeSchema,
+  role: RoleSchema,
+  permissions: z.array(PermissionSchema),
+});
+
+/**
+ * Full member record — includes the private `instructions` field.
+ * Returned from self-scope briefing and admin-scope member listings.
+ */
+export const MemberSchema = TeammateSchema.extend({
+  instructions: z.string().max(8192).default(''),
 });
 
 /**
@@ -106,8 +123,7 @@ export const PresenceSchema = z.object({
   connected: z.number().int().nonnegative(),
   createdAt: z.number(),
   lastSeen: z.number(),
-  role: RoleNameSchema.nullable(),
-  userType: UserTypeSchema,
+  role: RoleSchema.nullable(),
 });
 
 export const DeliveryReportSchema = z.object({
@@ -233,7 +249,7 @@ export const ListObjectivesQuerySchema = z.object({
 // ───────────────────────── Trace entries ─────────────────────
 //
 // Trace entries are produced by the runner's MITM proxy as
-// captured HTTP/1.1 exchanges. They flow through the agent
+// captured HTTP/1.1 exchanges. They flow through the member
 // activity stream (below) rather than a per-objective table.
 // Schemas stay permissive because Anthropic's API shape evolves
 // and opaque HTTP records can carry anything. The server stores
@@ -392,7 +408,7 @@ export const ActivityEventSchema = z.discriminatedUnion('kind', [
 
 export const ActivityRowSchema = z.object({
   id: z.number().int().nonnegative(),
-  userName: NameSchema,
+  memberName: NameSchema,
   event: ActivityEventSchema,
   createdAt: z.number().int().nonnegative(),
 });
@@ -416,32 +432,40 @@ export const ListActivityQuerySchema = z.object({
   limit: z.number().int().positive().max(1000).optional(),
 });
 
-// ───────────────────────── Users ──────────────────────────────
+// ───────────────────────── Members ────────────────────────────
 
-export const CreateUserRequestSchema = z.object({
+/**
+ * Permission list as sent over the wire — each entry is either a
+ * preset name (resolved by the server) or a leaf permission. The
+ * server validates every entry resolves.
+ */
+const PermissionRefListSchema = z.array(z.string().min(1).max(64)).max(32);
+
+export const CreateMemberRequestSchema = z.object({
   name: NameSchema,
-  userType: UserTypeSchema,
-  role: RoleNameSchema,
+  role: RoleSchema,
+  instructions: z.string().max(8192).default(''),
+  permissions: PermissionRefListSchema,
 });
 
-export const UpdateUserRequestSchema = z
+export const UpdateMemberRequestSchema = z
   .object({
-    userType: UserTypeSchema.optional(),
-    role: RoleNameSchema.optional(),
+    role: RoleSchema.optional(),
+    instructions: z.string().max(8192).optional(),
+    permissions: PermissionRefListSchema.optional(),
   })
-  .refine((v) => v.userType !== undefined || v.role !== undefined, {
-    message: 'update must include at least one of: userType, role',
-  });
+  .refine(
+    (v) => v.role !== undefined || v.instructions !== undefined || v.permissions !== undefined,
+    { message: 'update must include at least one of: role, instructions, permissions' },
+  );
 
-export const CreateUserResponseSchema = z.object({
-  user: TeammateSchema,
+export const CreateMemberResponseSchema = z.object({
+  member: TeammateSchema,
   token: z.string(),
-  totpSecret: z.string().optional(),
-  totpUri: z.string().optional(),
 });
 
-export const ListUsersResponseSchema = z.object({
-  users: z.array(TeammateSchema),
+export const ListMembersResponseSchema = z.object({
+  members: z.array(MemberSchema),
 });
 
 export const RotateTokenResponseSchema = z.object({
@@ -455,14 +479,10 @@ export const EnrollTotpResponseSchema = z.object({
 
 // ───────────────────────── Briefing + session ─────────────────
 
-export const BriefingResponseSchema = z.object({
-  name: NameSchema,
-  role: RoleNameSchema,
-  userType: UserTypeSchema,
+export const BriefingResponseSchema = MemberSchema.extend({
   team: TeamSchema,
   teammates: z.array(TeammateSchema),
   openObjectives: z.array(ObjectiveSchema),
-  instructions: z.string(),
 });
 
 export const RosterResponseSchema = z.object({
@@ -476,13 +496,13 @@ export const HistoryResponseSchema = z.object({
 
 export const TotpLoginRequestSchema = z.object({
   code: z.string().regex(/^\d{6}$/, 'code must be exactly 6 digits'),
-  user: NameSchema.optional(),
+  member: NameSchema.optional(),
 });
 
 export const SessionResponseSchema = z.object({
-  user: NameSchema,
-  role: RoleNameSchema,
-  userType: UserTypeSchema,
+  member: NameSchema,
+  role: RoleSchema,
+  permissions: z.array(PermissionSchema),
   expiresAt: z.number().int().positive(),
 });
 

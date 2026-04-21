@@ -4,8 +4,8 @@
  * A push subscription is a capability URL + crypto keys the browser
  * hands the server after `pushManager.subscribe()`. Treat the endpoint
  * like a session token: anyone holding it can push to the device. The
- * store holds one row per (userName, endpoint) pair — the same
- * human can have many devices enrolled.
+ * store holds one row per (memberName, endpoint) pair — the same
+ * member can have many devices enrolled.
  *
  * Dead-subscription lifecycle: when the web-push dispatch layer
  * observes a 404 or 410 from the push service, it calls
@@ -20,7 +20,7 @@
 
 export interface PushSubscriptionRow {
   id: number;
-  userName: string;
+  memberName: string;
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -32,7 +32,7 @@ export interface PushSubscriptionRow {
 }
 
 export interface PushSubscriptionInput {
-  userName: string;
+  memberName: string;
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -41,26 +41,26 @@ export interface PushSubscriptionInput {
 
 export interface PushSubscriptionStore {
   /**
-   * Register (or refresh) a push subscription for a slot. Returns the
-   * persisted row. Idempotent on `endpoint` — calling twice with the
-   * same endpoint replaces the row's crypto keys and clears error
-   * state, rather than duplicating.
+   * Register (or refresh) a push subscription for a member. Returns
+   * the persisted row. Idempotent on `endpoint` — calling twice with
+   * the same endpoint replaces the row's crypto keys and clears
+   * error state, rather than duplicating.
    */
   upsert(input: PushSubscriptionInput): Promise<PushSubscriptionRow>;
 
-  /** List every subscription owned by `userName`. */
-  listForUser(userName: string): Promise<PushSubscriptionRow[]>;
+  /** List every subscription owned by `memberName`. */
+  listForMember(memberName: string): Promise<PushSubscriptionRow[]>;
 
   /** Look up a row by the unique `endpoint` URL. */
   findByEndpoint(endpoint: string): Promise<PushSubscriptionRow | null>;
 
   /**
-   * Delete a subscription the given slot owns. Scoped by name so a
-   * session can't delete other users' subscriptions even with a
+   * Delete a subscription the given member owns. Scoped by name so a
+   * session can't delete other members' subscriptions even with a
    * guessed id. No-op if the row doesn't exist or belongs to another
-   * slot.
+   * member.
    */
-  deleteForUser(id: number, userName: string): Promise<void>;
+  deleteForMember(id: number, memberName: string): Promise<void>;
 
   /**
    * Delete by endpoint — used by the dispatch path when a push attempt
@@ -109,7 +109,7 @@ export class InMemoryPushSubscriptionStore implements PushSubscriptionStore {
     if (current !== undefined) {
       const replaced: PushSubscriptionRow = {
         ...current,
-        userName: input.userName,
+        memberName: input.memberName,
         p256dh: input.p256dh,
         auth: input.auth,
         userAgent: input.userAgent,
@@ -122,7 +122,7 @@ export class InMemoryPushSubscriptionStore implements PushSubscriptionStore {
     }
     const row: PushSubscriptionRow = {
       id: this.nextId++,
-      userName: input.userName,
+      memberName: input.memberName,
       endpoint: input.endpoint,
       p256dh: input.p256dh,
       auth: input.auth,
@@ -136,16 +136,16 @@ export class InMemoryPushSubscriptionStore implements PushSubscriptionStore {
     return row;
   }
 
-  async listForUser(userName: string): Promise<PushSubscriptionRow[]> {
-    return this.rows.filter((r) => r.userName === userName);
+  async listForMember(memberName: string): Promise<PushSubscriptionRow[]> {
+    return this.rows.filter((r) => r.memberName === memberName);
   }
 
   async findByEndpoint(endpoint: string): Promise<PushSubscriptionRow | null> {
     return this.rows.find((r) => r.endpoint === endpoint) ?? null;
   }
 
-  async deleteForUser(id: number, userName: string): Promise<void> {
-    const idx = this.rows.findIndex((r) => r.id === id && r.userName === userName);
+  async deleteForMember(id: number, memberName: string): Promise<void> {
+    const idx = this.rows.findIndex((r) => r.id === id && r.memberName === memberName);
     if (idx >= 0) this.rows.splice(idx, 1);
   }
 

@@ -59,9 +59,9 @@ class MockEventSource {
 beforeEach(() => {
   session.value = {
     status: 'authenticated',
-    user: 'ACTUAL',
-    role: 'individual-contributor',
-    userType: 'admin',
+    member: 'ACTUAL',
+    role: { title: 'commander', description: '' },
+    permissions: ['members.manage'],
     expiresAt: 9_999_999_999_999,
   };
   __resetMessagesForTests();
@@ -149,9 +149,13 @@ describe('<Sidebar />', () => {
   function setRoster(connected: Record<string, number> = {}) {
     roster.value = {
       teammates: [
-        { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' },
-        { name: 'build-bot', role: 'implementer', userType: 'agent' },
-        { name: 'test-agent-1', role: 'watcher', userType: 'agent' },
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
+        { name: 'test-agent-1', role: { title: 'watcher', description: '' }, permissions: [] },
       ],
       connected: Object.entries(connected).map(([name, count]) => ({
         name,
@@ -159,7 +163,6 @@ describe('<Sidebar />', () => {
         createdAt: 0,
         lastSeen: 0,
         role: null,
-        userType: 'agent' as const,
       })),
     };
   }
@@ -237,12 +240,16 @@ describe('<Sidebar />', () => {
   it('falls back to briefing teammates when roster is still null (cold start)', () => {
     briefing.value = {
       name: 'ACTUAL',
-      role: 'individual-contributor',
-      userType: 'admin',
-      team: { name: 'alpha', directive: 'ship', brief: '' },
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
+      team: { name: 'alpha', directive: 'ship', brief: '', permissionPresets: {} },
       teammates: [
-        { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' },
-        { name: 'build-bot', role: 'implementer', userType: 'agent' },
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
       ],
       openObjectives: [],
       instructions: '',
@@ -336,8 +343,12 @@ describe('<RosterPanel />', () => {
   it('marks teammates as online when connected count > 0', async () => {
     roster.value = {
       teammates: [
-        { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' },
-        { name: 'build-bot', role: 'implementer', userType: 'agent' },
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
       ],
       connected: [
         {
@@ -345,8 +356,7 @@ describe('<RosterPanel />', () => {
           connected: 1,
           createdAt: 0,
           lastSeen: 0,
-          role: 'implementer',
-          userType: 'agent',
+          role: { title: 'engineer', description: '' },
         },
       ],
     };
@@ -362,8 +372,12 @@ describe('<RosterPanel />', () => {
   it('clicking a teammate opens a DM thread via view', async () => {
     roster.value = {
       teammates: [
-        { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' },
-        { name: 'build-bot', role: 'implementer', userType: 'agent' },
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
       ],
       connected: [],
     };
@@ -378,8 +392,12 @@ describe('<RosterPanel />', () => {
   it('self-row is NOT clickable (no DM-yourself button)', () => {
     roster.value = {
       teammates: [
-        { name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' },
-        { name: 'build-bot', role: 'implementer', userType: 'agent' },
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
       ],
       connected: [],
     };
@@ -411,10 +429,16 @@ describe('briefing bootstrap', () => {
     const { Header } = await import('../src/components/Header.js');
     briefing.value = {
       name: 'ACTUAL',
-      role: 'individual-contributor',
-      userType: 'admin',
-      team: { name: 'alpha-team', directive: 'ship', brief: '' },
-      teammates: [{ name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' }],
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
+      team: { name: 'alpha-team', directive: 'ship', brief: '', permissionPresets: {} },
+      teammates: [
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+      ],
       openObjectives: [],
       instructions: '',
     };
@@ -422,7 +446,7 @@ describe('briefing bootstrap', () => {
     expect(screen.getByText('ACTUAL')).toBeTruthy();
     // Header surfaces the userType pill next to the name —
     // admin was stamped on the session in beforeEach.
-    expect(screen.getByText('ADMIN')).toBeTruthy();
+    expect(screen.getByText(/COMMANDER/)).toBeTruthy();
     expect(screen.getByText(/alpha-team/)).toBeTruthy();
   });
 });
@@ -455,14 +479,21 @@ describe('<Sidebar /> overview button', () => {
   it('does NOT render team name or directive in the sidebar (those live in the Overview panel)', () => {
     briefing.value = {
       name: 'ACTUAL',
-      role: 'individual-contributor',
-      userType: 'admin',
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
       team: {
         name: 'alpha-team',
         directive: 'Ship the payment service.',
         brief: '',
+        permissionPresets: {},
       },
-      teammates: [{ name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' }],
+      teammates: [
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+      ],
       openObjectives: [],
       instructions: '',
     };
@@ -477,19 +508,32 @@ describe('<RosterPanel /> directive header', () => {
   it('renders team name and directive at the top when briefing is set', () => {
     briefing.value = {
       name: 'ACTUAL',
-      role: 'individual-contributor',
-      userType: 'admin',
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
       team: {
         name: 'alpha-team',
         directive: 'Ship the payment service.',
         brief: 'Longer context about the operating window.',
+        permissionPresets: {},
       },
-      teammates: [{ name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' }],
+      teammates: [
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+      ],
       openObjectives: [],
       instructions: '',
     };
     roster.value = {
-      teammates: [{ name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' }],
+      teammates: [
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+      ],
       connected: [],
     };
     render(<RosterPanel viewer="ACTUAL" />);
@@ -500,7 +544,13 @@ describe('<RosterPanel /> directive header', () => {
 
   it('omits the directive header when briefing is null', () => {
     roster.value = {
-      teammates: [{ name: 'ACTUAL', role: 'individual-contributor', userType: 'admin' }],
+      teammates: [
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+      ],
       connected: [],
     };
     render(<RosterPanel viewer="ACTUAL" />);

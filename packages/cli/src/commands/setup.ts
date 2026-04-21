@@ -12,7 +12,7 @@
  *   3. `./ac7.json` relative to the caller's cwd
  *
  * Safety behavior: if a config already exists at the resolved path,
- * we refuse to overwrite it and print the existing team/slot summary.
+ * we refuse to overwrite it and print the existing team/user summary.
  * Re-running the wizard against a live config would mint fresh tokens
  * and invalidate any deployed links — that's a foot-gun we'd rather
  * require an explicit `rm ac7.json` for.
@@ -54,17 +54,17 @@ export async function runSetupCommand(
     const existing = server.loadTeamConfigFromFile(configPath);
     throw new UsageError(
       `setup: a config already exists at ${configPath}\n` +
-        `  team: ${existing.team.name}\n` +
-        `  slots:    ${existing.store.size()} (${existing.store.names().join(', ')})\n` +
+        `  team:  ${existing.team.name}\n` +
+        `  users: ${existing.store.size()} (${existing.store.names().join(', ')})\n` +
         '\n' +
-        '  Running the wizard now would overwrite every slot token and\n' +
+        '  Running the wizard now would overwrite every user token and\n' +
         '  invalidate any deployed links. If that is what you want,\n' +
         `  delete the file first:   rm ${configPath}`,
     );
   } catch (err) {
     if (err instanceof UsageError) throw err;
     if (!(err instanceof server.ConfigNotFoundError)) {
-      if (err instanceof server.UserLoadError) {
+      if (err instanceof server.MemberLoadError) {
         throw new UsageError(`setup: existing config at ${configPath} is invalid: ${err.message}`);
       }
       throw err;
@@ -87,16 +87,16 @@ export async function runSetupCommand(
     const config = await server.runFirstRunWizard({ configPath, io });
     stdout('');
     stdout('✓ setup complete');
-    stdout(`  team: ${config.team.name}`);
-    stdout(`  slots:    ${config.store.names().join(', ')}`);
-    stdout(`  config:   ${configPath}`);
+    stdout(`  team:   ${config.team.name}`);
+    stdout(`  users:  ${config.store.names().join(', ')}`);
+    stdout(`  config: ${configPath}`);
     stdout('');
     stdout('Next steps:');
     stdout('  pnpm dev          # watch-mode server + Vite dev for the web UI');
     stdout('  ac7 serve         # one-shot server run against this config');
     stdout('');
   } catch (err) {
-    if (err instanceof server.UserLoadError) {
+    if (err instanceof server.MemberLoadError) {
       throw new UsageError(`setup: ${err.message}`);
     }
     throw err;

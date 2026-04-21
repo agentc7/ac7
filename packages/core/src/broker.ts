@@ -5,15 +5,16 @@
  * fanout. Knows nothing about HTTP, MCP, or persistence; runtime
  * adapters layer those on top.
  *
- * Identity model: every authenticated caller is a user with a unique
- * `name`. The broker enforces `name === context.name` on register
- * and subscribe, so a user can only act on their own connection. DMs
- * go to the target user and also fan out to the sender's own
- * connection (if registered), which keeps multiple live sessions of
- * the same user in sync with zero client-side bookkeeping.
+ * Identity model: every authenticated caller is a member with a
+ * unique `name`. The broker enforces `name === context.name` on
+ * register and subscribe, so a member can only act on their own
+ * connection. DMs go to the target member and also fan out to the
+ * sender's own connection (if registered), which keeps multiple
+ * live sessions of the same member in sync with zero client-side
+ * bookkeeping.
  */
 
-import type { Message, Presence, PushPayload, PushResult, User } from '@agentc7/sdk/types';
+import type { Member, Message, Presence, PushPayload, PushResult, Role } from '@agentc7/sdk/types';
 import type { EventLog } from './event-log.js';
 import {
   PresenceIdentityError,
@@ -70,7 +71,7 @@ export interface PushContext {
  */
 export interface IdentityContext {
   name?: string | null;
-  role?: string | null;
+  role?: Role | null;
 }
 
 export interface RegistrationResult {
@@ -167,7 +168,7 @@ export class Broker {
   }
 
   /**
-   * Explicitly register a user's presence so it shows up in
+   * Explicitly register a member's presence so it shows up in
    * listPresences(). If `context.name` is supplied it must equal
    * `name`; any mismatch throws `PresenceIdentityError`. Core tests
    * skip the check by passing no context.
@@ -185,16 +186,16 @@ export class Broker {
   }
 
   /**
-   * Pre-populate the registry with every user defined in the team
+   * Pre-populate the registry with every member defined in the team
    * config. Called once at server boot so the roster shows the full
    * team structure even before anyone has connected. Connection
    * state is still tracked live via SSE subscribers; seeding only
    * creates the zero-subscriber PresenceState entry.
    */
-  seedUsers(users: Iterable<User>): void {
+  seedMembers(members: Iterable<Pick<Member, 'name' | 'role'>>): void {
     const ts = this.now();
-    for (const u of users) {
-      this.registry.registerOrGet(u.name, ts, u.role, u.userType);
+    for (const m of members) {
+      this.registry.registerOrGet(m.name, ts, m.role);
     }
   }
 
@@ -288,7 +289,7 @@ export class Broker {
   }
 
   /**
-   * Attach a subscriber. The user is auto-registered if unknown so
+   * Attach a subscriber. The member is auto-registered if unknown so
    * callers don't have to make a separate register() call. Identity
    * is checked the same way as `register` — a mismatched name
    * throws `PresenceIdentityError`.
@@ -311,7 +312,7 @@ export class Broker {
     return this.registry.list();
   }
 
-  hasUser(name: string): boolean {
+  hasMember(name: string): boolean {
     return this.registry.has(name);
   }
 

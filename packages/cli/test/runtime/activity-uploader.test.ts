@@ -27,7 +27,7 @@ interface FakeClient {
 
 function makeFakeClient(): FakeClient {
   return {
-    uploadActivity: vi.fn(async (_callsign: string, req: { events: unknown[] }) => ({
+    uploadActivity: vi.fn(async (_memberName: string, req: { events: unknown[] }) => ({
       accepted: req.events.length,
     })),
   };

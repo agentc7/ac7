@@ -7,109 +7,113 @@
 
 export type LogLevel = 'debug' | 'info' | 'notice' | 'warning' | 'error' | 'critical';
 
+// ─────────────────────────── Permissions ──────────────────────────────
+
 /**
- * The four user archetypes on a team. Orthogonal to `role` (what a
- * user does vs. what they can change).
+ * The set of elevated actions gated by membership policy. Baseline
+ * participation (DM, posting to the primary thread, taking an assigned
+ * objective, discussing on your own objectives, managing your own
+ * files) is NOT a permission — it's what it means to be on the team.
+ * Only actions that touch other members or shape the team itself are
+ * permissions.
  *
- *   admin       — human with full team access. "Admin" of the deployment.
- *                 Only admins can create/update/delete other users,
- *                 reassign objectives to different owners, or read
- *                 another user's activity stream / file tree.
- *   operator    — human who can create and assign objectives, cancel
- *                 ones they originated, and govern their own watchers.
- *   lead-agent  — machine (AI agent) with the same operational
- *                 permissions as an operator. Connects with a bearer
- *                 token; no TOTP.
- *   agent       — machine assistant. Executes assigned work; cannot
- *                 create objectives. The most common type for AI agents.
- *
- * Human vs. agent determines login surface (TOTP vs. bearer-only) and
- * MCP tool exposure; it does not grant additional permissions beyond
- * those implied by the type.
+ * Dotted noun-first naming groups permissions by resource so they
+ * sort and scan naturally as the vocabulary grows.
  */
-export type UserType = 'admin' | 'operator' | 'lead-agent' | 'agent';
+export const PERMISSIONS = [
+  'team.manage',
+  'members.manage',
+  'objectives.create',
+  'objectives.cancel',
+  'objectives.reassign',
+  'objectives.watch',
+  'activity.read',
+] as const;
 
-/** True for admin + operator — the two human types. */
-export function isHuman(type: UserType): boolean {
-  return type === 'admin' || type === 'operator';
+export type Permission = (typeof PERMISSIONS)[number];
+
+/**
+ * Team-level named bundles of permissions. Members reference them by
+ * name in the raw config — the server resolves to a flat `Permission[]`
+ * at load time.
+ */
+export type PermissionPresets = Record<string, Permission[]>;
+
+/**
+ * Check whether a resolved permission set grants a specific action.
+ * Callers typically work with `Member.permissions`, which is already
+ * resolved (presets expanded to leaves) by the time it leaves the
+ * server.
+ */
+export function hasPermission(permissions: readonly Permission[], required: Permission): boolean {
+  return permissions.includes(required);
 }
 
-/** True for lead-agent + agent — the two machine types. */
-export function isAgent(type: UserType): boolean {
-  return type === 'lead-agent' || type === 'agent';
-}
-
-/** Admin-only capabilities. */
-export function canManageUsers(type: UserType): boolean {
-  return type === 'admin';
-}
-export function canReassignObjective(type: UserType): boolean {
-  return type === 'admin';
-}
-export function canViewAnyActivity(type: UserType): boolean {
-  return type === 'admin';
-}
-export function canReadAnyFile(type: UserType): boolean {
-  return type === 'admin';
-}
-
-/** Manager-tier capabilities (admin + operator + lead-agent). */
-export function canCreateObjective(type: UserType): boolean {
-  return type !== 'agent';
-}
+// ─────────────────────────── Team / Member ────────────────────────────
 
 /**
  * A team is the top-level unit the server controls. One deployment
  * = one team. The team defines the directive and the context every
- * user inherits. Multi-team lives at the SaaS layer.
+ * member inherits, plus any reusable permission presets.
  */
 export interface Team {
   name: string;
   directive: string;
   brief: string;
+  /**
+   * Named permission bundles members can reference instead of listing
+   * every leaf permission. Always present (may be empty). Common
+   * presets: `admin` (all permissions), `operator` (objectives-only).
+   */
+  permissionPresets: PermissionPresets;
 }
 
 /**
- * A named bundle of role-specific instructions. Roles are defined in
- * the server config and referenced by users. Multiple users can share
- * a role — e.g., two `implementer` lead-agents running in parallel.
- *
- * Permission to edit team state comes from the user's `userType`, not
- * from the role.
+ * A role is a short label + prose description. Unlike the previous
+ * role model, there's no instructions template here — instructions
+ * are personal to each member. The role is shared public context:
+ * what this member does on the team, visible to every teammate in
+ * the roster and briefing.
  */
 export interface Role {
+  /** Short freeform label ("commander", "engineer", "qa-lead"). */
+  title: string;
+  /** Prose describing what this role does on the team. */
   description: string;
+}
+
+/**
+ * Public projection of a team member — the subset visible to other
+ * members in the roster and briefing. Omits personal fields
+ * (`instructions`) that belong only to the member themselves and to
+ * admins managing membership.
+ */
+export interface Teammate {
+  name: string;
+  role: Role;
+  /** Resolved leaf permissions (presets expanded). */
+  permissions: Permission[];
+}
+
+/**
+ * Full member record — the shape an admin sees in the members admin
+ * panel and the shape a member sees of themself in their briefing.
+ * Adds `instructions` to the public `Teammate` projection.
+ */
+export interface Member extends Teammate {
+  /**
+   * Personal working directives + context for this member. Composed
+   * into the member's own system prompt (for agents) or surfaced in
+   * their briefing (for humans). Not visible to teammates — this is
+   * private to the member and to admins.
+   */
   instructions: string;
 }
 
 /**
- * A member of the team. The token is the auth boundary; the name is
- * the team-context identity; the role is a key into the team's roles
- * map; the userType gates write access and determines whether the
- * member is human (admin/operator) or agent (lead-agent/agent).
- *
- * On the wire, users never carry their token — it's resolved by auth
- * and never returned in any response.
- */
-export interface User {
-  name: string;
-  role: string;
-  userType: UserType;
-}
-
-/** Projection of a user for rendering in the roster / briefing. */
-export interface Teammate {
-  name: string;
-  role: string;
-  userType: UserType;
-}
-
-/**
- * Live connection state for one user. "Presence" replaces the older
- * `Agent` type — the word "agent" is now reserved for the UserType —
- * so this shape describes any user currently on the wire, whether
- * they're a human with a browser tab open or an AI agent with its MCP
- * link alive.
+ * Live connection state for one member. Presence describes any
+ * member currently on the wire, whether they're a human with a
+ * browser tab open or an agent with its MCP link alive.
  */
 export interface Presence {
   name: string;
@@ -117,12 +121,13 @@ export interface Presence {
   connected: number;
   createdAt: number;
   lastSeen: number;
-  role: string | null;
-  userType: UserType;
+  role: Role | null;
 }
 
+// ─────────────────────────── Messaging ────────────────────────────────
+
 export interface PushPayload {
-  /** Target user name, or null for a broadcast. */
+  /** Target member name, or null for a broadcast. */
   to?: string | null;
   title?: string | null;
   body: string;
@@ -141,11 +146,11 @@ export interface PushPayload {
 export interface Message {
   id: string;
   ts: number;
-  /** Target user name, or null for a broadcast. */
+  /** Target member name, or null for a broadcast. */
   to: string | null;
   /**
    * Authoritative sender name, stamped by the broker based on the
-   * caller's authenticated user. Never trusted from the request payload.
+   * caller's authenticated member. Never trusted from the request payload.
    */
   from: string | null;
   title: string | null;
@@ -175,22 +180,21 @@ export interface HealthResponse {
   version: string;
 }
 
+// ─────────────────────────── Briefing / Session ───────────────────────
+
 /**
  * Full team-context packet returned from `GET /briefing`. Used by
  * the runner and the web UI to initialize themselves with team/
- * role/directive/objectives context. The `instructions` string is pre-composed
- * server-side and passed verbatim into the MCP `Server({instructions})`
- * init.
+ * role/permissions/objectives context. Extends `Member` so the
+ * caller's own name/role/permissions/instructions are flat at the
+ * top level — teammates appear in the `teammates` list as the
+ * public `Teammate` projection.
  */
-export interface BriefingResponse {
-  name: string;
-  role: string;
-  userType: UserType;
+export interface BriefingResponse extends Member {
   team: Team;
   teammates: Teammate[];
-  /** Objectives currently assigned to this user with status === 'active' or 'blocked'. */
+  /** Objectives currently assigned to this member with status === 'active' or 'blocked'. */
   openObjectives: Objective[];
-  instructions: string;
 }
 
 /** Response from `GET /roster`. */
@@ -212,21 +216,22 @@ export interface HistoryResponse {
 
 /**
  * Request body for `POST /session/totp`. The SPA submits a 6-digit
- * code and the server iterates enrolled users to find a match. The
- * optional `user` field is a CLI hint: when present, the server
- * skips iteration and verifies against that specific user only,
+ * code and the server iterates enrolled members to find a match. The
+ * optional `member` field is a CLI hint: when present, the server
+ * skips iteration and verifies against that specific member only,
  * preserving the targeted-login flow for automation that already
  * knows which name is logging in.
  */
 export interface TotpLoginRequest {
   code: string;
-  user?: string;
+  member?: string;
 }
 
 export interface SessionResponse {
-  user: string;
-  role: string;
-  userType: UserType;
+  /** Authenticated member name. */
+  member: string;
+  role: Role;
+  permissions: Permission[];
   expiresAt: number;
 }
 
@@ -248,67 +253,71 @@ export interface PushSubscriptionResponse {
   createdAt: number;
 }
 
-// ───────────────────────── Users ──────────────────────────────
+// ─────────────────────────── Members ──────────────────────────────────
 
 /**
- * `POST /users` body — admin-only. Server generates the bearer token
- * and (for humans) the TOTP secret; the plaintext of both is returned
- * exactly once in `CreateUserResponse` and never again.
+ * `POST /members` body — requires `members.manage`. Server generates
+ * the bearer token; the plaintext is returned exactly once in
+ * `CreateMemberResponse` and never again. TOTP is optional and
+ * enrolled separately via `POST /members/:name/enroll-totp` — it's
+ * no longer gated by a type, anyone can enroll.
+ *
+ * `permissions` accepts either preset names or leaf permissions in a
+ * flat array; the server resolves presets and validates every entry.
  */
-export interface CreateUserRequest {
+export interface CreateMemberRequest {
   name: string;
-  userType: UserType;
-  role: string;
+  role: Role;
+  instructions?: string;
+  /** Each entry: preset name (resolved by server) or leaf permission. */
+  permissions: string[];
 }
 
 /**
- * `POST /users` response. The plaintext `token` is shown to the admin
- * who creates the user, then immediately hashed on disk. Humans
- * (admin/operator) also receive a `totpSecret` (base32) and
- * `totpUri` (otpauth://) that the admin shares with the new user to
- * enroll in an authenticator app; machines get neither.
+ * `POST /members` response. The plaintext `token` is shown to the
+ * admin who created the member, then immediately hashed on disk.
  */
-export interface CreateUserResponse {
-  user: Teammate;
+export interface CreateMemberResponse {
+  member: Teammate;
   token: string;
-  totpSecret?: string;
-  totpUri?: string;
 }
 
 /**
- * `PATCH /users/:name` body. Any subset of fields may be present;
- * `null` is not allowed — omit a field to leave it alone. Changing
- * `userType` enforces the "at least one admin must remain" invariant.
+ * `PATCH /members/:name` body. Any subset of fields may be present;
+ * omit a field to leave it alone. Changing permissions enforces the
+ * "at least one member with `members.manage` must remain" invariant.
  */
-export interface UpdateUserRequest {
-  userType?: UserType;
-  role?: string;
+export interface UpdateMemberRequest {
+  role?: Role;
+  instructions?: string;
+  /** Same preset-or-leaf shape as CreateMemberRequest. */
+  permissions?: string[];
 }
 
-/** `GET /users` response — admin-only, with full userType info. */
-export interface ListUsersResponse {
-  users: Teammate[];
+/** `GET /members` response — requires `members.manage`. */
+export interface ListMembersResponse {
+  members: Member[];
 }
 
 /**
- * `POST /users/:name/rotate-token` response — admin or self. Returns
- * the new plaintext token (shown once).
+ * `POST /members/:name/rotate-token` response — requires
+ * `members.manage` OR self. Returns the new plaintext token.
  */
 export interface RotateTokenResponse {
   token: string;
 }
 
 /**
- * `POST /users/:name/enroll-totp` response — admin or self. Returns
- * the new TOTP secret + otpauth URI so the caller can render a QR.
- * Humans only; servers return 409 for an agent target.
+ * `POST /members/:name/enroll-totp` response — requires
+ * `members.manage` OR self. Returns the new TOTP secret + otpauth
+ * URI. Any member may enroll; there's no type gate.
  */
 export interface EnrollTotpResponse {
   totpSecret: string;
   totpUri: string;
 }
 
-// ───────────────────────── Objectives ─────────────────────────
+// ─────────────────────────── Objectives ───────────────────────────────
 
 export type ObjectiveStatus = 'active' | 'blocked' | 'done' | 'cancelled';
 
@@ -316,7 +325,7 @@ export type ObjectiveStatus = 'active' | 'blocked' | 'done' | 'cancelled';
  * An objective is the apex task primitive on a team: push-assigned,
  * outcome-required, single-assignee. The `outcome` field is the tangible
  * definition of "done" that propagates into tool descriptions and channel
- * pushes so the agent always has the acceptance criteria in front of them.
+ * pushes so the assignee always has the acceptance criteria in front of them.
  */
 export interface Objective {
   id: string;
@@ -330,13 +339,12 @@ export interface Objective {
   originator: string;
   /**
    * Additional names that have been explicitly added to the
-   * objective's discussion thread by the director or originator.
-   * Watchers receive every lifecycle event and every discussion post
-   * on their SSE streams without being the assignee. Use this for
-   * "keep me in the loop" awareness — reviewers tracking a feature,
-   * ops watching a blocker, a subject-matter expert who may be asked
-   * to weigh in. Directors are implicit members regardless and do
-   * NOT appear in this list; only explicit non-director watchers.
+   * objective's discussion thread. Watchers receive every lifecycle
+   * event and every discussion post on their SSE streams without
+   * being the assignee. Members with `objectives.watch` can add
+   * themselves or others; originators can manage their own
+   * objectives' watchers. Members with `members.manage` are implicit
+   * observers regardless and do NOT appear in this list.
    */
   watchers: string[];
   createdAt: number;
@@ -349,11 +357,9 @@ export interface Objective {
   blockReason: string | null;
   /**
    * Files attached to the objective at creation time. Thread members
-   * (originator, assignee, watchers, directors) all receive read
-   * grants for each attachment, so any thread-scoped UI can render
-   * them alongside the objective body. New watchers added later and
-   * reassigned assignees backfill their grants via the respective
-   * mutation handlers so access tracks thread membership.
+   * (originator, assignee, watchers) all receive read grants for each
+   * attachment, so any thread-scoped UI can render them alongside
+   * the objective body.
    */
   attachments: Attachment[];
 }
@@ -398,7 +404,7 @@ export interface CreateObjectiveRequest {
    * Optional initial watchers (names that should be looped into
    * the objective's thread from the start). Duplicates and the
    * objective's own assignee/originator are de-duped server-side.
-   * Every name must resolve to a known team slot.
+   * Every name must resolve to a known team member.
    */
   watchers?: string[];
   /**
@@ -414,7 +420,7 @@ export interface CreateObjectiveRequest {
  * be omitted; both may be present for a combined add + remove.
  * Names that are already watchers are no-ops on `add`, and
  * names that aren't currently watchers are no-ops on `remove`.
- * Every name in both lists must resolve to a known team slot.
+ * Every name in both lists must resolve to a known team member.
  */
 export interface UpdateWatchersRequest {
   add?: string[];
@@ -441,7 +447,7 @@ export interface ReassignObjectiveRequest {
 
 /**
  * Post a discussion message into an objective's thread. Members of the
- * thread (originator, assignee, directors) all receive it via their
+ * thread (originator, assignee, watchers) all receive it via their
  * SSE streams. The post is a normal team `Message` with thread
  * key `obj:<id>`, not an event-log entry.
  */
@@ -470,6 +476,8 @@ export interface ListObjectivesQuery {
   assignee?: string;
   status?: ObjectiveStatus;
 }
+
+// ─────────────────────────── Activity / Traces ────────────────────────
 
 /**
  * Trace capture — one structured trace entry recovered from the wire
@@ -542,24 +550,16 @@ export interface OpaqueHttpEntry {
 }
 
 /**
- * Activity event — one entry in the append-only timeline a user
+ * Activity event — one entry in the append-only timeline a member
  * streams to the server while their connection is alive. Humans
  * rarely emit these (no MCP runner); agents produce the bulk as
  * their MITM proxy captures outbound traffic.
  *
- * Activity is the source of truth for "what did this user actually
+ * Activity is the source of truth for "what did this member actually
  * do" — LLM calls, opaque HTTP to non-Anthropic endpoints, and
- * objective lifecycle markers. Objective "traces" are no longer a
- * separate table; they're a time-range slice of this stream
- * between `objective_open` and `objective_close` markers for a
- * given objectiveId.
- *
- * Kinds:
- *   - `objective_open`  — the user just took ownership of an objective
- *   - `objective_close` — the user released it (done/cancelled/reassigned)
- *   - `llm_exchange`    — a parsed Anthropic API request/response pair
- *   - `opaque_http`     — a non-Anthropic HTTP exchange captured by the
- *                         MITM proxy (telemetry, update checks, etc.)
+ * objective lifecycle markers. Objective "traces" are a time-range
+ * slice of this stream between `objective_open` and `objective_close`
+ * markers for a given objectiveId.
  */
 export type ActivityEvent =
   | ActivityObjectiveOpen
@@ -601,11 +601,11 @@ export interface ActivityOpaqueHttp {
 
 /**
  * One activity row as the server stores it — the upload event plus
- * the server-assigned id + user name.
+ * the server-assigned id + member name.
  */
 export interface ActivityRow {
   readonly id: number;
-  readonly userName: string;
+  readonly memberName: string;
   readonly event: ActivityEvent;
   readonly createdAt: number;
 }
@@ -638,12 +638,12 @@ export interface ListActivityResponse {
   readonly activity: ActivityRow[];
 }
 
-// ───────────────────────── Filesystem ─────────────────────────
+// ─────────────────────────── Filesystem ───────────────────────────────
 
 /**
  * One entry in the ac7 virtual filesystem — either a file or a
  * directory. Paths are absolute Unix-style; the first segment is
- * the owning slot (`/<slotname>/...`).
+ * the owning member (`/<membername>/...`).
  *
  * For directories: `size`, `mimeType`, and `hash` are null.
  * For files: all three are populated; `hash` is SHA-256 hex of the

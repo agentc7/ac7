@@ -2,7 +2,7 @@
  * Header bar — identity + connection status.
  *
  * Layout (left → right):
- *   ☰  ▲ logo  │  NAME · userType · team-name   …   notif · ●ONLINE
+ *   ☰  ▲ logo  │  NAME · role · team-name   …   notif · ●ONLINE
  *
  * Surface is paper with a subtle bottom rule, matching the canonical
  * topbar treatment from theme.css. Connection state uses canonical
@@ -85,14 +85,15 @@ export function Header() {
           class="font-display truncate"
           style="font-weight:700;font-size:18px;letter-spacing:-0.01em;color:var(--ink);line-height:1"
         >
-          {s.user}
+          {s.member}
         </span>
 
-        {/* UserType pill — `.badge` from theme.css with state variants */}
+        {/* Role title pill — `.badge` from theme.css with privilege tint */}
         <span
-          class={`badge ${s.userType === 'admin' ? 'solid' : s.userType === 'operator' || s.userType === 'lead-agent' ? 'ember' : 'soft'} hidden sm:inline-flex flex-shrink-0`}
+          class={`badge ${s.permissions.includes('members.manage') ? 'solid' : s.permissions.includes('objectives.create') ? 'ember' : 'soft'} hidden sm:inline-flex flex-shrink-0`}
+          title={s.role.description.length > 0 ? s.role.description : undefined}
         >
-          {formatUserType(s.userType)}
+          {s.role.title.toUpperCase()}
         </span>
 
         {b && (
@@ -125,10 +126,4 @@ export function Header() {
       </div>
     </header>
   );
-}
-
-function formatUserType(userType: string): string {
-  if (userType === 'lead-agent') return 'LEAD';
-  if (userType === 'operator') return 'OP';
-  return userType.toUpperCase();
 }

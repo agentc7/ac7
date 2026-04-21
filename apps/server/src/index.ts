@@ -14,17 +14,17 @@ import { parseArgs } from 'node:util';
 import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 import { KekResolutionError, resolveKek } from './kek.js';
 import { logger } from './logger.js';
-import { type ListenInfo, runServer } from './run.js';
 import {
   ConfigNotFoundError,
   defaultConfigPath,
   exampleConfig,
   type HttpsConfig,
   loadTeamConfigFromFile,
+  MemberLoadError,
   setKek,
   type TeamConfig,
-  UserLoadError,
-} from './slots.js';
+} from './members.js';
+import { type ListenInfo, runServer } from './run.js';
 import { createTtyWizardIO, runFirstRunWizard } from './wizard.js';
 
 const USAGE = `ac7-server
@@ -88,7 +88,7 @@ async function loadOrCreateTeamConfig(configPath: string): Promise<TeamConfig> {
     if (err instanceof ConfigNotFoundError) {
       return runWizardOrFail(configPath);
     }
-    if (err instanceof UserLoadError) {
+    if (err instanceof MemberLoadError) {
       process.stderr.write(`ac7-server: ${err.message}\n`);
       process.exit(1);
     }
@@ -111,7 +111,7 @@ async function runWizardOrFail(configPath: string): Promise<TeamConfig> {
   try {
     return await runFirstRunWizard({ configPath, io });
   } catch (err) {
-    if (err instanceof UserLoadError) {
+    if (err instanceof MemberLoadError) {
       process.stderr.write(`ac7-server: ${err.message}\n`);
       process.exit(1);
     }
@@ -183,9 +183,8 @@ async function main(): Promise<void> {
   }
 
   const {
-    store: slots,
+    store: members,
     team,
-    roles,
     https: httpsFromConfig,
     webPush,
   } = await loadOrCreateTeamConfig(configPath);
@@ -211,9 +210,8 @@ async function main(): Promise<void> {
   }
 
   const running = await runServer({
-    slots,
+    members,
     team,
-    roles,
     https,
     webPush,
     configPath,
@@ -237,11 +235,11 @@ async function main(): Promise<void> {
         }
       }
       lines.push(
-        `  team: ${team.name}`,
-        `  directive:  ${team.directive}`,
-        `  config:   ${configPath}`,
-        `  db:       ${dbPath}`,
-        `  slots:    ${slots.size()} (${slots.names().join(', ')})`,
+        `  team:      ${team.name}`,
+        `  directive: ${team.directive}`,
+        `  config:    ${configPath}`,
+        `  db:        ${dbPath}`,
+        `  members:   ${members.size()} (${members.names().join(', ')})`,
       );
       process.stdout.write(`${lines.join('\n')}\n`);
     },

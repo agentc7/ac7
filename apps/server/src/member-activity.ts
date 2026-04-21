@@ -1,24 +1,24 @@
 /**
- * Agent activity stream store.
+ * Member activity stream store.
  *
- * Append-only timeline per user, capturing everything the user's
- * runner observed: LLM exchanges through the MITM proxy, opaque
- * HTTP calls to non-Anthropic endpoints, and objective lifecycle
- * markers (`objective_open` / `objective_close`). Objective traces
- * are a view over this stream — you query by time range bounded
- * by the markers for a given objectiveId.
+ * Append-only timeline per member, capturing everything the member's
+ * runner observed: LLM exchanges through the MITM proxy, opaque HTTP
+ * calls to non-Anthropic endpoints, and objective lifecycle markers
+ * (`objective_open` / `objective_close`). Objective traces are a
+ * view over this stream — you query by time range bounded by the
+ * markers for a given objectiveId.
  *
  * The store is a thin wrapper around SQLite plus an in-process
- * `EventEmitter` that the SSE endpoint subscribes to for live
- * tail. Appends fire the emitter synchronously after the insert
- * commits, so a subscriber attached during an append never misses
- * a row — and a subscriber that attaches AFTER an append can pull
- * the tail via `list()` and merge with the live stream, if the
- * client cares about zero gaps.
+ * `EventEmitter` that the SSE endpoint subscribes to for live tail.
+ * Appends fire the emitter synchronously after the insert commits,
+ * so a subscriber attached during an append never misses a row — and
+ * a subscriber that attaches AFTER an append can pull the tail via
+ * `list()` and merge with the live stream, if the client cares about
+ * zero gaps.
  *
  * Payloads are stored as JSON blobs (`event_json`). The server
- * doesn't introspect them beyond validating the discriminator at
- * the app layer; everything else is the SDK's responsibility.
+ * doesn't introspect them beyond validating the discriminator at the
+ * app layer; everything else is the SDK's responsibility.
  */
 
 import { EventEmitter } from 'node:events';
@@ -32,23 +32,23 @@ import type { ActivityEvent, ActivityRow } from '@agentc7/sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
 
 const CREATE_SCHEMA = `
-  CREATE TABLE IF NOT EXISTS agent_activity (
+  CREATE TABLE IF NOT EXISTS member_activity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    slot_callsign TEXT NOT NULL,
+    member_name TEXT NOT NULL,
     ts INTEGER NOT NULL,
     kind TEXT NOT NULL,
     event_json TEXT NOT NULL,
     created_at INTEGER NOT NULL
   );
-  CREATE INDEX IF NOT EXISTS agent_activity_slot_ts_idx
-    ON agent_activity (slot_callsign, ts);
-  CREATE INDEX IF NOT EXISTS agent_activity_slot_kind_ts_idx
-    ON agent_activity (slot_callsign, kind, ts);
+  CREATE INDEX IF NOT EXISTS member_activity_member_ts_idx
+    ON member_activity (member_name, ts);
+  CREATE INDEX IF NOT EXISTS member_activity_member_kind_ts_idx
+    ON member_activity (member_name, kind, ts);
 `;
 
 interface ActivityRowRaw {
   id: number;
-  slot_callsign: string;
+  member_name: string;
   ts: number;
   kind: string;
   event_json: string;
@@ -84,26 +84,13 @@ function rowToActivity(row: ActivityRowRaw): ActivityRow {
   }
   return {
     id: row.id,
-    userName: row.slot_callsign,
+    memberName: row.member_name,
     event,
     createdAt: row.created_at,
   };
 }
 
-/**
- * Server-side alias for `@agentc7/core`'s `ListActivityFilter`.
- * Re-exported so existing server callers don't have to switch imports
- * in the same PR; new code should import directly from core.
- */
 export type ListActivityFilter = CoreListActivityFilter;
-
-/**
- * Server-side alias for `@agentc7/core`'s `ActivityStore`. The
- * SQLite impl below `implements ActivityStore` from core; this alias
- * keeps existing server-side consumer types stable while the consumer
- * migration PR moves the rest of the codebase onto the core import
- * directly.
- */
 export type ActivityStore = CoreActivityStore;
 
 const DEFAULT_LIMIT = 200;
@@ -117,19 +104,17 @@ class SqliteActivityStore implements CoreActivityStore {
   constructor(db: DatabaseSyncInstance) {
     this.db = db;
     this.db.exec(CREATE_SCHEMA);
-    // Prepared statements for the two common paths. Range queries
-    // are built on the fly because the WHERE clause varies.
     this.insertStmt = db.prepare(
-      `INSERT INTO agent_activity (slot_callsign, ts, kind, event_json, created_at)
+      `INSERT INTO member_activity (member_name, ts, kind, event_json, created_at)
        VALUES (?, ?, ?, ?, ?)`,
     );
-    // EventEmitter's default max listeners is 10; a director with
-    // the web UI open + the user itself tailing its own stream
-    // could realistically hit 2-3 per user, so bump to 50 to be safe.
+    // An admin with the web UI open + the member itself tailing its
+    // own stream can realistically hit 2-3 listeners per member; 50
+    // gives plenty of headroom.
     this.emitter.setMaxListeners(50);
   }
 
-  append(userName: string, events: readonly ActivityEvent[]): ActivityRow[] {
+  append(memberName: string, events: readonly ActivityEvent[]): ActivityRow[] {
     if (events.length === 0) return [];
     const now = Date.now();
     const inserted: ActivityRow[] = [];
@@ -141,7 +126,7 @@ class SqliteActivityStore implements CoreActivityStore {
     try {
       for (const event of events) {
         const result = this.insertStmt.run(
-          userName,
+          memberName,
           event.ts,
           event.kind,
           JSON.stringify(event),
@@ -150,7 +135,7 @@ class SqliteActivityStore implements CoreActivityStore {
         const id = Number(result.lastInsertRowid ?? 0);
         inserted.push({
           id,
-          userName,
+          memberName,
           event,
           createdAt: now,
         });
@@ -165,12 +150,8 @@ class SqliteActivityStore implements CoreActivityStore {
       throw err;
     }
 
-    // Fan out to live subscribers. Synchronous — if a subscriber
-    // throws, we log nothing here and let the emitter's default
-    // behavior propagate (which at this point is harmless since
-    // the write already committed).
     for (const row of inserted) {
-      this.emitter.emit(`row:${userName}`, row);
+      this.emitter.emit(`row:${memberName}`, row);
     }
 
     return inserted;
@@ -178,8 +159,8 @@ class SqliteActivityStore implements CoreActivityStore {
 
   list(filter: ListActivityFilter): ActivityRow[] {
     const limit = Math.min(filter.limit ?? DEFAULT_LIMIT, MAX_LIMIT);
-    const conditions: string[] = ['slot_callsign = ?'];
-    const params: Array<string | number> = [filter.userName];
+    const conditions: string[] = ['member_name = ?'];
+    const params: Array<string | number> = [filter.memberName];
     if (filter.from !== undefined) {
       conditions.push('ts >= ?');
       params.push(filter.from);
@@ -194,7 +175,7 @@ class SqliteActivityStore implements CoreActivityStore {
       params.push(...filter.kinds);
     }
     const sql =
-      `SELECT * FROM agent_activity WHERE ${conditions.join(' AND ')} ` +
+      `SELECT * FROM member_activity WHERE ${conditions.join(' AND ')} ` +
       `ORDER BY ts DESC, id DESC LIMIT ?`;
     params.push(limit);
     const stmt = this.db.prepare(sql);
@@ -202,8 +183,8 @@ class SqliteActivityStore implements CoreActivityStore {
     return rows.map(rowToActivity);
   }
 
-  subscribe(userName: string, listener: ActivityListener): () => void {
-    const key = `row:${userName}`;
+  subscribe(memberName: string, listener: ActivityListener): () => void {
+    const key = `row:${memberName}`;
     this.emitter.on(key, listener);
     return () => {
       this.emitter.off(key, listener);
@@ -213,23 +194,17 @@ class SqliteActivityStore implements CoreActivityStore {
   /**
    * Delete every activity row older than `cutoffTs` (by `event.ts`).
    * Returns the number of rows deleted. Not part of the core
-   * `ActivityStore` interface — a non-persistent backend has
-   * nothing to prune — but surfaced on the SQLite impl for the
+   * `ActivityStore` interface — a non-persistent backend has nothing
+   * to prune — but surfaced on the SQLite impl for the
    * `ac7 prune-traces` CLI and any future background-sweep timer.
    */
   prune(cutoffTs: number): number {
-    const stmt = this.db.prepare('DELETE FROM agent_activity WHERE ts < ?');
+    const stmt = this.db.prepare('DELETE FROM member_activity WHERE ts < ?');
     const result = stmt.run(cutoffTs);
     return Number(result.changes ?? 0);
   }
 }
 
-/**
- * Public type for the SQLite activity store, exposed so callers like
- * the `ac7 prune-traces` CLI can invoke the impl-specific `prune`
- * method without casting. The core `ActivityStore` interface covers
- * the append/list/subscribe surface.
- */
 export type SqliteActivityStoreHandle = SqliteActivityStore;
 
 export function createSqliteActivityStore(db: DatabaseSyncInstance): SqliteActivityStoreHandle {
@@ -237,20 +212,12 @@ export function createSqliteActivityStore(db: DatabaseSyncInstance): SqliteActiv
 }
 
 /**
- * Stand-alone helper for tools (like `ac7 prune-traces`) that need to
- * open the activity DB, prune, and close — without spinning up a full
- * `runServer`. The caller is responsible for picking `cutoffTs`; see
- * `parseDurationToCutoff` in the CLI for the user-facing shape.
- *
- * Returns the number of activity rows deleted.
+ * Stand-alone helper for `ac7 prune-traces` that opens the activity
+ * DB, prunes, and closes — without spinning up a full `runServer`.
  */
 export function pruneActivityDb(db: DatabaseSyncInstance, cutoffTs: number): number {
-  // Ensure the schema exists before pruning — `ac7 prune-traces` may
-  // be run against a fresh DB that the server has never booted
-  // against, in which case the table wouldn't exist yet. Idempotent
-  // with the constructor's CREATE IF NOT EXISTS.
   db.exec(CREATE_SCHEMA);
-  const stmt = db.prepare('DELETE FROM agent_activity WHERE ts < ?');
+  const stmt = db.prepare('DELETE FROM member_activity WHERE ts < ?');
   const result = stmt.run(cutoffTs);
   return Number(result.changes ?? 0);
 }

@@ -94,8 +94,8 @@ individual contributors never invoke it directly.
 # 1. Start a broker (first run triggers the team setup wizard)
 ac7 serve
 
-# 2. In another terminal, set your slot token
-export AC7_TOKEN=ac7_your_slot_token
+# 2. In another terminal, set your user's bearer token
+export AC7_TOKEN=ac7_your_bearer_token
 
 # 3. Preflight check the environment
 ac7 claude-code --doctor

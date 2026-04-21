@@ -18,7 +18,7 @@ import type { DatabaseSyncInstance, StatementInstance } from '../db.js';
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS push_subscriptions (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    slot_callsign   TEXT NOT NULL,
+    member_name     TEXT NOT NULL,
     endpoint        TEXT NOT NULL UNIQUE,
     p256dh          TEXT NOT NULL,
     auth            TEXT NOT NULL,
@@ -28,12 +28,12 @@ const CREATE_SCHEMA = `
     last_error_at   INTEGER,
     last_error_code INTEGER
   );
-  CREATE INDEX IF NOT EXISTS push_subscriptions_slot_idx ON push_subscriptions(slot_callsign);
+  CREATE INDEX IF NOT EXISTS push_subscriptions_member_idx ON push_subscriptions(member_name);
 `;
 
 export interface PushSubscriptionRow {
   id: number;
-  userName: string;
+  memberName: string;
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -46,7 +46,7 @@ export interface PushSubscriptionRow {
 
 interface RawRow {
   id: number;
-  slot_callsign: string;
+  member_name: string;
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -60,7 +60,7 @@ interface RawRow {
 function rowToSub(row: RawRow): PushSubscriptionRow {
   return {
     id: row.id,
-    userName: row.slot_callsign,
+    memberName: row.member_name,
     endpoint: row.endpoint,
     p256dh: row.p256dh,
     auth: row.auth,
@@ -73,7 +73,7 @@ function rowToSub(row: RawRow): PushSubscriptionRow {
 }
 
 export interface PushSubscriptionInput {
-  userName: string;
+  memberName: string;
   endpoint: string;
   p256dh: string;
   auth: string;
@@ -83,7 +83,7 @@ export interface PushSubscriptionInput {
 export class PushSubscriptionStore {
   private readonly db: DatabaseSyncInstance;
   private readonly upsertStmt: StatementInstance;
-  private readonly selectBySlotStmt: StatementInstance;
+  private readonly selectByMemberStmt: StatementInstance;
   private readonly selectByEndpointStmt: StatementInstance;
   private readonly deleteByIdStmt: StatementInstance;
   private readonly deleteByEndpointStmt: StatementInstance;
@@ -101,10 +101,10 @@ export class PushSubscriptionStore {
     // refreshes created_at. SQLite's ON CONFLICT handles this atomically.
     this.upsertStmt = this.db.prepare(
       `INSERT INTO push_subscriptions
-         (slot_callsign, endpoint, p256dh, auth, user_agent, created_at)
+         (member_name, endpoint, p256dh, auth, user_agent, created_at)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(endpoint) DO UPDATE SET
-         slot_callsign   = excluded.slot_callsign,
+         member_name       = excluded.member_name,
          p256dh          = excluded.p256dh,
          auth            = excluded.auth,
          user_agent      = excluded.user_agent,
@@ -112,18 +112,18 @@ export class PushSubscriptionStore {
          last_error_at   = NULL,
          last_error_code = NULL`,
     );
-    this.selectBySlotStmt = this.db.prepare(
-      `SELECT id, slot_callsign, endpoint, p256dh, auth, user_agent,
+    this.selectByMemberStmt = this.db.prepare(
+      `SELECT id, member_name, endpoint, p256dh, auth, user_agent,
               created_at, last_success_at, last_error_at, last_error_code
-       FROM push_subscriptions WHERE slot_callsign = ?`,
+       FROM push_subscriptions WHERE member_name = ?`,
     );
     this.selectByEndpointStmt = this.db.prepare(
-      `SELECT id, slot_callsign, endpoint, p256dh, auth, user_agent,
+      `SELECT id, member_name, endpoint, p256dh, auth, user_agent,
               created_at, last_success_at, last_error_at, last_error_code
        FROM push_subscriptions WHERE endpoint = ?`,
     );
     this.deleteByIdStmt = this.db.prepare(
-      'DELETE FROM push_subscriptions WHERE id = ? AND slot_callsign = ?',
+      'DELETE FROM push_subscriptions WHERE id = ? AND member_name = ?',
     );
     this.deleteByEndpointStmt = this.db.prepare(
       'DELETE FROM push_subscriptions WHERE endpoint = ?',
@@ -144,7 +144,7 @@ export class PushSubscriptionStore {
   upsert(input: PushSubscriptionInput): PushSubscriptionRow {
     const now = this.now();
     this.upsertStmt.run(
-      input.userName,
+      input.memberName,
       input.endpoint,
       input.p256dh,
       input.auth,
@@ -160,8 +160,8 @@ export class PushSubscriptionStore {
     return rowToSub(row);
   }
 
-  listForUser(name: string): PushSubscriptionRow[] {
-    const rows = this.selectBySlotStmt.all(name) as unknown as RawRow[];
+  listForMember(name: string): PushSubscriptionRow[] {
+    const rows = this.selectByMemberStmt.all(name) as unknown as RawRow[];
     return rows.map(rowToSub);
   }
 
@@ -175,8 +175,8 @@ export class PushSubscriptionStore {
    * so a session can't delete other users' subscriptions even with
    * a guessed id.
    */
-  deleteForUser(id: number, userName: string): void {
-    this.deleteByIdStmt.run(id, userName);
+  deleteForMember(id: number, memberName: string): void {
+    this.deleteByIdStmt.run(id, memberName);
   }
 
   /**

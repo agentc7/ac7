@@ -3,7 +3,7 @@
  *
  * Subcommands:
  *   ac7 setup       — first-run wizard: create team config + enroll TOTP
- *   ac7 user        — list / create / update / delete team users
+ *   ac7 member        — list / create / update / delete team users
  *   ac7 enroll      — (re-)enroll a user for web UI login (TOTP)
  *   ac7 rotate      — rotate a user's bearer token
  *   ac7 claude-code — spawn claude-code wrapped in a ac7 runner
@@ -28,6 +28,7 @@ import { runClaudeCodeCommand } from './commands/claude-code.js';
 import { formatReport, runDoctor } from './commands/doctor.js';
 import { runEnrollCommand } from './commands/enroll.js';
 import { UsageError } from './commands/errors.js';
+import { runMemberCommand } from './commands/member.js';
 import { runObjectivesCommand } from './commands/objectives.js';
 import { runPruneTracesCommand } from './commands/prune-traces.js';
 import { type PushCommandInput, runPushCommand } from './commands/push.js';
@@ -37,21 +38,20 @@ import { type RotateCommandInput, runRotateCommand } from './commands/rotate.js'
 import { runServeCommand } from './commands/serve.js';
 import { runSetupCommand } from './commands/setup.js';
 import { runTelemetryCommand, type TelemetryEventKind } from './commands/telemetry.js';
-import { runUserCommand } from './commands/user.js';
 import { CLI_VERSION } from './version.js';
 
 const USAGE = `ac7 cli v${CLI_VERSION}
 
 usage:
   ac7 setup       [--config-path <path>]                 first-run wizard (team + first admin + TOTP)
-  ac7 user        list|create|update|delete [--config-path <path>]   offline user management (runs without the broker)
-  ac7 enroll      --user <name> [--config-path <path>]   (re-)enroll a user for web UI login
-  ac7 rotate      --user <name> [--config-path <path>]   rotate a user's bearer token (atomic; prints new token once)
+  ac7 member        list|create|update|delete [--config-path <path>]   offline user management (runs without the broker)
+  ac7 enroll      --member <name> [--config-path <path>]   (re-)enroll a user for web UI login
+  ac7 rotate      --member <name> [--config-path <path>]   rotate a user's bearer token (atomic; prints new token once)
   ac7 quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
   ac7 telemetry   enable|disable|preview|rotate|status       opt-in, zero-PII, off-by-default install telemetry
   ac7 claude-code [--no-trace] [--doctor] [--skip-doctor] [--unsafe-tls] [-- <claude args>...]   spawn claude-code wrapped in a ac7 runner
   ac7 push        --body <text> (--agent <id> | --broadcast) [--title <t>] [--level <lvl>] [--data key=value]...
-  ac7 roster      [--reveal-token --user <name> [--config-path <path>]]
+  ac7 roster      [--reveal-token --member <name> [--config-path <path>]]
                                     list teammates (no flags) or rotate+print a user's token (alias over 'ac7 rotate')
   ac7 objectives  list|view|create|update|complete|cancel|reassign   team objectives
   ac7 serve       [--config-path <path>] [--port <n>] [--host <h>] [--db <path>]
@@ -110,7 +110,7 @@ async function main(): Promise<void> {
     case 'setup':
       await handleSetup(rest);
       return;
-    case 'user':
+    case 'member':
       await handleUser(rest);
       return;
     case 'enroll':
@@ -236,7 +236,7 @@ async function handleUser(args: string[]): Promise<void> {
     return;
   }
   try {
-    await runUserCommand(args, (line) => log(line));
+    await runMemberCommand(args, (line) => log(line));
   } catch (err) {
     if (err instanceof UsageError) fail(err.message, 2);
     fail(err instanceof Error ? err.message : String(err));
@@ -417,7 +417,7 @@ async function handleRoster(args: string[]): Promise<void> {
   if (getBoolean(values, 'reveal-token')) {
     const user = getString(values, 'user');
     if (!user) {
-      fail('roster --reveal-token: --user <name> is required', 2);
+      fail('roster --reveal-token: --member <name> is required', 2);
     }
     log('');
     log(`ac7 roster --reveal-token → rotating '${user}' token.`);

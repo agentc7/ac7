@@ -105,8 +105,6 @@ body {
   text-rendering: optimizeLegibility;
   overflow: hidden;
   height: 100%;
-  -webkit-user-select: none;
-  -webkit-touch-callout: none;
   overscroll-behavior: none;
   position: fixed;
   width: 100%;

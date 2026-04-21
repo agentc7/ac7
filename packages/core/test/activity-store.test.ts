@@ -98,7 +98,7 @@ describe('InMemoryActivityStore.append', () => {
     expect(rows).toHaveLength(2);
     expect(rows[0]?.id).toBe(1);
     expect(rows[1]?.id).toBe(2);
-    expect(rows[0]?.userName).toBe('ALPHA-1');
+    expect(rows[0]?.memberName).toBe('ALPHA-1');
     expect(rows[0]?.createdAt).toBe(777);
     expect(rows[1]?.createdAt).toBe(777);
   });
@@ -127,7 +127,7 @@ describe('InMemoryActivityStore.list', () => {
   it('returns newest-first', () => {
     const s = store();
     s.append('ALPHA-1', [llm(100), llm(200), llm(150)]);
-    const rows = s.list({ userName: 'ALPHA-1' });
+    const rows = s.list({ memberName: 'ALPHA-1' });
     // Newest-first by ts; then stable on insertion within same ts.
     expect(rows.map((r) => r.event.ts)).toEqual([150, 200, 100]);
   });
@@ -135,12 +135,12 @@ describe('InMemoryActivityStore.list', () => {
   it('filters by kind', () => {
     const s = store();
     s.append('ALPHA-1', [llm(100), opaque(150), objectiveOpen(200)]);
-    const opaqueRows = s.list({ userName: 'ALPHA-1', kinds: ['opaque_http'] });
+    const opaqueRows = s.list({ memberName: 'ALPHA-1', kinds: ['opaque_http'] });
     expect(opaqueRows).toHaveLength(1);
     expect(opaqueRows[0]?.event.kind).toBe('opaque_http');
 
     const lifecycleRows = s.list({
-      userName: 'ALPHA-1',
+      memberName: 'ALPHA-1',
       kinds: ['objective_open', 'objective_close'] as readonly ActivityKind[],
     });
     expect(lifecycleRows).toHaveLength(1);
@@ -150,7 +150,7 @@ describe('InMemoryActivityStore.list', () => {
   it('filters by from/to inclusive', () => {
     const s = store();
     s.append('ALPHA-1', [llm(100), llm(200), llm(300), llm(400)]);
-    const rows = s.list({ userName: 'ALPHA-1', from: 200, to: 300 });
+    const rows = s.list({ memberName: 'ALPHA-1', from: 200, to: 300 });
     expect(rows.map((r) => r.event.ts).sort()).toEqual([200, 300]);
   });
 
@@ -158,7 +158,7 @@ describe('InMemoryActivityStore.list', () => {
     const s = store();
     const events = Array.from({ length: 50 }, (_, i) => llm(i + 1));
     s.append('ALPHA-1', events);
-    const rows = s.list({ userName: 'ALPHA-1', limit: 5 });
+    const rows = s.list({ memberName: 'ALPHA-1', limit: 5 });
     expect(rows).toHaveLength(5);
     expect(rows.map((r) => r.event.ts)).toEqual([50, 49, 48, 47, 46]);
   });
@@ -167,21 +167,21 @@ describe('InMemoryActivityStore.list', () => {
     const s = store({ maxLimit: 10 });
     const events = Array.from({ length: 100 }, (_, i) => llm(i + 1));
     s.append('ALPHA-1', events);
-    const rows = s.list({ userName: 'ALPHA-1', limit: 999 });
+    const rows = s.list({ memberName: 'ALPHA-1', limit: 999 });
     expect(rows).toHaveLength(10);
   });
 
   it('returns empty for unknown slot', () => {
     const s = store();
-    expect(s.list({ userName: 'NOBODY' })).toEqual([]);
+    expect(s.list({ memberName: 'NOBODY' })).toEqual([]);
   });
 
   it('isolates slots from each other', () => {
     const s = store();
     s.append('ALPHA-1', [llm(10)]);
     s.append('BRAVO-1', [llm(20), llm(30)]);
-    expect(s.list({ userName: 'ALPHA-1' })).toHaveLength(1);
-    expect(s.list({ userName: 'BRAVO-1' })).toHaveLength(2);
+    expect(s.list({ memberName: 'ALPHA-1' })).toHaveLength(1);
+    expect(s.list({ memberName: 'BRAVO-1' })).toHaveLength(2);
   });
 });
 
@@ -210,7 +210,7 @@ describe('InMemoryActivityStore.prune', () => {
     s.append('ALPHA-1', [llm(100), llm(200)]);
     expect(s.prune(1000)).toBe(2);
     expect(s.size()).toBe(0);
-    expect(s.list({ userName: 'ALPHA-1' })).toEqual([]);
+    expect(s.list({ memberName: 'ALPHA-1' })).toEqual([]);
   });
 
   it('cutoff before every row deletes nothing', () => {
@@ -307,7 +307,7 @@ describe('InMemoryActivityStore.subscribe', () => {
     const s = store();
     const seenCountAtFireTime: number[] = [];
     s.subscribe('ALPHA-1', () => {
-      seenCountAtFireTime.push(s.list({ userName: 'ALPHA-1' }).length);
+      seenCountAtFireTime.push(s.list({ memberName: 'ALPHA-1' }).length);
     });
     s.append('ALPHA-1', [llm(100), llm(200)]);
     // Both calls happen AFTER the batch was fully persisted, so both

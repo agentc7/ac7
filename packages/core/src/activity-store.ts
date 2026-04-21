@@ -1,6 +1,6 @@
 /**
- * Activity store — per-user append-only timeline of everything a
- * user's runner observed.
+ * Activity store — per-member append-only timeline of everything a
+ * member's runner observed.
  *
  * The broker's activity surface captures four kinds of events (see
  * `@agentc7/sdk/types`'s `ActivityEvent`):
@@ -11,7 +11,7 @@
  *     runner emits when the objectives tracker's open set changes.
  *
  * Objective "traces" are a time-range view over this stream: the web
- * UI queries `GET /users/:name/activity?from=<open>&to=<close>
+ * UI queries `GET /members/:name/activity?from=<open>&to=<close>
  * &kind=llm_exchange` rather than reading a separately-stored per-
  * objective blob.
  *
@@ -30,7 +30,7 @@ import type { ActivityEvent, ActivityKind, ActivityRow } from '@agentc7/sdk/type
 /** Filter for `ActivityStore.list`. All fields AND-combined. */
 export interface ListActivityFilter {
   /** Name whose stream to query. Required. */
-  userName: string;
+  memberName: string;
   /** Lower bound (inclusive) on `event.ts`. Omit for no lower bound. */
   from?: number;
   /** Upper bound (inclusive) on `event.ts`. Omit for no upper bound. */
@@ -71,7 +71,7 @@ export interface ActivityStore {
    * assigned ids + createdAt) in the order they were inserted.
    * Empty-array inputs are a no-op and return `[]`.
    */
-  append(userName: string, events: readonly ActivityEvent[]): ActivityRow[];
+  append(memberName: string, events: readonly ActivityEvent[]): ActivityRow[];
 
   /**
    * Range query. Returns newest-first, bounded by `filter.limit`
@@ -80,12 +80,12 @@ export interface ActivityStore {
   list(filter: ListActivityFilter): ActivityRow[];
 
   /**
-   * Attach a listener for rows landing for `userName`. Fires
+   * Attach a listener for rows landing for `memberName`. Fires
    * synchronously per row after the write commits. Returns an
    * unsubscribe function. Safe to call from inside a listener
    * (implementations must iterate a snapshot, not a live set).
    */
-  subscribe(userName: string, listener: ActivityListener): () => void;
+  subscribe(memberName: string, listener: ActivityListener): () => void;
 
   /**
    * Delete every row where `event.ts < cutoffTs`, across every
@@ -123,8 +123,8 @@ const DEFAULT_MAX_LIMIT = 1000;
  * restart; that's by design.
  */
 export class InMemoryActivityStore implements ActivityStore {
-  private readonly rowsByUser = new Map<string, ActivityRow[]>();
-  private readonly listenersByUser = new Map<string, Set<ActivityListener>>();
+  private readonly rowsByMember = new Map<string, ActivityRow[]>();
+  private readonly listenersByMember = new Map<string, Set<ActivityListener>>();
   private readonly now: () => number;
   private readonly maxLimit: number;
   private nextId = 1;
@@ -134,13 +134,13 @@ export class InMemoryActivityStore implements ActivityStore {
     this.maxLimit = options.maxLimit ?? DEFAULT_MAX_LIMIT;
   }
 
-  append(userName: string, events: readonly ActivityEvent[]): ActivityRow[] {
+  append(memberName: string, events: readonly ActivityEvent[]): ActivityRow[] {
     if (events.length === 0) return [];
 
     const createdAt = this.now();
     const rows: ActivityRow[] = events.map((event) => ({
       id: this.nextId++,
-      userName,
+      memberName,
       event,
       createdAt,
     }));
@@ -148,17 +148,17 @@ export class InMemoryActivityStore implements ActivityStore {
     // All-or-nothing: the in-memory store has no real transaction,
     // but we build the full row array BEFORE mutating state so an
     // exception inside this loop can't leave a half-written append.
-    let bucket = this.rowsByUser.get(userName);
+    let bucket = this.rowsByMember.get(memberName);
     if (!bucket) {
       bucket = [];
-      this.rowsByUser.set(userName, bucket);
+      this.rowsByMember.set(memberName, bucket);
     }
     for (const row of rows) bucket.push(row);
 
     // Snapshot listeners before iterating — a handler may unsubscribe
     // (or subscribe a new handler) during delivery; iterating a live
     // Set would produce undefined-order behavior for those cases.
-    const listeners = this.listenersByUser.get(userName);
+    const listeners = this.listenersByMember.get(memberName);
     if (listeners && listeners.size > 0) {
       for (const listener of [...listeners]) {
         try {
@@ -178,7 +178,7 @@ export class InMemoryActivityStore implements ActivityStore {
   }
 
   list(filter: ListActivityFilter): ActivityRow[] {
-    const bucket = this.rowsByUser.get(filter.userName);
+    const bucket = this.rowsByMember.get(filter.memberName);
     if (!bucket || bucket.length === 0) return [];
 
     const limit = clampListLimit(filter.limit, this.maxLimit);
@@ -198,22 +198,22 @@ export class InMemoryActivityStore implements ActivityStore {
     return matches;
   }
 
-  subscribe(userName: string, listener: ActivityListener): () => void {
-    let listeners = this.listenersByUser.get(userName);
+  subscribe(memberName: string, listener: ActivityListener): () => void {
+    let listeners = this.listenersByMember.get(memberName);
     if (!listeners) {
       listeners = new Set();
-      this.listenersByUser.set(userName, listeners);
+      this.listenersByMember.set(memberName, listeners);
     }
     listeners.add(listener);
     return () => {
-      const current = this.listenersByUser.get(userName);
+      const current = this.listenersByMember.get(memberName);
       current?.delete(listener);
     };
   }
 
   prune(cutoffTs: number): number {
     let deleted = 0;
-    for (const [user, bucket] of this.rowsByUser) {
+    for (const [member, bucket] of this.rowsByMember) {
       const kept: ActivityRow[] = [];
       for (const row of bucket) {
         if (row.event.ts < cutoffTs) {
@@ -223,18 +223,18 @@ export class InMemoryActivityStore implements ActivityStore {
         }
       }
       if (kept.length === 0) {
-        this.rowsByUser.delete(user);
+        this.rowsByMember.delete(member);
       } else if (kept.length !== bucket.length) {
-        this.rowsByUser.set(user, kept);
+        this.rowsByMember.set(member, kept);
       }
     }
     return deleted;
   }
 
-  /** Test-only: total row count across all users. */
+  /** Test-only: total row count across all members. */
   size(): number {
     let total = 0;
-    for (const bucket of this.rowsByUser.values()) total += bucket.length;
+    for (const bucket of this.rowsByMember.values()) total += bucket.length;
     return total;
   }
 }
