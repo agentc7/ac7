@@ -71,15 +71,15 @@ export function threadKeyOf(msg: Message, self: string): string {
   const explicit = typeof msg.data?.thread === 'string' ? (msg.data.thread as string) : null;
   if (explicit !== null && explicit.length > 0) return explicit;
 
-  if (msg.agentId === null) return PRIMARY_THREAD;
-  if (msg.agentId === self) {
+  if (msg.to === null) return PRIMARY_THREAD;
+  if (msg.to === self) {
     // DM addressed to me — thread is keyed by the other party's
     // name. Edge case: self-DM (agentId=self AND from=self) gets
     // its own `dm:self` key so it doesn't collide with primary.
     return msg.from && msg.from !== self ? dmThreadKey(msg.from) : dmThreadKey('self');
   }
   // Outbound DM from me to someone else.
-  return dmThreadKey(msg.agentId);
+  return dmThreadKey(msg.to);
 }
 
 /**

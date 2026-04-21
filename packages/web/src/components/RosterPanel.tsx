@@ -5,11 +5,11 @@
  *
  * Visual structure mirrors theme.css patterns:
  *   - .avatar for the name initial
- *   - .badge variants for authority tier
+ *   - .badge variants for userType
  *   - .dot for connection state
  */
 
-import type { Agent } from '@agentc7/sdk/types';
+import type { Presence } from '@agentc7/sdk/types';
 import { briefing } from '../lib/briefing.js';
 import { roster } from '../lib/roster.js';
 import { senderTextClass } from '../lib/theme.js';
@@ -19,15 +19,10 @@ export interface RosterPanelProps {
   viewer: string;
 }
 
-function authorityBadgeClass(authority: string): string {
-  if (authority === 'director') return 'badge solid';
-  if (authority === 'manager') return 'badge ember solid';
+function roleBadgeClass(permissions: readonly string[]): string {
+  if (permissions.includes('members.manage')) return 'badge solid';
+  if (permissions.includes('objectives.create')) return 'badge ember solid';
   return 'badge soft';
-}
-
-function formatAuthority(authority: string): string {
-  if (authority === 'individual-contributor') return 'IC';
-  return authority;
 }
 
 function avatarInitials(name: string): string {
@@ -49,8 +44,8 @@ export function RosterPanel({ viewer }: RosterPanelProps) {
       </div>
     );
   }
-  const connectedByName = new Map<string, Agent>(r.connected.map((a) => [a.agentId, a]));
-  const isDirector = b?.authority === 'director';
+  const connectedByName = new Map<string, Presence>(r.connected.map((a) => [a.name, a]));
+  const isAdmin = b?.permissions.includes('members.manage') ?? false;
 
   return (
     <div
@@ -111,13 +106,13 @@ export function RosterPanel({ viewer }: RosterPanelProps) {
                         (you)
                       </span>
                     )}
-                    <span class={authorityBadgeClass(t.authority)}>
-                      {formatAuthority(t.authority)}
-                    </span>
+                    <span class={roleBadgeClass(t.permissions)}>{t.role.title.toUpperCase()}</span>
                   </div>
-                  <div style="font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase">
-                    {t.role}
-                  </div>
+                  {t.role.description.length > 0 && (
+                    <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);line-height:1.4">
+                      {t.role.description}
+                    </div>
+                  )}
                 </div>
               </div>
             );
@@ -158,15 +153,15 @@ export function RosterPanel({ viewer }: RosterPanelProps) {
                   {identityCluster}
                   {statusCluster}
                 </button>
-                {isDirector && (
+                {isAdmin && (
                   <button
                     type="button"
                     onClick={() => selectAgentDetail(t.name)}
-                    aria-label={`View ${t.name} agent page`}
+                    aria-label={`View ${t.name} presence page`}
                     class="row-action flex-shrink-0"
                     style="padding:10px 16px;font-family:var(--f-mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;border-top:1px solid var(--rule);text-align:left"
                   >
-                    → Agent
+                    → Presence
                   </button>
                 )}
               </li>

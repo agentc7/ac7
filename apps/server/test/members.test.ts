@@ -1,22 +1,22 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Role, Team } from '@agentc7/sdk/types';
+import type { Team } from '@agentc7/sdk/types';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ENCRYPTED_FIELD_PREFIX, testKek } from '../src/kek.js';
 import {
   ConfigNotFoundError,
-  createSlotStore,
+  createMemberStore,
   defaultConfigPath,
-  generateSlotToken,
+  generateMemberToken,
   hashToken,
   loadTeamConfigFromFile,
-  rotateSlotToken,
-  SlotLoadError,
+  MemberLoadError,
+  rotateMemberToken,
   setKek,
   TOKEN_HASH_PREFIX,
   writeTeamConfig,
-} from '../src/slots.js';
+} from '../src/members.js';
 
 // ── helpers ──────────────────────────────────────────────────────────
 
@@ -48,24 +48,14 @@ const SAMPLE_TEAM: Team = {
   name: 'alpha-team',
   directive: 'Ship the payment service.',
   brief: 'We own the full lifecycle.',
+  permissionPresets: {},
 };
 
-const SAMPLE_ROLES: Record<string, Role> = {
-  'individual-contributor': {
-    description: 'Directs the team.',
-    instructions: 'Lead.',
-  },
-  implementer: {
-    description: 'Writes code.',
-    instructions: 'Ship work.',
-  },
-};
+// ── generateMemberToken ────────────────────────────────────────────────
 
-// ── generateSlotToken ────────────────────────────────────────────────
-
-describe('generateSlotToken', () => {
+describe('generateMemberToken', () => {
   it('returns a ac7_-prefixed base64url token', () => {
-    const t = generateSlotToken();
+    const t = generateMemberToken();
     expect(t.startsWith('ac7_')).toBe(true);
     expect(t.slice(4)).toMatch(/^[A-Za-z0-9_-]+$/);
   });
@@ -73,39 +63,40 @@ describe('generateSlotToken', () => {
   it('produces unique tokens across calls', () => {
     const seen = new Set<string>();
     for (let i = 0; i < 100; i++) {
-      seen.add(generateSlotToken());
+      seen.add(generateMemberToken());
     }
     expect(seen.size).toBe(100);
   });
 
   it('has at least 256 bits of entropy in the payload (43+ base64url chars)', () => {
-    const t = generateSlotToken();
+    const t = generateMemberToken();
     expect(t.slice(4).length).toBeGreaterThanOrEqual(43);
   });
 });
 
-// ── rotateSlotToken ─────────────────────────────────────────────────
+// ── rotateMemberToken ─────────────────────────────────────────────────
 
-describe('rotateSlotToken', () => {
+describe('rotateMemberToken', () => {
   function seedConfig(): { path: string; originalHashes: Record<string, string> } {
     const dir = tmpDir();
     const path = join(dir, 'ac7.json');
-    writeTeamConfig(path, SAMPLE_TEAM, SAMPLE_ROLES, [
+    writeTeamConfig(path, SAMPLE_TEAM, [
       {
         name: 'ACTUAL',
-        role: 'individual-contributor',
-        authority: 'director',
+        role: { title: 'engineer', description: '' },
+        permissions: ['members.manage'],
         token: 'original-a',
       },
       {
         name: 'LT-ONE',
-        role: 'individual-contributor',
-        authority: 'manager',
+        role: { title: 'engineer', description: '' },
+        permissions: ['objectives.create', 'objectives.cancel', 'objectives.reassign'],
         token: 'original-b',
       },
       {
         name: 'ALPHA-1',
-        role: 'implementer',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
         token: 'original-c',
         totpSecret: 'ABCDEFGHIJKLMNOP',
         totpLastCounter: 42,
@@ -123,21 +114,21 @@ describe('rotateSlotToken', () => {
 
   it('returns a new ac7_-prefixed plaintext token', () => {
     const { path } = seedConfig();
-    const newToken = rotateSlotToken(path, 'ACTUAL');
+    const newToken = rotateMemberToken(path, 'ACTUAL');
     expect(newToken.startsWith('ac7_')).toBe(true);
     expect(newToken.slice(4).length).toBeGreaterThanOrEqual(43);
   });
 
   it('invalidates the old bearer token for that slot', () => {
     const { path } = seedConfig();
-    rotateSlotToken(path, 'ACTUAL');
+    rotateMemberToken(path, 'ACTUAL');
     const config = loadTeamConfigFromFile(path);
     expect(config.store.resolve('original-a')).toBeNull();
   });
 
   it('accepts the new plaintext against the updated hash', () => {
     const { path } = seedConfig();
-    const newToken = rotateSlotToken(path, 'ACTUAL');
+    const newToken = rotateMemberToken(path, 'ACTUAL');
     const config = loadTeamConfigFromFile(path);
     const slot = config.store.resolve(newToken);
     expect(slot?.name).toBe('ACTUAL');
@@ -145,7 +136,7 @@ describe('rotateSlotToken', () => {
 
   it('does not affect other slots', () => {
     const { path, originalHashes } = seedConfig();
-    rotateSlotToken(path, 'ACTUAL');
+    rotateMemberToken(path, 'ACTUAL');
     const config = loadTeamConfigFromFile(path);
 
     // LT-ONE and ALPHA-1 still resolve against their original tokens.
@@ -154,30 +145,30 @@ describe('rotateSlotToken', () => {
 
     // And their on-disk hashes are unchanged from pre-rotation.
     const raw = JSON.parse(readFileSync(path, 'utf8')) as {
-      slots: Array<{ name: string; tokenHash: string }>;
+      members: Array<{ name: string; tokenHash: string }>;
     };
-    const ltOne = raw.slots.find((s) => s.name === 'LT-ONE');
-    const alpha = raw.slots.find((s) => s.name === 'ALPHA-1');
+    const ltOne = raw.members.find((s) => s.name === 'LT-ONE');
+    const alpha = raw.members.find((s) => s.name === 'ALPHA-1');
     expect(ltOne?.tokenHash).toBe(originalHashes['LT-ONE']);
     expect(alpha?.tokenHash).toBe(originalHashes['ALPHA-1']);
   });
 
   it('preserves TOTP state on the rotated slot', () => {
     const { path } = seedConfig();
-    rotateSlotToken(path, 'ALPHA-1');
+    rotateMemberToken(path, 'ALPHA-1');
     const config = loadTeamConfigFromFile(path);
-    const slot = config.store.resolveByName('ALPHA-1');
+    const slot = config.store.findByName('ALPHA-1');
     expect(slot?.totpSecret).toBe('ABCDEFGHIJKLMNOP');
     expect(slot?.totpLastCounter).toBe(42);
   });
 
-  it('throws SlotLoadError on unknown name', () => {
+  it('throws MemberLoadError on unknown name', () => {
     const { path } = seedConfig();
-    expect(() => rotateSlotToken(path, 'GHOST')).toThrow(SlotLoadError);
+    expect(() => rotateMemberToken(path, 'GHOST')).toThrow(MemberLoadError);
   });
 
   it('throws ConfigNotFoundError when the file does not exist', () => {
-    expect(() => rotateSlotToken(join(tmpDir(), 'does-not-exist.json'), 'ACTUAL')).toThrow(
+    expect(() => rotateMemberToken(join(tmpDir(), 'does-not-exist.json'), 'ACTUAL')).toThrow(
       ConfigNotFoundError,
     );
   });
@@ -192,11 +183,17 @@ describe('at-rest encryption round-trip', () => {
     const kek = testKek();
 
     setKek(kek);
-    writeTeamConfig(path, SAMPLE_TEAM, SAMPLE_ROLES, [
-      { name: 'ACTUAL', role: 'individual-contributor', authority: 'director', token: 'tok-a' },
+    writeTeamConfig(path, SAMPLE_TEAM, [
+      {
+        name: 'ACTUAL',
+        role: { title: 'engineer', description: '' },
+        permissions: ['members.manage'],
+        token: 'tok-a',
+      },
       {
         name: 'ALPHA-1',
-        role: 'implementer',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
         token: 'tok-b',
         totpSecret: 'JBSWY3DPEHPK3PXP',
         totpLastCounter: 99,
@@ -205,15 +202,15 @@ describe('at-rest encryption round-trip', () => {
 
     // On disk, the totpSecret is ciphertext.
     const rawDisk = JSON.parse(readFileSync(path, 'utf8')) as {
-      slots: Array<{ name: string; totpSecret?: string }>;
+      members: Array<{ name: string; totpSecret?: string }>;
     };
-    const alphaOnDisk = rawDisk.slots.find((s) => s.name === 'ALPHA-1');
+    const alphaOnDisk = rawDisk.members.find((s) => s.name === 'ALPHA-1');
     expect(alphaOnDisk?.totpSecret?.startsWith(ENCRYPTED_FIELD_PREFIX)).toBe(true);
     expect(alphaOnDisk?.totpSecret).not.toBe('JBSWY3DPEHPK3PXP');
 
     // In memory, the loaded slot has plaintext again.
     const config = loadTeamConfigFromFile(path);
-    const loaded = config.store.resolveByName('ALPHA-1');
+    const loaded = config.store.findByName('ALPHA-1');
     expect(loaded?.totpSecret).toBe('JBSWY3DPEHPK3PXP');
     expect(loaded?.totpLastCounter).toBe(99);
   });
@@ -225,20 +222,26 @@ describe('at-rest encryption round-trip', () => {
 
     // Seed a config WITHOUT a KEK active — totpSecret lands as plaintext.
     setKek(null);
-    writeTeamConfig(path, SAMPLE_TEAM, SAMPLE_ROLES, [
-      { name: 'ACTUAL', role: 'individual-contributor', authority: 'director', token: 'tok-a' },
+    writeTeamConfig(path, SAMPLE_TEAM, [
+      {
+        name: 'ACTUAL',
+        role: { title: 'engineer', description: '' },
+        permissions: ['members.manage'],
+        token: 'tok-a',
+      },
       {
         name: 'ALPHA-1',
-        role: 'implementer',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
         token: 'tok-b',
         totpSecret: 'PLAINTEXTTOTPSECRET',
         totpLastCounter: 5,
       },
     ]);
     const rawBefore = JSON.parse(readFileSync(path, 'utf8')) as {
-      slots: Array<{ name: string; totpSecret?: string }>;
+      members: Array<{ name: string; totpSecret?: string }>;
     };
-    expect(rawBefore.slots.find((s) => s.name === 'ALPHA-1')?.totpSecret).toBe(
+    expect(rawBefore.members.find((s) => s.name === 'ALPHA-1')?.totpSecret).toBe(
       'PLAINTEXTTOTPSECRET',
     );
 
@@ -248,32 +251,38 @@ describe('at-rest encryption round-trip', () => {
     expect(config.migrated).toBeGreaterThan(0);
 
     const rawAfter = JSON.parse(readFileSync(path, 'utf8')) as {
-      slots: Array<{ name: string; totpSecret?: string }>;
+      members: Array<{ name: string; totpSecret?: string }>;
     };
-    const alphaAfter = rawAfter.slots.find((s) => s.name === 'ALPHA-1');
+    const alphaAfter = rawAfter.members.find((s) => s.name === 'ALPHA-1');
     expect(alphaAfter?.totpSecret?.startsWith(ENCRYPTED_FIELD_PREFIX)).toBe(true);
 
     // In-memory loaded slot still holds plaintext.
-    expect(config.store.resolveByName('ALPHA-1')?.totpSecret).toBe('PLAINTEXTTOTPSECRET');
+    expect(config.store.findByName('ALPHA-1')?.totpSecret).toBe('PLAINTEXTTOTPSECRET');
   });
 
-  it('rotateSlotToken round-trips correctly under an active KEK', () => {
+  it('rotateMemberToken round-trips correctly under an active KEK', () => {
     const dir = tmpDir();
     const path = join(dir, 'ac7.json');
     setKek(testKek());
 
-    writeTeamConfig(path, SAMPLE_TEAM, SAMPLE_ROLES, [
-      { name: 'ACTUAL', role: 'individual-contributor', authority: 'director', token: 'tok-a' },
+    writeTeamConfig(path, SAMPLE_TEAM, [
+      {
+        name: 'ACTUAL',
+        role: { title: 'engineer', description: '' },
+        permissions: ['members.manage'],
+        token: 'tok-a',
+      },
       {
         name: 'ALPHA-1',
-        role: 'implementer',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
         token: 'tok-b',
         totpSecret: 'PRESERVE-ME',
         totpLastCounter: 77,
       },
     ]);
 
-    const newTok = rotateSlotToken(path, 'ALPHA-1');
+    const newTok = rotateMemberToken(path, 'ALPHA-1');
     const config = loadTeamConfigFromFile(path);
     const loaded = config.store.resolve(newTok);
     expect(loaded?.name).toBe('ALPHA-1');
@@ -320,51 +329,73 @@ describe('defaultConfigPath', () => {
   });
 });
 
-// ── createSlotStore ─────────────────────────────────────────────────
+// ── createMemberStore ─────────────────────────────────────────────────
 
-describe('createSlotStore', () => {
+describe('createMemberStore', () => {
   it('builds a store from in-memory entries', () => {
-    const store = createSlotStore([
-      { name: 'ACTUAL', role: 'individual-contributor', token: 'op-token' },
-      { name: 'ALPHA-1', role: 'implementer', token: 'impl-token' },
+    const store = createMemberStore([
+      {
+        name: 'ACTUAL',
+        role: { title: 'engineer', description: '' },
+        permissions: ['members.manage'],
+        token: 'op-token',
+      },
+      {
+        name: 'ALPHA-1',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
+        token: 'impl-token',
+      },
     ]);
     expect(store.size()).toBe(2);
     expect(store.names().sort()).toEqual(['ACTUAL', 'ALPHA-1']);
-    expect(store.resolve('op-token')).toEqual({
-      name: 'ACTUAL',
-      role: 'individual-contributor',
-      authority: 'individual-contributor',
-      totpSecret: null,
-      totpLastCounter: 0,
-    });
-    expect(store.resolve('impl-token')).toEqual({
-      name: 'ALPHA-1',
-      role: 'implementer',
-      authority: 'individual-contributor',
-      totpSecret: null,
-      totpLastCounter: 0,
-    });
+    const resolvedOp = store.resolve('op-token');
+    expect(resolvedOp?.name).toBe('ACTUAL');
+    expect(resolvedOp?.permissions).toContain('members.manage');
+    const resolvedImpl = store.resolve('impl-token');
+    expect(resolvedImpl?.name).toBe('ALPHA-1');
+    expect(resolvedImpl?.permissions).toEqual([]);
     expect(store.resolve('unknown')).toBeNull();
   });
 
   it('rejects empty entry lists', () => {
-    expect(() => createSlotStore([])).toThrow(SlotLoadError);
+    expect(() => createMemberStore([])).toThrow(MemberLoadError);
   });
 
   it('rejects duplicate names', () => {
     expect(() =>
-      createSlotStore([
-        { name: 'ACTUAL', role: 'individual-contributor', token: 'a-secret' },
-        { name: 'ACTUAL', role: 'implementer', token: 'b-secret' },
+      createMemberStore([
+        {
+          name: 'ACTUAL',
+          role: { title: 'engineer', description: '' },
+          permissions: [],
+          token: 'a-secret',
+        },
+        {
+          name: 'ACTUAL',
+          role: { title: 'engineer', description: '' },
+          permissions: [],
+          token: 'b-secret',
+        },
       ]),
     ).toThrow(/duplicate name 'ACTUAL'/);
   });
 
   it('rejects duplicate tokens', () => {
     expect(() =>
-      createSlotStore([
-        { name: 'ACTUAL', role: 'individual-contributor', token: 'shared-secret' },
-        { name: 'BOB', role: 'individual-contributor', token: 'shared-secret' },
+      createMemberStore([
+        {
+          name: 'ACTUAL',
+          role: { title: 'engineer', description: '' },
+          permissions: [],
+          token: 'shared-secret',
+        },
+        {
+          name: 'BOB',
+          role: { title: 'engineer', description: '' },
+          permissions: [],
+          token: 'shared-secret',
+        },
       ]),
     ).toThrow(/duplicate token/);
   });
@@ -379,15 +410,15 @@ describe('loadTeamConfigFromFile', () => {
     const original = JSON.stringify(
       {
         team: SAMPLE_TEAM,
-        roles: SAMPLE_ROLES,
-        slots: [
+
+        members: [
           {
             name: 'ACTUAL',
-            role: 'individual-contributor',
-            authority: 'director',
+            role: { title: 'engineer', description: '' },
+            permissions: ['members.manage'],
             tokenHash: aliceHash,
           },
-          { name: 'ALPHA-1', role: 'implementer', tokenHash: implHash },
+          { name: 'ALPHA-1', role: { title: 'engineer', description: '' }, tokenHash: implHash },
         ],
       },
       null,
@@ -397,10 +428,9 @@ describe('loadTeamConfigFromFile', () => {
     const config = loadTeamConfigFromFile(path);
     expect(config.store.size()).toBe(2);
     expect(config.store.resolve('ac7_op_secret')?.name).toBe('ACTUAL');
-    expect(config.store.resolve('ac7_impl_secret')?.role).toBe('implementer');
+    expect(config.store.resolve('ac7_impl_secret')?.role.title).toBe('engineer');
     expect(config.migrated).toBe(0);
     expect(config.team).toEqual(SAMPLE_TEAM);
-    expect(config.roles['individual-contributor']?.description).toContain('team');
     expect(readFileSync(path, 'utf8')).toBe(original);
   });
 
@@ -408,15 +438,20 @@ describe('loadTeamConfigFromFile', () => {
     const path = writeConfig(
       JSON.stringify({
         team: SAMPLE_TEAM,
-        roles: SAMPLE_ROLES,
-        slots: [
+
+        members: [
           {
             name: 'ACTUAL',
-            role: 'individual-contributor',
-            authority: 'director',
+            role: { title: 'engineer', description: '' },
+            permissions: ['members.manage'],
             token: 'ac7_op_secret',
           },
-          { name: 'ALPHA-1', role: 'implementer', token: 'ac7_impl_secret' },
+          {
+            name: 'ALPHA-1',
+            role: { title: 'engineer', description: '' },
+            permissions: [],
+            token: 'ac7_impl_secret',
+          },
         ],
       }),
     );
@@ -425,12 +460,12 @@ describe('loadTeamConfigFromFile', () => {
     expect(config.migrated).toBe(2);
 
     const rewritten = JSON.parse(readFileSync(path, 'utf8')) as {
-      slots: Array<{ name: string; role: string; tokenHash?: string; token?: string }>;
+      members: Array<{ name: string; tokenHash?: string; token?: string }>;
     };
-    expect(rewritten.slots).toHaveLength(2);
-    for (const slot of rewritten.slots) {
-      expect(slot.token).toBeUndefined();
-      expect(slot.tokenHash).toMatch(/^sha256:[0-9a-f]{64}$/);
+    expect(rewritten.members).toHaveLength(2);
+    for (const m of rewritten.members) {
+      expect(m.token).toBeUndefined();
+      expect(m.tokenHash).toMatch(/^sha256:[0-9a-f]{64}$/);
     }
 
     // Re-loading the rewritten file must still resolve the original plaintext.
@@ -450,42 +485,39 @@ describe('loadTeamConfigFromFile', () => {
     }
   });
 
-  it('rejects the legacy `tokens` schema with a helpful message', () => {
-    const path = writeConfig(
-      JSON.stringify({
-        tokens: [{ name: 'alice', kind: 'human', token: 'ac7_legacy' }],
-      }),
-    );
-    expect(() => loadTeamConfigFromFile(path)).toThrow(/legacy `tokens` schema/);
-  });
-
   it('rejects malformed JSON', () => {
     const path = writeConfig('{not valid json');
     expect(() => loadTeamConfigFromFile(path)).toThrow(/not valid JSON/);
   });
 
   it('rejects empty slots lists', () => {
-    const path = writeConfig(JSON.stringify({ team: SAMPLE_TEAM, roles: SAMPLE_ROLES, slots: [] }));
+    const path = writeConfig(JSON.stringify({ team: SAMPLE_TEAM, members: [] }));
     expect(() => loadTeamConfigFromFile(path)).toThrow(/at least one entry/);
   });
 
-  it('rejects slots referencing an unknown role', () => {
+  it('rejects members with invalid role shapes', () => {
     const path = writeConfig(
       JSON.stringify({
         team: SAMPLE_TEAM,
-        roles: SAMPLE_ROLES,
-        slots: [{ name: 'GHOST', role: 'phantom', token: 'ac7_ghost_secret' }],
+        members: [{ name: 'GHOST', role: 'phantom', token: 'ac7_ghost_secret' }],
       }),
     );
-    expect(() => loadTeamConfigFromFile(path)).toThrow(/unknown role 'phantom'/);
+    expect(() => loadTeamConfigFromFile(path)).toThrow();
   });
 
   it('rejects names with invalid characters', () => {
     const path = writeConfig(
       JSON.stringify({
         team: SAMPLE_TEAM,
-        roles: SAMPLE_ROLES,
-        slots: [{ name: 'has spaces', role: 'individual-contributor', token: 'ac7_bad_secret' }],
+
+        members: [
+          {
+            name: 'has spaces',
+            role: { title: 'engineer', description: '' },
+            permissions: [],
+            token: 'ac7_bad_secret',
+          },
+        ],
       }),
     );
     expect(() => loadTeamConfigFromFile(path)).toThrow();
@@ -495,8 +527,8 @@ describe('loadTeamConfigFromFile', () => {
     const path = writeConfig(
       JSON.stringify({
         team: SAMPLE_TEAM,
-        roles: SAMPLE_ROLES,
-        slots: [{ name: 'ACTUAL', role: 'individual-contributor' }],
+
+        members: [{ name: 'ACTUAL', role: { title: 'engineer', description: '' } }],
       }),
     );
     expect(() => loadTeamConfigFromFile(path)).toThrow();
@@ -506,11 +538,12 @@ describe('loadTeamConfigFromFile', () => {
     const path = writeConfig(
       JSON.stringify({
         team: SAMPLE_TEAM,
-        roles: SAMPLE_ROLES,
-        slots: [
+
+        members: [
           {
             name: 'ACTUAL',
-            role: 'individual-contributor',
+            role: { title: 'engineer', description: '' },
+            permissions: [],
             token: 'ac7_plain_secret',
             tokenHash: hashToken('ac7_plain_secret'),
           },
@@ -526,31 +559,34 @@ describe('loadTeamConfigFromFile', () => {
 describe('writeTeamConfig', () => {
   it('writes a config that loads cleanly and resolves the original plaintext', () => {
     const path = join(tmpDir(), 'ac7.json');
-    writeTeamConfig(path, SAMPLE_TEAM, SAMPLE_ROLES, [
+    writeTeamConfig(path, SAMPLE_TEAM, [
       {
         name: 'ACTUAL',
-        role: 'individual-contributor',
-        authority: 'director',
+        role: { title: 'engineer', description: '' },
+        permissions: ['members.manage'],
         token: 'ac7_plain_op',
       },
-      { name: 'ALPHA-1', role: 'implementer', token: 'ac7_plain_impl' },
+      {
+        name: 'ALPHA-1',
+        role: { title: 'engineer', description: '' },
+        permissions: [],
+        token: 'ac7_plain_impl',
+      },
     ]);
 
     const body = JSON.parse(readFileSync(path, 'utf8')) as {
       team: Team;
-      roles: Record<string, Role>;
-      slots: Array<{ token?: string; tokenHash?: string }>;
+      members: Array<{ token?: string; tokenHash?: string }>;
     };
     expect(body.team).toEqual(SAMPLE_TEAM);
-    expect(body.roles['individual-contributor']?.description).toContain('team');
-    for (const slot of body.slots) {
-      expect(slot.token).toBeUndefined();
-      expect(slot.tokenHash).toMatch(/^sha256:/);
+    for (const m of body.members) {
+      expect(m.token).toBeUndefined();
+      expect(m.tokenHash).toMatch(/^sha256:/);
     }
 
     const config = loadTeamConfigFromFile(path);
     expect(config.migrated).toBe(0);
     expect(config.store.resolve('ac7_plain_op')?.name).toBe('ACTUAL');
-    expect(config.store.resolve('ac7_plain_impl')?.role).toBe('implementer');
+    expect(config.store.resolve('ac7_plain_impl')?.role.title).toBe('engineer');
   });
 });

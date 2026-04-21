@@ -3,8 +3,8 @@
  *
  * A session is a server-issued capability: after a human completes
  * TOTP verification, we mint a random `id`, store a row binding that
- * id to a slot name, and return it as an HttpOnly cookie. Every
- * subsequent request presenting the cookie resolves back to the slot
+ * id to a user name, and return it as an HttpOnly cookie. Every
+ * subsequent request presenting the cookie resolves back to the user
  * via the dual-auth middleware, same as a bearer-token request.
  *
  * Lifetime: sliding 7-day TTL. Every `touch()` bumps `last_seen` and
@@ -29,20 +29,20 @@ const SESSION_ID_BYTES = 32;
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS sessions (
-    id            TEXT PRIMARY KEY,
-    slot_callsign TEXT NOT NULL,
-    created_at    INTEGER NOT NULL,
-    expires_at    INTEGER NOT NULL,
-    last_seen     INTEGER NOT NULL,
-    user_agent    TEXT
+    id          TEXT PRIMARY KEY,
+    member_name TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    expires_at  INTEGER NOT NULL,
+    last_seen   INTEGER NOT NULL,
+    user_agent  TEXT
   );
-  CREATE INDEX IF NOT EXISTS sessions_slot_idx ON sessions(slot_callsign);
+  CREATE INDEX IF NOT EXISTS sessions_member_idx ON sessions(member_name);
   CREATE INDEX IF NOT EXISTS sessions_expires_idx ON sessions(expires_at);
 `;
 
 export interface SessionRow {
   id: string;
-  slotName: string;
+  memberName: string;
   createdAt: number;
   expiresAt: number;
   lastSeen: number;
@@ -51,7 +51,7 @@ export interface SessionRow {
 
 interface RawRow {
   id: string;
-  slot_callsign: string;
+  member_name: string;
   created_at: number;
   expires_at: number;
   last_seen: number;
@@ -61,7 +61,7 @@ interface RawRow {
 function rowToSession(row: RawRow): SessionRow {
   return {
     id: row.id,
-    slotName: row.slot_callsign,
+    memberName: row.member_name,
     createdAt: row.created_at,
     expiresAt: row.expires_at,
     lastSeen: row.last_seen,
@@ -83,10 +83,10 @@ export class SessionStore {
     this.now = options.now ?? Date.now;
     this.db.exec(CREATE_SCHEMA);
     this.insertStmt = this.db.prepare(
-      'INSERT INTO sessions (id, slot_callsign, created_at, expires_at, last_seen, user_agent) VALUES (?, ?, ?, ?, ?, ?)',
+      'INSERT INTO sessions (id, member_name, created_at, expires_at, last_seen, user_agent) VALUES (?, ?, ?, ?, ?, ?)',
     );
     this.selectStmt = this.db.prepare(
-      'SELECT id, slot_callsign, created_at, expires_at, last_seen, user_agent FROM sessions WHERE id = ?',
+      'SELECT id, member_name, created_at, expires_at, last_seen, user_agent FROM sessions WHERE id = ?',
     );
     this.touchStmt = this.db.prepare(
       'UPDATE sessions SET last_seen = ?, expires_at = ? WHERE id = ?',
@@ -96,18 +96,18 @@ export class SessionStore {
   }
 
   /**
-   * Mint a fresh session for `slotName`. Returns the row so the
+   * Mint a fresh session for `memberName`. Returns the row so the
    * caller can put the `id` in a Set-Cookie header and return the
    * `expiresAt` to the SPA.
    */
-  create(slotName: string, userAgent: string | null): SessionRow {
+  create(memberName: string, userAgent: string | null): SessionRow {
     const id = randomBytes(SESSION_ID_BYTES).toString('base64url');
     const now = this.now();
     const expiresAt = now + SESSION_TTL_MS;
-    this.insertStmt.run(id, slotName, now, expiresAt, now, userAgent);
+    this.insertStmt.run(id, memberName, now, expiresAt, now, userAgent);
     return {
       id,
-      slotName,
+      memberName,
       createdAt: now,
       expiresAt,
       lastSeen: now,
@@ -131,7 +131,7 @@ export class SessionStore {
   /**
    * Bump `last_seen` and extend `expires_at` for an existing session.
    * Called on every authenticated request the session carries, so the
-   * TTL slides as long as the individual-contributor stays active.
+   * TTL slides as long as the user stays active.
    */
   touch(id: string): void {
     const now = this.now();

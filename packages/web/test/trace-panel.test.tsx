@@ -2,7 +2,7 @@
  * TracePanel render tests.
  *
  * We render the component with a stubbed client that returns
- * canned agent-activity rows, then assert:
+ * canned member-activity rows, then assert:
  *
  *   - LLM exchanges surface model, token counts, text blocks,
  *     and tool_use blocks
@@ -12,11 +12,11 @@
  * The director gate is enforced one level up in ObjectiveDetail
  * (client) and at the GET /agents/:name/activity server
  * endpoint. The server endpoint test in
- * apps/server/test/agent-activity.test.ts is the source of truth
+ * apps/server/test/member-activity.test.ts is the source of truth
  * for the gate.
  */
 
-import type { AgentActivityRow, ListAgentActivityResponse, Objective } from '@agentc7/sdk/types';
+import type { ActivityRow, ListActivityResponse, Objective } from '@agentc7/sdk/types';
 import { cleanup, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TracePanel } from '../src/components/TracePanel.js';
@@ -33,10 +33,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
 });
 
-function stubActivity(
-  body: ListAgentActivityResponse | Record<string, unknown>,
-  status = 200,
-): void {
+function stubActivity(body: ListActivityResponse | Record<string, unknown>, status = 200): void {
   globalThis.fetch = (() =>
     Promise.resolve(
       new Response(JSON.stringify(body), {
@@ -60,11 +57,12 @@ const objective: Objective = {
   completedAt: null,
   result: null,
   blockReason: null,
+  attachments: [],
 };
 
-const llmRow: AgentActivityRow = {
+const llmRow: ActivityRow = {
   id: 1,
-  slotName: 'ALPHA-1',
+  memberName: 'ALPHA-1',
   createdAt: 1_700_000_000_500,
   event: {
     kind: 'llm_exchange',

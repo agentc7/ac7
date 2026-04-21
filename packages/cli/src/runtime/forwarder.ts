@@ -142,7 +142,7 @@ async function forwardMessage(
   message: Message,
   log: (msg: string, ctx?: Record<string, unknown>) => void,
 ): Promise<void> {
-  const thread: ThreadType = message.agentId === null ? 'primary' : 'dm';
+  const thread: ThreadType = message.to === null ? 'primary' : 'dm';
   // `ts` is formatted for agent consumption — a fixed-width human
   // datetime like `04/15/26 14:23:45 UTC`. Parseable, unambiguous
   // about timezone, precise to the second, and doesn't require the
@@ -158,7 +158,7 @@ async function forwardMessage(
   };
   if (message.from) meta.from = message.from;
   if (message.title) meta.title = message.title;
-  if (message.agentId) meta.target = message.agentId;
+  if (message.to) meta.target = message.to;
 
   if (typeof message.data === 'object' && message.data !== null) {
     for (const [k, v] of Object.entries(message.data)) {

@@ -8,7 +8,7 @@
  *   ├───────────────────────┤
  *   │  ━━ TEAM          │
  *   │  Team Chat            │
- *   │  ● build-bot · D      │  presence dot + name + authority
+ *   │  ● build-bot · D      │  presence dot + name + userType tag
  *   │  ○ scout              │
  *   │  …                    │
  *   ├───────────────────────┤
@@ -19,7 +19,8 @@
  * dot is the canonical .dot pattern. Unread badge is .badge.solid.
  */
 
-import type { Authority, Teammate } from '@agentc7/sdk/types';
+import type { Teammate } from '@agentc7/sdk/types';
+import { hasPermission } from '@agentc7/sdk/types';
 import type { ComponentChildren } from 'preact';
 import { briefing } from '../lib/briefing.js';
 import { dmThreadKey, messagesByThread, PRIMARY_THREAD } from '../lib/messages.js';
@@ -31,6 +32,8 @@ import {
   closeSidebar,
   isSidebarOpen,
   selectDmWith,
+  selectFiles,
+  selectMembers,
   selectObjectivesList,
   selectOverview,
   selectThread,
@@ -55,10 +58,10 @@ function UnreadBadge({ count }: { count: number }) {
   );
 }
 
-/** One-letter authority marker for the teammate row. IC has no glyph. */
-function authorityBadge(authority: Authority): string | null {
-  if (authority === 'director') return 'D';
-  if (authority === 'manager') return 'M';
+/** Short tag for the teammate row, summarizing their privilege level. */
+function privilegeBadge(permissions: readonly string[]): string | null {
+  if (permissions.includes('members.manage')) return 'A';
+  if (permissions.includes('objectives.create')) return 'OP';
   return null;
 }
 
@@ -74,7 +77,7 @@ export function Sidebar({ viewer }: SidebarProps) {
 
   const onlineByName = new Map<string, number>();
   if (r) {
-    for (const a of r.connected) onlineByName.set(a.agentId, a.connected);
+    for (const a of r.connected) onlineByName.set(a.name, a.connected);
   }
 
   const overviewActive = v.kind === 'overview';
@@ -83,6 +86,9 @@ export function Sidebar({ viewer }: SidebarProps) {
   const drawerOpen = isSidebarOpen.value;
   const objectivesActive =
     v.kind === 'objectives-list' || v.kind === 'objective-detail' || v.kind === 'objective-create';
+  const filesActive = v.kind === 'files';
+  const membersActive = v.kind === 'members';
+  const isAdmin = b !== null && hasPermission(b.permissions, 'members.manage');
   const activeObjectiveCount = objectives.value.filter(
     (o) => o.assignee === viewer && (o.status === 'active' || o.status === 'blocked'),
   ).length;
@@ -131,6 +137,20 @@ export function Sidebar({ viewer }: SidebarProps) {
               ) : undefined
             }
           />
+          <NavLink
+            label="Files"
+            active={filesActive}
+            onClick={() => selectFiles(`/${viewer}`)}
+            ariaLabel="Browse files"
+          />
+          {isAdmin && (
+            <NavLink
+              label="Users"
+              active={membersActive}
+              onClick={selectMembers}
+              ariaLabel="Manage users"
+            />
+          )}
         </div>
 
         {/* ── Team section (Team Chat + DMs) ──────────────────── */}
@@ -163,7 +183,7 @@ export function Sidebar({ viewer }: SidebarProps) {
             const online = connected > 0;
             const active = v.kind === 'thread' && v.key === dmThreadKey(t.name);
             const unread = unreadCount(dmThreadKey(t.name), viewer, lastRead, msgMap);
-            const auth = authorityBadge(t.authority);
+            const auth = privilegeBadge(t.permissions);
             return (
               <li key={t.name}>
                 <button
@@ -174,7 +194,7 @@ export function Sidebar({ viewer }: SidebarProps) {
                       ? `Message ${t.name} (${online ? 'online' : 'offline'}, ${unread} unread)`
                       : `Message ${t.name} (${online ? 'online' : 'offline'})`
                   }
-                  title={`${t.name} · ${online ? 'online' : 'offline'} · ${t.role} · ${t.authority}`}
+                  title={`${t.name} · ${online ? 'online' : 'offline'} · ${t.role.title}`}
                   class={`navitem w-full${active ? ' active' : ''}`}
                   style={`text-align:left;font-weight:${active ? 700 : 500}`}
                 >

@@ -40,12 +40,13 @@ describe('SqliteEventLog', () => {
     const m1: Message = {
       id: 'a',
       ts: 1,
-      agentId: 'x',
+      to: 'x',
       from: 'alice',
       title: 'hi',
       body: 'hello',
       level: 'warning',
       data: { foo: 'bar', n: 42 },
+      attachments: [],
     };
     await log.append(m1);
     const tailed = await log.tail();
@@ -58,12 +59,13 @@ describe('SqliteEventLog', () => {
     const m: Message = {
       id: 'legacy',
       ts: 5,
-      agentId: null,
+      to: null,
       from: null,
       title: null,
       body: 'no sender known',
       level: 'info',
       data: {},
+      attachments: [],
     };
     await log.append(m);
     const tailed = await log.tail();
@@ -76,12 +78,13 @@ describe('SqliteEventLog', () => {
       await log.append({
         id: `m${i}`,
         ts: i,
-        agentId: null,
+        to: null,
         from: null,
         title: null,
         body: `msg ${i}`,
         level: 'info',
         data: {},
+        attachments: [],
       });
     }
     const since = await log.tail({ since: 3 });
@@ -98,12 +101,13 @@ describe('SqliteEventLog', () => {
     await first.append({
       id: 'persist',
       ts: 10,
-      agentId: 'a1',
+      to: 'a1',
       from: 'alice',
       title: null,
       body: 'survive',
       level: 'info',
       data: {},
+      attachments: [],
     });
     firstDb.close();
 

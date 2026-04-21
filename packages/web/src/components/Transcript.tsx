@@ -25,7 +25,7 @@ export function Transcript({ viewer }: TranscriptProps) {
   const _map = messagesByThread.value;
   void _map;
   const b = briefing.value;
-  const isDirector = b?.authority === 'director';
+  const isDirector = b?.permissions.includes('members.manage') ?? false;
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const stickyRef = useRef(true);
@@ -59,9 +59,9 @@ export function Transcript({ viewer }: TranscriptProps) {
   return (
     <div class="flex-1 flex flex-col min-h-0">
       {/* DM header — only for direct-message threads with another
-          slot (not primary, not obj:<id>, not self). Shows the
-          counterpart name and, for directors, a link to that
-          agent's detail page. */}
+          user (not primary, not obj:<id>, not self). Shows the
+          counterpart name and, for admins, a link to that user's
+          detail page. */}
       {showDmHeader && dmCounterpart && (
         <div
           class="flex items-center justify-between flex-shrink-0"

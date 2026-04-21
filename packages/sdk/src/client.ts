@@ -7,8 +7,9 @@
  */
 
 import {
-  AGENT_PATHS,
   AUTH_HEADER,
+  FS_PATHS,
+  MEMBER_PATHS,
   OBJECTIVE_PATHS,
   PATHS,
   PROTOCOL_HEADER,
@@ -16,32 +17,46 @@ import {
 } from './protocol.js';
 import {
   BriefingResponseSchema,
+  CreateMemberResponseSchema,
+  EnrollTotpResponseSchema,
+  FsEntryResponseSchema,
+  FsListResponseSchema,
+  FsWriteResponseSchema,
   GetObjectiveResponseSchema,
   HealthResponseSchema,
   HistoryResponseSchema,
-  ListAgentActivityResponseSchema,
+  ListActivityResponseSchema,
+  ListMembersResponseSchema,
   ListObjectivesResponseSchema,
+  MemberSchema,
   MessageSchema,
   ObjectiveSchema,
   PushPayloadSchema,
   PushResultSchema,
   PushSubscriptionResponseSchema,
   RosterResponseSchema,
+  RotateTokenResponseSchema,
   SessionResponseSchema,
-  UploadAgentActivityResponseSchema,
+  UploadActivityResponseSchema,
   VapidPublicKeyResponseSchema,
 } from './schemas.js';
 import type {
-  AgentActivityRow,
+  ActivityRow,
   BriefingResponse,
   CancelObjectiveRequest,
+  CreateMemberRequest,
+  CreateMemberResponse,
   CreateObjectiveRequest,
   DiscussObjectiveRequest,
+  EnrollTotpResponse,
+  FsEntry,
+  FsWriteResponse,
   GetObjectiveResponse,
   HealthResponse,
   HistoryQuery,
-  ListAgentActivityQuery,
+  ListActivityQuery,
   ListObjectivesQuery,
+  Member,
   Message,
   Objective,
   PushPayload,
@@ -50,14 +65,32 @@ import type {
   PushSubscriptionResponse,
   ReassignObjectiveRequest,
   RosterResponse,
+  RotateTokenResponse,
   SessionResponse,
   TotpLoginRequest,
+  UpdateMemberRequest,
   UpdateObjectiveRequest,
   UpdateWatchersRequest,
-  UploadAgentActivityRequest,
-  UploadAgentActivityResponse,
+  UploadActivityRequest,
+  UploadActivityResponse,
   VapidPublicKeyResponse,
 } from './types.js';
+
+export type FsWriteCollisionStrategy = 'error' | 'overwrite' | 'suffix';
+
+export interface FsWriteInput {
+  path: string;
+  mimeType: string;
+  /**
+   * The file contents. Accepts anything `fetch` accepts for a body —
+   * a `Blob`, `ArrayBuffer`, `Uint8Array`, `File`, `ReadableStream`,
+   * or `string`. For large files prefer a streaming source so the
+   * request doesn't buffer the entire file in memory.
+   */
+  source: BodyInit;
+  /** Override the default `'error'` collision behavior. */
+  collision?: FsWriteCollisionStrategy;
+}
 
 export interface ClientOptions {
   /** Broker base URL, e.g. `http://127.0.0.1:8717`. No trailing slash required. */
@@ -153,7 +186,7 @@ export class Client {
 
   /**
    * Exchange a TOTP code for a session. Succeeds → server sets the
-   * `ac7_session` cookie and returns the authenticated slot info.
+   * `ac7_session` cookie and returns the authenticated member info.
    * Failure modes: wrong/stale code → 401, malformed → 400,
    * too-many-attempts → 429.
    */
@@ -184,7 +217,7 @@ export class Client {
   }
 
   /**
-   * Fetch the current session's slot/role/expiry. Used by the SPA on
+   * Fetch the current session's member/role/expiry. Used by the SPA on
    * mount to rehydrate its session signal before showing any UI.
    * Returns null on 401 (no / expired session) so callers can treat
    * "not signed in" as a first-class state without catching errors.
@@ -213,7 +246,7 @@ export class Client {
 
   /**
    * Register (or refresh) a push subscription for the current
-   * authenticated slot. Subsequent calls with the same endpoint
+   * authenticated member. Subsequent calls with the same endpoint
    * replace the existing row.
    */
   async registerPushSubscription(
@@ -229,7 +262,7 @@ export class Client {
 
   /**
    * Remove a push subscription by its database id. Scoped to the
-   * authenticated slot server-side.
+   * authenticated member server-side.
    */
   async deletePushSubscription(id: number): Promise<void> {
     const resp = await this.request(`${PATHS.pushSubscriptions}/${id}`, {
@@ -246,12 +279,13 @@ export class Client {
   }
 
   /**
-   * Fetch the team-context briefing for the authenticated slot.
+   * Fetch the team-context briefing for the authenticated member.
    *
-   * Returns the caller's name, role, authority, team
-   * (name/directive/brief), list of teammates, open objectives currently
-   * on the caller's plate, and a pre-composed `instructions` string
-   * ready for `new Server({instructions})` in the MCP link.
+   * Returns the caller's name, role, permissions, team
+   * (name/directive/brief/presets), list of teammates, open objectives
+   * currently on the caller's plate, and the member's personal
+   * `instructions` string ready for `new Server({instructions})` in
+   * the MCP link.
    */
   async briefing(): Promise<BriefingResponse> {
     const resp = await this.request(PATHS.briefing, { method: 'GET' });
@@ -259,10 +293,10 @@ export class Client {
   }
 
   /**
-   * List all slots defined on the team (including any not currently
-   * connected) plus the runtime connection state of each registered
-   * agent. Use this for the team roster view in the web UI and for
-   * the `roster` MCP tool exposed by the runner.
+   * List all members defined on the team (including any not currently
+   * connected) plus the runtime connection state of each one. Use
+   * this for the team roster view in the web UI and for the `roster`
+   * MCP tool exposed by the runner.
    */
   async roster(): Promise<RosterResponse> {
     const resp = await this.request(PATHS.roster, { method: 'GET' });
@@ -272,10 +306,10 @@ export class Client {
   // ─────────────────────── Objectives ───────────────────────
 
   /**
-   * List objectives. IndividualContributors see only their own unless they hold
-   * manager+ authority server-side, in which case the `assignee`
-   * filter accepts any name. Pass `status` to scope to a single
-   * lifecycle state; omit to see all.
+   * List objectives. Members without `objectives.create` see only
+   * their own; members with that permission can filter by any
+   * `assignee` name. Pass `status` to scope to a single lifecycle
+   * state; omit to see all.
    */
   async listObjectives(query: ListObjectivesQuery = {}): Promise<Objective[]> {
     const params = new URLSearchParams();
@@ -295,7 +329,7 @@ export class Client {
 
   /**
    * Create (and atomically assign) an objective. Requires the caller
-   * to hold `manager` or `director` authority server-side.
+   * to hold the `objectives.create` permission.
    */
   async createObjective(payload: CreateObjectiveRequest): Promise<Objective> {
     const resp = await this.request(PATHS.objectives, {
@@ -334,8 +368,8 @@ export class Client {
   }
 
   /**
-   * Terminally cancel an objective. Originating manager+ or any
-   * director.
+   * Terminally cancel an objective. Originator, or any member with
+   * `objectives.cancel`.
    */
   async cancelObjective(id: string, payload: CancelObjectiveRequest = {}): Promise<Objective> {
     const resp = await this.request(OBJECTIVE_PATHS.cancel(id), {
@@ -347,8 +381,8 @@ export class Client {
   }
 
   /**
-   * Reassign an objective to a different slot. Director only. Pushes
-   * to both old and new assignee.
+   * Reassign an objective to a different member. Requires
+   * `objectives.reassign`. Pushes to both old and new assignee.
    */
   async reassignObjective(id: string, payload: ReassignObjectiveRequest): Promise<Objective> {
     const resp = await this.request(OBJECTIVE_PATHS.reassign(id), {
@@ -360,9 +394,9 @@ export class Client {
   }
 
   /**
-   * Add and/or remove watchers on an objective. Director or the
-   * originating manager+ only. Every name must resolve to a
-   * known team slot. Empty add/remove arrays are no-ops; the
+   * Add and/or remove watchers on an objective. Originator or any
+   * member with `objectives.watch`. Every name must resolve to a
+   * known team member. Empty add/remove arrays are no-ops; the
    * server still returns the updated objective for sync purposes.
    */
   async updateObjectiveWatchers(id: string, payload: UpdateWatchersRequest): Promise<Objective> {
@@ -376,9 +410,9 @@ export class Client {
 
   /**
    * Post a discussion message into an objective's thread. Fans out to
-   * every member of the thread (originator + assignee + directors +
-   * explicit watchers) via their SSE streams, scoped to thread key
-   * `obj:<id>`. Caller must already be a thread member server-side.
+   * every member of the thread (originator + assignee + explicit
+   * watchers) via their SSE streams, scoped to thread key `obj:<id>`.
+   * Caller must already be a thread member server-side.
    */
   async discussObjective(id: string, payload: DiscussObjectiveRequest): Promise<Message> {
     const resp = await this.request(OBJECTIVE_PATHS.discuss(id), {
@@ -390,39 +424,35 @@ export class Client {
   }
 
   /**
-   * Append agent activity events for `name`. Only the slot
-   * itself may POST its own activity (server returns 403 for any
-   * other caller). Used by the runner's streaming uploader to
-   * ship decoded HTTP exchanges + objective lifecycle markers to
-   * the broker in real time.
+   * Append activity events for `name`. Only the member itself may
+   * POST its own activity (server returns 403 for any other caller).
+   * Used by the runner's streaming uploader to ship decoded HTTP
+   * exchanges + objective lifecycle markers to the broker in real time.
    */
-  async uploadAgentActivity(
+  async uploadActivity(
     name: string,
-    payload: UploadAgentActivityRequest,
-  ): Promise<UploadAgentActivityResponse> {
-    const resp = await this.request(AGENT_PATHS.activity(name), {
+    payload: UploadActivityRequest,
+  ): Promise<UploadActivityResponse> {
+    const resp = await this.request(MEMBER_PATHS.activity(name), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    return UploadAgentActivityResponseSchema.parse(await this.json(resp));
+    return UploadActivityResponseSchema.parse(await this.json(resp));
   }
 
   /**
-   * List agent activity events for `name`. Readable by the slot
-   * itself OR any director (non-directors reading other slots
-   * get 403). Supports range filtering by `from`/`to` timestamps
-   * and by kind. Returns newest-first up to `limit` rows.
+   * List activity events for `name`. Readable by the member itself OR
+   * by any member with `activity.read` (other callers get 403).
+   * Supports range filtering by `from`/`to` timestamps and by kind.
+   * Returns newest-first up to `limit` rows.
    *
    * Objective traces are a view over this endpoint: query with
    * `from=objective.openedAt`, `to=objective.closedAt`, and
    * `kind=llm_exchange` to pull the LLM calls made during an
    * objective's lifetime.
    */
-  async listAgentActivity(
-    name: string,
-    query: ListAgentActivityQuery = {},
-  ): Promise<AgentActivityRow[]> {
+  async listActivity(name: string, query: ListActivityQuery = {}): Promise<ActivityRow[]> {
     const params = new URLSearchParams();
     if (query.from !== undefined) params.set('from', String(query.from));
     if (query.to !== undefined) params.set('to', String(query.to));
@@ -432,9 +462,82 @@ export class Client {
     }
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     const qs = params.toString();
-    const path = qs ? `${AGENT_PATHS.activity(name)}?${qs}` : AGENT_PATHS.activity(name);
+    const path = qs ? `${MEMBER_PATHS.activity(name)}?${qs}` : MEMBER_PATHS.activity(name);
     const resp = await this.request(path, { method: 'GET' });
-    return ListAgentActivityResponseSchema.parse(await this.json(resp)).activity;
+    return ListActivityResponseSchema.parse(await this.json(resp)).activity;
+  }
+
+  // ─────────────────────── Members ──────────────────────────────
+
+  /**
+   * List all members on the team — name, role, permissions,
+   * instructions. Requires `members.manage` (admin scope); non-admins
+   * should use `roster()` for the public subset.
+   */
+  async listMembers(): Promise<Member[]> {
+    const resp = await this.request(PATHS.members, { method: 'GET' });
+    return ListMembersResponseSchema.parse(await this.json(resp)).members;
+  }
+
+  /**
+   * Create a new member. Requires `members.manage`. Returns the new
+   * member plus the plaintext bearer token (shown once). TOTP is
+   * optional and enrolled separately via `enrollTotp(name)`.
+   */
+  async createMember(payload: CreateMemberRequest): Promise<CreateMemberResponse> {
+    const resp = await this.request(PATHS.members, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return CreateMemberResponseSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * Update an existing member's role, instructions, or permissions.
+   * Requires `members.manage`. Enforces the "at least one member with
+   * `members.manage` must remain" invariant on permission changes.
+   */
+  async updateMember(name: string, payload: UpdateMemberRequest): Promise<Member> {
+    const resp = await this.request(MEMBER_PATHS.one(name), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return MemberSchema.parse(await this.json(resp));
+  }
+
+  /** Delete a member. Requires `members.manage`. Enforces the last-admin invariant. */
+  async deleteMember(name: string): Promise<void> {
+    const resp = await this.request(MEMBER_PATHS.one(name), { method: 'DELETE' });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      throw new ClientError(
+        `deleteMember failed: ${resp.status} ${resp.statusText}`,
+        resp.status,
+        body,
+      );
+    }
+  }
+
+  /**
+   * Rotate a member's bearer token. Requires `members.manage` OR
+   * self. Returns the new plaintext (shown once); the previous token
+   * is invalidated.
+   */
+  async rotateToken(name: string): Promise<RotateTokenResponse> {
+    const resp = await this.request(MEMBER_PATHS.rotateToken(name), { method: 'POST' });
+    return RotateTokenResponseSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * (Re-)enroll a member in TOTP. Requires `members.manage` OR self.
+   * Any member may enroll — TOTP is no longer gated by type. Returns
+   * a fresh secret + otpauth URI; any prior enrollment is replaced.
+   */
+  async enrollTotp(name: string): Promise<EnrollTotpResponse> {
+    const resp = await this.request(MEMBER_PATHS.enrollTotp(name), { method: 'POST' });
+    return EnrollTotpResponseSchema.parse(await this.json(resp));
   }
 
   async history(query: HistoryQuery = {}): Promise<Message[]> {
@@ -459,13 +562,131 @@ export class Client {
     return PushResultSchema.parse(await this.json(resp));
   }
 
+  // ─────────────────────────── Filesystem ─────────────────────────
+
   /**
-   * Open a long-lived SSE subscription for `agentId` and yield messages as
-   * they arrive. Aborts cleanly when `signal` is triggered.
+   * List the immediate children of `path`. Directories are returned
+   * first, alphabetized within each group. Members with
+   * `members.manage` see every home when listing `/`; everyone else
+   * sees only their own home.
    */
-  async *subscribe(agentId: string, signal?: AbortSignal): AsyncIterable<Message> {
+  async fsList(path: string): Promise<FsEntry[]> {
+    const qs = new URLSearchParams({ path });
+    const resp = await this.request(`${PATHS.fsList}?${qs.toString()}`, { method: 'GET' });
+    return FsListResponseSchema.parse(await this.json(resp)).entries;
+  }
+
+  /** Fetch metadata for a single path, or null if it does not exist. */
+  async fsStat(path: string): Promise<FsEntry | null> {
+    const qs = new URLSearchParams({ path });
+    const resp = await this.request(`${PATHS.fsStat}?${qs.toString()}`, { method: 'GET' });
+    if (resp.status === 404) return null;
+    return FsEntryResponseSchema.parse(await this.json(resp)).entry;
+  }
+
+  /**
+   * Download a file as a `Blob`. Callers wanting a streaming
+   * `ReadableStream` should use `fsReadStream` instead.
+   */
+  async fsRead(path: string): Promise<Blob> {
+    const resp = await this.request(FS_PATHS.read(path), { method: 'GET' });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new ClientError(`fsRead failed: ${resp.status} ${resp.statusText}`, resp.status, text);
+    }
+    return resp.blob();
+  }
+
+  /**
+   * Download a file as a `ReadableStream`. Use when the caller wants
+   * to pipe the body directly into another consumer (file, fetch,
+   * DOM `<img>` via `URL.createObjectURL`, etc.) without buffering.
+   */
+  async fsReadStream(path: string): Promise<ReadableStream<Uint8Array>> {
+    const resp = await this.request(FS_PATHS.read(path), { method: 'GET' });
+    if (!resp.ok) {
+      const text = await resp.text().catch(() => '');
+      throw new ClientError(
+        `fsReadStream failed: ${resp.status} ${resp.statusText}`,
+        resp.status,
+        text,
+      );
+    }
+    if (!resp.body) {
+      throw new ClientError('fsReadStream: empty response body', resp.status, '');
+    }
+    return resp.body;
+  }
+
+  /**
+   * Upload a file. The sender must have write access to the target
+   * path (owns the containing home, or holds `members.manage`).
+   * Parent directories are auto-created.
+   */
+  async fsWrite(input: FsWriteInput): Promise<FsWriteResponse> {
+    const qs = new URLSearchParams({
+      path: input.path,
+      mime: input.mimeType,
+      collide: input.collision ?? 'error',
+    });
+    const resp = await this.request(`${PATHS.fsWrite}?${qs.toString()}`, {
+      method: 'POST',
+      body: input.source,
+    });
+    return FsWriteResponseSchema.parse(await this.json(resp));
+  }
+
+  /** Create a directory. Pass `recursive: true` to auto-create missing parents. */
+  async fsMkdir(path: string, recursive = false): Promise<FsEntry> {
+    const resp = await this.request(PATHS.fsMkdir, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path, recursive }),
+    });
+    return FsEntryResponseSchema.parse(await this.json(resp)).entry;
+  }
+
+  /** Remove a file or directory. Pass `recursive: true` to cascade-delete directories. */
+  async fsRm(path: string, recursive = false): Promise<void> {
+    const qs = new URLSearchParams({ path });
+    if (recursive) qs.set('recursive', 'true');
+    const resp = await this.request(`${PATHS.fsRm}?${qs.toString()}`, { method: 'DELETE' });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      throw new ClientError(`fsRm failed: ${resp.status} ${resp.statusText}`, resp.status, body);
+    }
+  }
+
+  /** Rename or move a file (directories currently unsupported server-side). */
+  async fsMv(from: string, to: string): Promise<FsEntry> {
+    const resp = await this.request(PATHS.fsMv, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to }),
+    });
+    return FsEntryResponseSchema.parse(await this.json(resp)).entry;
+  }
+
+  /**
+   * Enumerate files shared with the caller via message or objective
+   * attachments. Unique by path — a file referenced from multiple
+   * messages appears once. Owner's own files aren't in this list;
+   * use `fsList` under the owner home for those.
+   */
+  async fsShared(): Promise<FsEntry[]> {
+    const resp = await this.request(PATHS.fsShared, { method: 'GET' });
+    return FsListResponseSchema.parse(await this.json(resp)).entries;
+  }
+
+  /**
+   * Open a long-lived SSE subscription for the caller's member `name`
+   * and yield messages as they arrive. Aborts cleanly when `signal`
+   * is triggered. The server rejects `name` that doesn't match the
+   * authenticated identity with 403.
+   */
+  async *subscribe(name: string, signal?: AbortSignal): AsyncIterable<Message> {
     const url = new URL(PATHS.subscribe.replace(/^\//, ''), this.baseUrl);
-    url.searchParams.set('agentId', agentId);
+    url.searchParams.set('name', name);
 
     const headers = new Headers();
     headers.set(PROTOCOL_HEADER, String(PROTOCOL_VERSION));

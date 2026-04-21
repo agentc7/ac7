@@ -35,6 +35,7 @@ import {
 } from '../lib/objectives.js';
 import { roster } from '../lib/roster.js';
 import { selectAgentDetail, selectObjectivesList } from '../lib/view.js';
+import { MessageAttachments } from './MessageAttachments.js';
 import { MessageLine } from './MessageLine.js';
 import { TracePanel } from './TracePanel.js';
 
@@ -161,16 +162,18 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
 
   const isAssignee = current.assignee === viewer;
   const isOriginator = current.originator === viewer;
-  const isDirector = b.authority === 'director';
-  const isManager = b.authority === 'manager';
+  const isAdmin = b.permissions.includes('members.manage');
+  const canCancelPerm = b.permissions.includes('objectives.cancel');
+  const canReassignPerm = b.permissions.includes('objectives.reassign');
+  const canWatchPerm = b.permissions.includes('objectives.watch');
   const isWatching = current.watchers.includes(viewer);
   const isTerminal = current.status === 'done' || current.status === 'cancelled';
-  const canUpdateStatus = !isTerminal && (isAssignee || isDirector);
+  const canUpdateStatus = !isTerminal && (isAssignee || isAdmin);
   const canComplete = !isTerminal && isAssignee;
-  const canCancel = !isTerminal && (isDirector || (isManager && isOriginator));
-  const canReassign = !isTerminal && isDirector;
-  const canManageWatchers = isDirector || (isManager && isOriginator);
-  const canDiscuss = isAssignee || isOriginator || isDirector || isWatching;
+  const canCancel = !isTerminal && (canCancelPerm || isOriginator);
+  const canReassign = !isTerminal && canReassignPerm;
+  const canManageWatchers = canWatchPerm || isOriginator;
+  const canDiscuss = isAssignee || isOriginator || isAdmin || isWatching;
   const hasAnyAction =
     canUpdateStatus || canComplete || canCancel || canReassign || canManageWatchers;
 
@@ -213,13 +216,13 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
           style="gap:4px 14px;margin-top:10px;font-family:var(--f-sans);font-size:13.5px;color:var(--graphite)"
         >
           <span>
-            assignee: <NameRef name={current.assignee} isDirector={isDirector} />
+            assignee: <NameRef name={current.assignee} isDirector={isAdmin} />
           </span>
           <span class="hidden sm:inline" style="color:var(--rule-strong)">
             ·
           </span>
           <span>
-            originator: <NameRef name={current.originator} isDirector={isDirector} />
+            originator: <NameRef name={current.originator} isDirector={isAdmin} />
           </span>
         </div>
       </div>
@@ -235,7 +238,7 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
             onChange={(t) => {
               activeTab.value = t;
             }}
-            show={{ trace: isDirector, actions: hasAnyAction }}
+            show={{ trace: isAdmin, actions: hasAnyAction }}
           />
         </div>
       </div>
@@ -262,7 +265,7 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
         {tab === 'discussion' && (
           <DiscussionTab id={id} viewer={viewer} canPost={canDiscuss} terminal={isTerminal} />
         )}
-        {tab === 'trace' && isDirector && <TracePanel objective={current} />}
+        {tab === 'trace' && isAdmin && <TracePanel objective={current} />}
         {tab === 'audit' && <AuditTab events={events} />}
       </div>
     </div>
@@ -355,6 +358,15 @@ function OverviewTab({
           <div style="font-family:var(--f-sans);font-size:14.5px;color:var(--ink);white-space:pre-wrap;line-height:1.55">
             {objective.body}
           </div>
+        </section>
+      )}
+
+      {objective.attachments.length > 0 && (
+        <section class="card">
+          <div class="eyebrow" style="margin-bottom:10px">
+            Attachments ({objective.attachments.length})
+          </div>
+          <MessageAttachments attachments={objective.attachments} />
         </section>
       )}
 
@@ -824,7 +836,7 @@ function WatchersSection({
         <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted)">
           No explicit watchers{' '}
           <span style="color:var(--frost);color:var(--rule-strong)">
-            (directors see everything automatically)
+            (admins see everything automatically)
           </span>
         </div>
       ) : (
@@ -905,7 +917,7 @@ function NameRef({ name, isDirector }: { name: string; isDirector: boolean }) {
 }
 
 /**
- * Status badge — distinct visual states so a director scanning the
+ * Status badge — distinct visual states so an admin scanning the
  * detail can identify state without reading the label.
  */
 function StatusBadge({ status }: { status: Objective['status'] }) {

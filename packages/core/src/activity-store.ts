@@ -1,9 +1,9 @@
 /**
- * Activity store — per-slot append-only timeline of everything a
- * slot's runner observed.
+ * Activity store — per-member append-only timeline of everything a
+ * member's runner observed.
  *
  * The broker's activity surface captures four kinds of events (see
- * `@agentc7/sdk/types`'s `AgentActivityEvent`):
+ * `@agentc7/sdk/types`'s `ActivityEvent`):
  *   - `llm_exchange` — a decoded LLM request/response pair, shipped
  *     by the MITM trace host on the runner side.
  *   - `opaque_http` — a non-LLM HTTP exchange observed by the proxy.
@@ -11,7 +11,7 @@
  *     runner emits when the objectives tracker's open set changes.
  *
  * Objective "traces" are a time-range view over this stream: the web
- * UI queries `GET /agents/:name/activity?from=<open>&to=<close>
+ * UI queries `GET /members/:name/activity?from=<open>&to=<close>
  * &kind=llm_exchange` rather than reading a separately-stored per-
  * objective blob.
  *
@@ -25,18 +25,18 @@
  * subscribers never see a row they'd miss via a concurrent `list`.
  */
 
-import type { AgentActivityEvent, AgentActivityKind, AgentActivityRow } from '@agentc7/sdk/types';
+import type { ActivityEvent, ActivityKind, ActivityRow } from '@agentc7/sdk/types';
 
 /** Filter for `ActivityStore.list`. All fields AND-combined. */
 export interface ListActivityFilter {
   /** Name whose stream to query. Required. */
-  slotName: string;
+  memberName: string;
   /** Lower bound (inclusive) on `event.ts`. Omit for no lower bound. */
   from?: number;
   /** Upper bound (inclusive) on `event.ts`. Omit for no upper bound. */
   to?: number;
   /** If set, only return rows whose `event.kind` is in this list. */
-  kinds?: readonly AgentActivityKind[];
+  kinds?: readonly ActivityKind[];
   /**
    * Max rows returned. Callers should cap this in-band; implementations
    * should clamp to a sane upper bound (the SQLite impl caps at 1000).
@@ -47,7 +47,7 @@ export interface ListActivityFilter {
 }
 
 /** Listener fired synchronously after each successful `append` row. */
-export type ActivityListener = (row: AgentActivityRow) => void;
+export type ActivityListener = (row: ActivityRow) => void;
 
 /**
  * Runtime-agnostic activity-store contract. Implementations are
@@ -67,29 +67,29 @@ export type ActivityListener = (row: AgentActivityRow) => void;
  */
 export interface ActivityStore {
   /**
-   * Persist events for a slot. Returns the fully-formed rows (with
+   * Persist events for a user. Returns the fully-formed rows (with
    * assigned ids + createdAt) in the order they were inserted.
    * Empty-array inputs are a no-op and return `[]`.
    */
-  append(slotName: string, events: readonly AgentActivityEvent[]): AgentActivityRow[];
+  append(memberName: string, events: readonly ActivityEvent[]): ActivityRow[];
 
   /**
    * Range query. Returns newest-first, bounded by `filter.limit`
    * (implementation-defined default, implementation-defined max).
    */
-  list(filter: ListActivityFilter): AgentActivityRow[];
+  list(filter: ListActivityFilter): ActivityRow[];
 
   /**
-   * Attach a listener for rows landing for `slotName`. Fires
+   * Attach a listener for rows landing for `memberName`. Fires
    * synchronously per row after the write commits. Returns an
    * unsubscribe function. Safe to call from inside a listener
    * (implementations must iterate a snapshot, not a live set).
    */
-  subscribe(slotName: string, listener: ActivityListener): () => void;
+  subscribe(memberName: string, listener: ActivityListener): () => void;
 
   /**
    * Delete every row where `event.ts < cutoffTs`, across every
-   * slot. Returns the number of rows deleted. Idempotent — calling
+   * user. Returns the number of rows deleted. Idempotent — calling
    * twice with the same cutoff on the same store returns 0 the
    * second time.
    *
@@ -123,8 +123,8 @@ const DEFAULT_MAX_LIMIT = 1000;
  * restart; that's by design.
  */
 export class InMemoryActivityStore implements ActivityStore {
-  private readonly rowsBySlot = new Map<string, AgentActivityRow[]>();
-  private readonly listenersBySlot = new Map<string, Set<ActivityListener>>();
+  private readonly rowsByMember = new Map<string, ActivityRow[]>();
+  private readonly listenersByMember = new Map<string, Set<ActivityListener>>();
   private readonly now: () => number;
   private readonly maxLimit: number;
   private nextId = 1;
@@ -134,13 +134,13 @@ export class InMemoryActivityStore implements ActivityStore {
     this.maxLimit = options.maxLimit ?? DEFAULT_MAX_LIMIT;
   }
 
-  append(slotName: string, events: readonly AgentActivityEvent[]): AgentActivityRow[] {
+  append(memberName: string, events: readonly ActivityEvent[]): ActivityRow[] {
     if (events.length === 0) return [];
 
     const createdAt = this.now();
-    const rows: AgentActivityRow[] = events.map((event) => ({
+    const rows: ActivityRow[] = events.map((event) => ({
       id: this.nextId++,
-      slotName,
+      memberName,
       event,
       createdAt,
     }));
@@ -148,23 +148,23 @@ export class InMemoryActivityStore implements ActivityStore {
     // All-or-nothing: the in-memory store has no real transaction,
     // but we build the full row array BEFORE mutating state so an
     // exception inside this loop can't leave a half-written append.
-    let bucket = this.rowsBySlot.get(slotName);
+    let bucket = this.rowsByMember.get(memberName);
     if (!bucket) {
       bucket = [];
-      this.rowsBySlot.set(slotName, bucket);
+      this.rowsByMember.set(memberName, bucket);
     }
     for (const row of rows) bucket.push(row);
 
     // Snapshot listeners before iterating — a handler may unsubscribe
     // (or subscribe a new handler) during delivery; iterating a live
     // Set would produce undefined-order behavior for those cases.
-    const listeners = this.listenersBySlot.get(slotName);
+    const listeners = this.listenersByMember.get(memberName);
     if (listeners && listeners.size > 0) {
       for (const listener of [...listeners]) {
         try {
-          listener(rows[0] as AgentActivityRow);
+          listener(rows[0] as ActivityRow);
           for (let i = 1; i < rows.length; i++) {
-            listener(rows[i] as AgentActivityRow);
+            listener(rows[i] as ActivityRow);
           }
         } catch {
           // Ref impl swallows listener errors — production uses the
@@ -177,14 +177,14 @@ export class InMemoryActivityStore implements ActivityStore {
     return rows;
   }
 
-  list(filter: ListActivityFilter): AgentActivityRow[] {
-    const bucket = this.rowsBySlot.get(filter.slotName);
+  list(filter: ListActivityFilter): ActivityRow[] {
+    const bucket = this.rowsByMember.get(filter.memberName);
     if (!bucket || bucket.length === 0) return [];
 
     const limit = clampListLimit(filter.limit, this.maxLimit);
     const kindSet = filter.kinds && filter.kinds.length > 0 ? new Set(filter.kinds) : null;
 
-    const matches: AgentActivityRow[] = [];
+    const matches: ActivityRow[] = [];
     // Walk newest-first so we can bail once `limit` is full.
     for (let i = bucket.length - 1; i >= 0; i--) {
       const row = bucket[i];
@@ -198,23 +198,23 @@ export class InMemoryActivityStore implements ActivityStore {
     return matches;
   }
 
-  subscribe(slotName: string, listener: ActivityListener): () => void {
-    let listeners = this.listenersBySlot.get(slotName);
+  subscribe(memberName: string, listener: ActivityListener): () => void {
+    let listeners = this.listenersByMember.get(memberName);
     if (!listeners) {
       listeners = new Set();
-      this.listenersBySlot.set(slotName, listeners);
+      this.listenersByMember.set(memberName, listeners);
     }
     listeners.add(listener);
     return () => {
-      const current = this.listenersBySlot.get(slotName);
+      const current = this.listenersByMember.get(memberName);
       current?.delete(listener);
     };
   }
 
   prune(cutoffTs: number): number {
     let deleted = 0;
-    for (const [slot, bucket] of this.rowsBySlot) {
-      const kept: AgentActivityRow[] = [];
+    for (const [member, bucket] of this.rowsByMember) {
+      const kept: ActivityRow[] = [];
       for (const row of bucket) {
         if (row.event.ts < cutoffTs) {
           deleted++;
@@ -223,18 +223,18 @@ export class InMemoryActivityStore implements ActivityStore {
         }
       }
       if (kept.length === 0) {
-        this.rowsBySlot.delete(slot);
+        this.rowsByMember.delete(member);
       } else if (kept.length !== bucket.length) {
-        this.rowsBySlot.set(slot, kept);
+        this.rowsByMember.set(member, kept);
       }
     }
     return deleted;
   }
 
-  /** Test-only: total row count across all slots. */
+  /** Test-only: total row count across all members. */
   size(): number {
     let total = 0;
-    for (const bucket of this.rowsBySlot.values()) total += bucket.length;
+    for (const bucket of this.rowsByMember.values()) total += bucket.length;
     return total;
   }
 }

@@ -1,6 +1,6 @@
 import type { Message } from '@agentc7/sdk/types';
 import { describe, expect, it, vi } from 'vitest';
-import { AgentIdentityError, Broker, InMemoryEventLog } from '../src/index.js';
+import { Broker, InMemoryEventLog, PresenceIdentityError } from '../src/index.js';
 
 function makeBroker(overrides: { idFactory?: () => string; now?: () => number } = {}) {
   const eventLog = new InMemoryEventLog();
@@ -18,9 +18,9 @@ describe('Broker.register', () => {
   it('creates a new agent on first register', async () => {
     const { broker } = makeBroker();
     const reg = await broker.register('agent-1');
-    expect(reg.agentId).toBe('agent-1');
+    expect(reg.name).toBe('agent-1');
     expect(reg.registeredAt).toBe(1);
-    expect(broker.listAgents()).toHaveLength(1);
+    expect(broker.listPresences()).toHaveLength(1);
   });
 
   it('is idempotent for repeated registers (preserves createdAt)', async () => {
@@ -28,35 +28,41 @@ describe('Broker.register', () => {
     const first = await broker.register('agent-1');
     const second = await broker.register('agent-1');
     expect(first.registeredAt).toBe(second.registeredAt);
-    expect(broker.listAgents()).toHaveLength(1);
+    expect(broker.listPresences()).toHaveLength(1);
   });
 
   it('records role from the register context', async () => {
     const { broker } = makeBroker();
-    await broker.register('build-bot', { role: 'agent' });
-    const agents = broker.listAgents();
+    await broker.register('build-bot', { role: { title: 'engineer', description: '' } });
+    const agents = broker.listPresences();
     expect(agents).toHaveLength(1);
-    expect(agents[0]?.role).toBe('agent');
+    expect(agents[0]?.role?.title).toBe('engineer');
   });
 
   it('defaults role to null when no context is supplied', async () => {
     const { broker } = makeBroker();
     await broker.register('nameless');
-    expect(broker.listAgents()[0]?.role).toBeNull();
+    expect(broker.listPresences()[0]?.role).toBeNull();
   });
 
   it('allows the matching name to register idempotently', async () => {
     const { broker } = makeBroker();
-    await broker.register('alice', { role: 'individual-contributor', name: 'alice' });
-    await broker.register('alice', { role: 'individual-contributor', name: 'alice' });
-    expect(broker.listAgents()).toHaveLength(1);
+    await broker.register('alice', {
+      role: { title: 'commander', description: '' },
+      name: 'alice',
+    });
+    await broker.register('alice', {
+      role: { title: 'commander', description: '' },
+      name: 'alice',
+    });
+    expect(broker.listPresences()).toHaveLength(1);
   });
 
   it('rejects register when agentId does not equal name', async () => {
     const { broker } = makeBroker();
     await expect(
-      broker.register('alice', { role: 'individual-contributor', name: 'mallory' }),
-    ).rejects.toBeInstanceOf(AgentIdentityError);
+      broker.register('alice', { role: { title: 'commander', description: '' }, name: 'mallory' }),
+    ).rejects.toBeInstanceOf(PresenceIdentityError);
   });
 
   it('skips the identity check when no name is supplied', async () => {
@@ -65,20 +71,19 @@ describe('Broker.register', () => {
   });
 });
 
-describe('Broker.seedSlots', () => {
-  it('pre-populates the registry with every slot', () => {
+describe('Broker.seedMembers', () => {
+  it('pre-populates the registry with every member', () => {
     const { broker } = makeBroker();
-    broker.seedSlots([
-      { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-      { name: 'ALPHA-1', role: 'implementer', authority: 'individual-contributor' },
-      { name: 'SIERRA', role: 'reviewer', authority: 'manager' },
+    broker.seedMembers([
+      { name: 'ACTUAL', role: { title: 'commander', description: '' } },
+      { name: 'ALPHA-1', role: { title: 'engineer', description: '' } },
+      { name: 'SIERRA', role: { title: 'reviewer', description: '' } },
     ]);
-    const agents = broker.listAgents();
-    expect(agents.map((a) => a.agentId).sort()).toEqual(['ACTUAL', 'ALPHA-1', 'SIERRA']);
-    expect(agents.find((a) => a.agentId === 'ACTUAL')?.role).toBe('individual-contributor');
-    expect(agents.find((a) => a.agentId === 'ACTUAL')?.authority).toBe('director');
-    expect(agents.find((a) => a.agentId === 'SIERRA')?.authority).toBe('manager');
-    expect(agents.every((a) => a.connected === 0)).toBe(true);
+    const presences = broker.listPresences();
+    expect(presences.map((p) => p.name).sort()).toEqual(['ACTUAL', 'ALPHA-1', 'SIERRA']);
+    expect(presences.find((p) => p.name === 'ACTUAL')?.role?.title).toBe('commander');
+    expect(presences.find((p) => p.name === 'SIERRA')?.role?.title).toBe('reviewer');
+    expect(presences.every((p) => p.connected === 0)).toBe(true);
   });
 });
 
@@ -86,7 +91,7 @@ describe('Broker.subscribe identity', () => {
   it('rejects subscribe when agentId does not equal name', async () => {
     const { broker } = makeBroker();
     expect(() => broker.subscribe('alice', () => {}, { name: 'mallory' })).toThrow(
-      AgentIdentityError,
+      PresenceIdentityError,
     );
   });
 
@@ -100,7 +105,7 @@ describe('Broker.subscribe identity', () => {
       },
       { name: 'alice' },
     );
-    await broker.push({ agentId: 'alice', body: 'hi' }, { from: 'bob' });
+    await broker.push({ to: 'alice', body: 'hi' }, { from: 'bob' });
     expect(received).toHaveLength(1);
   });
 });
@@ -108,8 +113,14 @@ describe('Broker.subscribe identity', () => {
 describe('Broker.push DM sender-fanout', () => {
   it("delivers a DM to the sender's own agent when both are registered", async () => {
     const { broker } = makeBroker();
-    await broker.register('alice', { role: 'individual-contributor', name: 'alice' });
-    await broker.register('build-bot', { role: 'agent', name: 'build-bot' });
+    await broker.register('alice', {
+      role: { title: 'commander', description: '' },
+      name: 'alice',
+    });
+    await broker.register('build-bot', {
+      role: { title: 'engineer', description: '' },
+      name: 'build-bot',
+    });
 
     const aliceReceived: Message[] = [];
     const botReceived: Message[] = [];
@@ -128,7 +139,7 @@ describe('Broker.push DM sender-fanout', () => {
       { name: 'build-bot' },
     );
 
-    const result = await broker.push({ agentId: 'build-bot', body: 'status?' }, { from: 'alice' });
+    const result = await broker.push({ to: 'build-bot', body: 'status?' }, { from: 'alice' });
 
     // Primary target is still build-bot; alice's copy is sender-fanout
     // for multi-device consistency.
@@ -136,13 +147,16 @@ describe('Broker.push DM sender-fanout', () => {
     expect(result.delivery.sse).toBe(2);
     expect(botReceived).toHaveLength(1);
     expect(aliceReceived).toHaveLength(1);
-    expect(aliceReceived[0]?.agentId).toBe('build-bot');
+    expect(aliceReceived[0]?.to).toBe('build-bot');
     expect(aliceReceived[0]?.from).toBe('alice');
   });
 
   it('does not double-deliver when the sender talks to themselves', async () => {
     const { broker } = makeBroker();
-    await broker.register('alice', { role: 'individual-contributor', name: 'alice' });
+    await broker.register('alice', {
+      role: { title: 'commander', description: '' },
+      name: 'alice',
+    });
     const received: Message[] = [];
     broker.subscribe(
       'alice',
@@ -152,7 +166,7 @@ describe('Broker.push DM sender-fanout', () => {
       { name: 'alice' },
     );
 
-    const result = await broker.push({ agentId: 'alice', body: 'note-to-self' }, { from: 'alice' });
+    const result = await broker.push({ to: 'alice', body: 'note-to-self' }, { from: 'alice' });
 
     expect(result.delivery.targets).toBe(1);
     expect(result.delivery.sse).toBe(1);
@@ -161,7 +175,10 @@ describe('Broker.push DM sender-fanout', () => {
 
   it('is a no-op when the sender has no registered agent', async () => {
     const { broker } = makeBroker();
-    await broker.register('build-bot', { role: 'agent', name: 'build-bot' });
+    await broker.register('build-bot', {
+      role: { title: 'engineer', description: '' },
+      name: 'build-bot',
+    });
     const received: Message[] = [];
     broker.subscribe(
       'build-bot',
@@ -171,7 +188,7 @@ describe('Broker.push DM sender-fanout', () => {
       { name: 'build-bot' },
     );
 
-    const result = await broker.push({ agentId: 'build-bot', body: 'hello' }, { from: 'alice' });
+    const result = await broker.push({ to: 'build-bot', body: 'hello' }, { from: 'alice' });
     expect(result.delivery.targets).toBe(1);
     expect(result.delivery.sse).toBe(1);
     expect(received).toHaveLength(1);
@@ -187,7 +204,7 @@ describe('Broker.push stamping', () => {
     // even if a runtime adapter accidentally passed one in via `data`,
     // the broker must ignore it — only the context value wins.
     const result = await broker.push(
-      { agentId: 'agent-1', body: 'hi', data: { from: 'spoofed' } },
+      { to: 'agent-1', body: 'hi', data: { from: 'spoofed' } },
       { from: 'alice' },
     );
 
@@ -198,7 +215,7 @@ describe('Broker.push stamping', () => {
   it('stamps `from: null` when no context is supplied', async () => {
     const { broker } = makeBroker();
     await broker.register('agent-1');
-    const result = await broker.push({ agentId: 'agent-1', body: 'hi' });
+    const result = await broker.push({ to: 'agent-1', body: 'hi' });
     expect(result.message.from).toBeNull();
   });
 });
@@ -212,19 +229,19 @@ describe('Broker.push targeted', () => {
       received.push(msg);
     });
 
-    const result = await broker.push({ agentId: 'agent-1', body: 'hello' });
+    const result = await broker.push({ to: 'agent-1', body: 'hello' });
 
     expect(result.delivery.sse).toBe(1);
     expect(result.delivery.targets).toBe(1);
     expect(received).toHaveLength(1);
     expect(received[0]?.body).toBe('hello');
-    expect(received[0]?.agentId).toBe('agent-1');
+    expect(received[0]?.to).toBe('agent-1');
     expect(await eventLog.tail()).toHaveLength(1);
   });
 
   it('returns targets: 0 when the target agent is unknown', async () => {
     const { broker } = makeBroker();
-    const result = await broker.push({ agentId: 'ghost', body: 'hi' });
+    const result = await broker.push({ to: 'ghost', body: 'hi' });
     expect(result.delivery.sse).toBe(0);
     expect(result.delivery.targets).toBe(0);
   });
@@ -241,7 +258,7 @@ describe('Broker.push targeted', () => {
       b.push(m);
     });
 
-    const result = await broker.push({ agentId: 'agent-1', body: 'hi' });
+    const result = await broker.push({ to: 'agent-1', body: 'hi' });
     expect(result.delivery.sse).toBe(2);
     expect(a).toHaveLength(1);
     expect(b).toHaveLength(1);
@@ -265,7 +282,7 @@ describe('Broker.push targeted', () => {
       good.push(m);
     });
 
-    const result = await broker.push({ agentId: 'agent-1', body: 'hi' });
+    const result = await broker.push({ to: 'agent-1', body: 'hi' });
     expect(good).toHaveLength(1);
     expect(result.delivery.sse).toBe(1);
     expect(warn).toHaveBeenCalledOnce();
@@ -401,7 +418,7 @@ describe('Broker.subscribe', () => {
   it('auto-registers the agent if not previously known', async () => {
     const { broker } = makeBroker();
     broker.subscribe('autoreg', () => {});
-    expect(broker.hasAgent('autoreg')).toBe(true);
+    expect(broker.hasMember('autoreg')).toBe(true);
   });
 
   it('unsubscribe stops further deliveries', async () => {
@@ -411,33 +428,34 @@ describe('Broker.subscribe', () => {
     const unsub = broker.subscribe('agent-1', (m) => {
       received.push(m);
     });
-    await broker.push({ agentId: 'agent-1', body: 'first' });
+    await broker.push({ to: 'agent-1', body: 'first' });
     unsub();
-    await broker.push({ agentId: 'agent-1', body: 'second' });
+    await broker.push({ to: 'agent-1', body: 'second' });
     expect(received).toHaveLength(1);
     expect(received[0]?.body).toBe('first');
   });
 
-  it('listAgents reports the live subscriber count in `connected`', async () => {
+  it('listPresences reports the live subscriber count in `connected`', async () => {
     const { broker } = makeBroker();
     await broker.register('agent-1');
-    expect(broker.listAgents()[0]?.connected).toBe(0);
+    expect(broker.listPresences()[0]?.connected).toBe(0);
     const unsub = broker.subscribe('agent-1', () => {});
-    expect(broker.listAgents()[0]?.connected).toBe(1);
+    expect(broker.listPresences()[0]?.connected).toBe(1);
     unsub();
-    expect(broker.listAgents()[0]?.connected).toBe(0);
+    expect(broker.listPresences()[0]?.connected).toBe(0);
   });
 });
 
 describe('InMemoryEventLog.query', () => {
   function msg(overrides: Partial<Message> & { id: string; ts: number }): Message {
     return {
-      agentId: null,
+      to: null,
       from: null,
       title: null,
       body: 'msg',
       level: 'info',
       data: {},
+      attachments: [],
       ...overrides,
     };
   }
@@ -445,9 +463,9 @@ describe('InMemoryEventLog.query', () => {
   it('returns broadcasts + DMs involving the viewer', async () => {
     const log = new InMemoryEventLog();
     await log.append(msg({ id: 'bcast', ts: 1 }));
-    await log.append(msg({ id: 'dm-to-alice', ts: 2, agentId: 'alice', from: 'bob' }));
-    await log.append(msg({ id: 'dm-from-alice', ts: 3, agentId: 'bob', from: 'alice' }));
-    await log.append(msg({ id: 'other-dm', ts: 4, agentId: 'carol', from: 'bob' }));
+    await log.append(msg({ id: 'dm-to-alice', ts: 2, to: 'alice', from: 'bob' }));
+    await log.append(msg({ id: 'dm-from-alice', ts: 3, to: 'bob', from: 'alice' }));
+    await log.append(msg({ id: 'other-dm', ts: 4, to: 'carol', from: 'bob' }));
 
     const result = await log.query({ viewer: 'alice' });
     const ids = result.map((m) => m.id);
@@ -460,9 +478,9 @@ describe('InMemoryEventLog.query', () => {
   it('narrows to DMs with a specific other when `with` is set', async () => {
     const log = new InMemoryEventLog();
     await log.append(msg({ id: 'bcast', ts: 1 }));
-    await log.append(msg({ id: 'dm-alice-bob', ts: 2, agentId: 'bob', from: 'alice' }));
-    await log.append(msg({ id: 'dm-bob-alice', ts: 3, agentId: 'alice', from: 'bob' }));
-    await log.append(msg({ id: 'dm-alice-carol', ts: 4, agentId: 'carol', from: 'alice' }));
+    await log.append(msg({ id: 'dm-alice-bob', ts: 2, to: 'bob', from: 'alice' }));
+    await log.append(msg({ id: 'dm-bob-alice', ts: 3, to: 'alice', from: 'bob' }));
+    await log.append(msg({ id: 'dm-alice-carol', ts: 4, to: 'carol', from: 'alice' }));
 
     const result = await log.query({ viewer: 'alice', with: 'bob' });
     const ids = result.map((m) => m.id);
@@ -490,12 +508,13 @@ describe('InMemoryEventLog', () => {
     const m1: Message = {
       id: 'a',
       ts: 1,
-      agentId: 'x',
+      to: 'x',
       from: null,
       title: null,
       body: 'a',
       level: 'info',
       data: {},
+      attachments: [],
     };
     const m2: Message = { ...m1, id: 'b', ts: 2, body: 'b' };
     await log.append(m1);
@@ -512,12 +531,13 @@ describe('InMemoryEventLog', () => {
       await log.append({
         id: `m${i}`,
         ts: i,
-        agentId: null,
+        to: null,
         from: null,
         title: null,
         body: `msg ${i}`,
         level: 'info',
         data: {},
+        attachments: [],
       });
     }
     const sinceOut = await log.tail({ since: 3 });

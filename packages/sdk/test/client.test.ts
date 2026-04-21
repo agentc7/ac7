@@ -60,12 +60,13 @@ describe('Client', () => {
     const fakeMessage: Message = {
       id: 'msg-1',
       ts: 1_700_000_000_000,
-      agentId: 'agent-1',
+      to: 'agent-1',
       from: 'individual-contributor',
       title: 'hi',
       body: 'hello world',
       level: 'info',
       data: {},
+      attachments: [],
     };
     const payload: PushResult = {
       delivery: { sse: 1, targets: 1 },
@@ -76,7 +77,7 @@ describe('Client', () => {
       token: 'x',
       fetch: makeFakeFetch(() => jsonResponse(payload)),
     });
-    const result = await client.push({ agentId: 'agent-1', body: 'hello world' });
+    const result = await client.push({ to: 'agent-1', body: 'hello world' });
     expect(result.message.body).toBe('hello world');
     expect(result.delivery.sse).toBe(1);
   });
@@ -108,12 +109,13 @@ describe('Client', () => {
     const fakeMessage: Message = {
       id: 'msg-1',
       ts: 1_700_000_000_000,
-      agentId: 'agent-1',
+      to: 'agent-1',
       from: null,
       title: null,
       body: 'hi',
       level: 'info',
       data: {},
+      attachments: [],
     };
     const fakeMessage2: Message = { ...fakeMessage, id: 'msg-2', body: 'second' };
     const sse =
@@ -144,12 +146,13 @@ describe('Client', () => {
     const fakeMessage: Message = {
       id: 'msg-split',
       ts: 1_700_000_000_000,
-      agentId: 'agent-1',
+      to: 'agent-1',
       from: null,
       title: null,
       body: 'split across chunks',
       level: 'info',
       data: {},
+      attachments: [],
     };
     const json = JSON.stringify(fakeMessage);
     // Split the frame mid-payload to exercise the buffering path.

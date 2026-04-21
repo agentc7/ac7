@@ -1,51 +1,49 @@
 /**
- * AgentTimeline — live feed of an agent's activity stream.
+ * AgentTimeline — threaded view of an agent's activity stream.
  *
- * Renders rows from `agentActivityRows` (newest-first) with visual
- * differentiation per event kind:
+ * Renders the per-agent feed as a continuous chat transcript rather
+ * than a list of expandable exchange cards. Successive llm_exchanges
+ * share a growing prefix of messages (agent loops are prefix-stable),
+ * so only the new tail is emitted per turn — the conversation reads
+ * top-to-bottom without the redundancy of "each call carries its
+ * whole history."
  *
- *   - `objective_open`  — green bracket marker
- *   - `objective_close` — muted bracket marker with the terminal
- *     reason (done / cancelled / reassigned / runner_shutdown)
- *   - `llm_exchange`    — expandable card with model, token
- *     usage, and the full message list (reuses the same content
- *     block renderer as TracePanel)
- *   - `opaque_http`     — one-line method / host / url / status
+ * Opaque HTTP events and objective open/close markers interleave
+ * chronologically as gutter asides between messages.
  *
- * The filter bar toggles kinds in the rendered output — the
- * underlying list isn't refetched, so toggling back shows
- * everything instantly without a round trip.
+ * Filters:
+ *   - `kindFilters` — per-event-kind toggles (LLM, HTTP, obj open,
+ *     obj close). Hidden kinds are dropped before threading.
+ *   - `objectiveFilter` — clip to rows that occurred while a chosen
+ *     objective was open. `null` means "show everything." Populated
+ *     from the set of objectives observed in the stream.
  *
- * "Load older" button at the bottom calls
- * `loadOlderAgentActivity()` which extends the list with a
- * time-range query against the server.
- *
- * All data comes from the `lib/agent-activity.js` signals —
- * component is dumb, just renders the current state.
+ * Context-break detection: if a new exchange's request messages do
+ * not extend the running prefix, we assume the runner compacted or
+ * swapped context and emit a `↺ context changed` divider rather than
+ * rewinding the thread.
  */
 
 import type {
-  AgentActivityEvent,
-  AgentActivityLlmExchange,
-  AgentActivityObjectiveClose,
-  AgentActivityObjectiveOpen,
-  AgentActivityOpaqueHttp,
-  AgentActivityRow,
+  ActivityEvent,
+  ActivityRow,
   AnthropicContentBlock,
+  AnthropicMessage,
   AnthropicMessagesEntry,
+  AnthropicUsage,
 } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
-import {
-  agentActivityConnected,
-  agentActivityExhausted,
-  agentActivityLoading,
-  agentActivityRows,
-  loadOlderAgentActivity,
-} from '../lib/agent-activity.js';
 import { highlightXmlTags } from '../lib/channel-highlight.js';
+import {
+  loadOlderMemberActivity,
+  memberActivityConnected,
+  memberActivityExhausted,
+  memberActivityLoading,
+  memberActivityRows,
+} from '../lib/member-activity.js';
 import { selectObjectiveDetail } from '../lib/view.js';
 
-type KindFilter = Record<AgentActivityEvent['kind'], boolean>;
+type KindFilter = Record<ActivityEvent['kind'], boolean>;
 
 const DEFAULT_FILTERS: KindFilter = {
   objective_open: true,
@@ -56,14 +54,232 @@ const DEFAULT_FILTERS: KindFilter = {
 
 const kindFilters = signal<KindFilter>({ ...DEFAULT_FILTERS });
 
-export function AgentTimeline() {
-  const rows = agentActivityRows.value;
-  const loading = agentActivityLoading.value;
-  const connected = agentActivityConnected.value;
-  const exhausted = agentActivityExhausted.value;
-  const filters = kindFilters.value;
+/** null = all activity; otherwise clip to windows where this objective was open. */
+const objectiveFilter = signal<string | null>(null);
 
-  const filteredRows = rows.filter((row) => filters[row.event.kind]);
+// ── Thread model ─────────────────────────────────────────────────
+
+type ThreadItem =
+  | {
+      key: string;
+      variant: 'message';
+      ts: number;
+      role: string;
+      content: AnthropicContentBlock[];
+    }
+  | {
+      key: string;
+      variant: 'exchange';
+      ts: number;
+      model: string | null;
+      duration: number;
+      usage: AnthropicUsage | null;
+      stopReason: string | null;
+      status: number | null;
+      entry: AnthropicMessagesEntry;
+    }
+  | {
+      key: string;
+      variant: 'context-break';
+      ts: number;
+      droppedCount: number;
+    }
+  | {
+      key: string;
+      variant: 'objective-open';
+      ts: number;
+      objectiveId: string;
+    }
+  | {
+      key: string;
+      variant: 'objective-close';
+      ts: number;
+      objectiveId: string;
+      result: 'done' | 'cancelled' | 'reassigned' | 'runner_shutdown';
+    }
+  | {
+      key: string;
+      variant: 'http';
+      ts: number;
+      method: string;
+      host: string;
+      url: string;
+      status: number | null;
+    };
+
+/**
+ * Collapse a chronological row stream into thread items, with
+ * successive LLM exchanges deduped against their running prefix.
+ * Pure for testability. Input may be in any order — sorted by ts
+ * ascending internally.
+ */
+export function buildThread(rows: ActivityRow[]): ThreadItem[] {
+  const chron = [...rows].sort((a, b) => a.event.ts - b.event.ts);
+  const thread: ThreadItem[] = [];
+  let runningHashes: string[] = [];
+  for (const row of chron) {
+    const ev = row.event;
+    switch (ev.kind) {
+      case 'objective_open':
+        thread.push({
+          key: `r${row.id}-oo`,
+          variant: 'objective-open',
+          ts: ev.ts,
+          objectiveId: ev.objectiveId,
+        });
+        break;
+      case 'objective_close':
+        thread.push({
+          key: `r${row.id}-oc`,
+          variant: 'objective-close',
+          ts: ev.ts,
+          objectiveId: ev.objectiveId,
+          result: ev.result,
+        });
+        break;
+      case 'opaque_http': {
+        const e = ev.entry;
+        thread.push({
+          key: `r${row.id}-http`,
+          variant: 'http',
+          ts: ev.ts,
+          method: e.method,
+          host: e.host,
+          url: e.url,
+          status: e.status,
+        });
+        break;
+      }
+      case 'llm_exchange': {
+        const entry = ev.entry;
+        const reqMsgs = entry.request.messages;
+        const reqHashes = reqMsgs.map(hashMessage);
+
+        const isExtension =
+          reqHashes.length >= runningHashes.length &&
+          runningHashes.every((h, i) => h === reqHashes[i]);
+
+        const startIdx = isExtension ? runningHashes.length : 0;
+        if (!isExtension && runningHashes.length > 0) {
+          thread.push({
+            key: `r${row.id}-break`,
+            variant: 'context-break',
+            ts: ev.ts,
+            droppedCount: runningHashes.length,
+          });
+        }
+        for (let i = startIdx; i < reqMsgs.length; i++) {
+          const m = reqMsgs[i];
+          if (!m) continue;
+          thread.push({
+            key: `r${row.id}-req-${i}`,
+            variant: 'message',
+            ts: ev.ts,
+            role: m.role,
+            content: m.content,
+          });
+        }
+
+        const respMsgs = entry.response?.messages ?? [];
+        for (let i = 0; i < respMsgs.length; i++) {
+          const m = respMsgs[i];
+          if (!m) continue;
+          thread.push({
+            key: `r${row.id}-resp-${i}`,
+            variant: 'message',
+            ts: ev.ts,
+            role: m.role,
+            content: m.content,
+          });
+        }
+
+        thread.push({
+          key: `r${row.id}-ex`,
+          variant: 'exchange',
+          ts: ev.ts,
+          model: entry.request.model,
+          duration: ev.duration,
+          usage: entry.response?.usage ?? null,
+          stopReason: entry.response?.stopReason ?? null,
+          status: entry.response?.status ?? null,
+          entry,
+        });
+
+        runningHashes = [...reqHashes, ...respMsgs.map(hashMessage)];
+        break;
+      }
+    }
+  }
+  return thread;
+}
+
+function hashMessage(m: AnthropicMessage): string {
+  return `${m.role}:${JSON.stringify(m.content)}`;
+}
+
+export interface ObjectiveSeen {
+  id: string;
+  result: string | null;
+}
+
+/** Objectives that appeared in the row stream, first-seen order. */
+export function objectivesSeen(rows: ActivityRow[]): ObjectiveSeen[] {
+  const chron = [...rows].sort((a, b) => a.event.ts - b.event.ts);
+  const out = new Map<string, ObjectiveSeen>();
+  for (const row of chron) {
+    const ev = row.event;
+    if (ev.kind === 'objective_open' && !out.has(ev.objectiveId)) {
+      out.set(ev.objectiveId, { id: ev.objectiveId, result: null });
+    } else if (ev.kind === 'objective_close') {
+      const entry = out.get(ev.objectiveId);
+      if (entry) entry.result = ev.result;
+      else out.set(ev.objectiveId, { id: ev.objectiveId, result: ev.result });
+    }
+  }
+  return [...out.values()];
+}
+
+/**
+ * Clip rows to windows where `objectiveId` was open. Open and close
+ * markers for the target objective are always included; anything
+ * strictly between a matching open and its close (non-inclusive on
+ * the far side of interleaved opens for other objectives) is kept.
+ * Input and output are newest-first.
+ */
+export function clipToObjective(rows: ActivityRow[], objectiveId: string | null): ActivityRow[] {
+  if (objectiveId === null) return rows;
+  const chron = [...rows].sort((a, b) => a.event.ts - b.event.ts);
+  const out: ActivityRow[] = [];
+  let active = false;
+  for (const row of chron) {
+    const ev = row.event;
+    if (ev.kind === 'objective_open' && ev.objectiveId === objectiveId) {
+      active = true;
+      out.push(row);
+    } else if (ev.kind === 'objective_close' && ev.objectiveId === objectiveId) {
+      active = false;
+      out.push(row);
+    } else if (active) {
+      out.push(row);
+    }
+  }
+  return [...out].sort((a, b) => b.event.ts - a.event.ts);
+}
+
+// ── Rendering ────────────────────────────────────────────────────
+
+export function AgentTimeline() {
+  const rows = memberActivityRows.value;
+  const loading = memberActivityLoading.value;
+  const connected = memberActivityConnected.value;
+  const exhausted = memberActivityExhausted.value;
+  const filters = kindFilters.value;
+  const objFilter = objectiveFilter.value;
+
+  const clipped = clipToObjective(rows, objFilter);
+  const filteredRows = clipped.filter((row) => filters[row.event.kind]);
+  const thread = buildThread(filteredRows);
+  const objectives = objectivesSeen(rows);
 
   return (
     <section class="card" style="display:flex;flex-direction:column;gap:14px">
@@ -76,7 +292,10 @@ export function AgentTimeline() {
             </span>
           )}
         </div>
-        <FilterBar filters={filters} />
+        <div class="flex items-center gap-2 flex-wrap">
+          {objectives.length > 0 && <ObjectiveSelect objectives={objectives} current={objFilter} />}
+          <FilterBar filters={filters} />
+        </div>
       </div>
 
       {rows.length === 0 && loading && <div class="eyebrow">Loading activity…</div>}
@@ -86,26 +305,27 @@ export function AgentTimeline() {
         </div>
       )}
 
-      <ol style="display:flex;flex-direction:column;gap:8px;list-style:none;padding:0;margin:0">
-        {filteredRows.map((row) => (
-          <li key={row.id}>
-            <RowRenderer row={row} />
-          </li>
-        ))}
-      </ol>
-
       {rows.length > 0 && !exhausted && (
         <div>
           <button
             type="button"
-            onClick={() => void loadOlderAgentActivity()}
+            onClick={() => void loadOlderMemberActivity()}
             disabled={loading}
             class="btn btn-ghost btn-sm"
           >
-            {loading ? 'Loading…' : '↓ Load older'}
+            {loading ? 'Loading…' : '↑ Load older'}
           </button>
         </div>
       )}
+
+      <ol style="display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:0">
+        {thread.map((item) => (
+          <li key={item.key}>
+            <ThreadItemView item={item} />
+          </li>
+        ))}
+      </ol>
+
       {exhausted && rows.length > 0 && (
         <div style="font-family:var(--f-sans);font-size:12px;color:var(--muted);font-style:italic">
           — end of activity —
@@ -115,8 +335,35 @@ export function AgentTimeline() {
   );
 }
 
+function ObjectiveSelect({
+  objectives,
+  current,
+}: {
+  objectives: ObjectiveSeen[];
+  current: string | null;
+}) {
+  return (
+    <select
+      aria-label="Objective filter"
+      value={current ?? ''}
+      onChange={(e) => {
+        const v = (e.currentTarget as HTMLSelectElement).value;
+        objectiveFilter.value = v === '' ? null : v;
+      }}
+      style="font-family:var(--f-mono);font-size:12px;padding:2px 6px;border:1px solid var(--rule);background:var(--ice);color:var(--ink);border-radius:var(--r-sm)"
+    >
+      <option value="">all activity</option>
+      {objectives.map((o) => (
+        <option key={o.id} value={o.id}>
+          {o.id} · {o.result ?? 'open'}
+        </option>
+      ))}
+    </select>
+  );
+}
+
 function FilterBar({ filters }: { filters: KindFilter }) {
-  const kinds: Array<{ key: AgentActivityEvent['kind']; label: string }> = [
+  const kinds: Array<{ key: ActivityEvent['kind']; label: string }> = [
     { key: 'llm_exchange', label: 'LLM' },
     { key: 'opaque_http', label: 'HTTP' },
     { key: 'objective_open', label: 'obj open' },
@@ -144,153 +391,140 @@ function FilterBar({ filters }: { filters: KindFilter }) {
   );
 }
 
-function RowRenderer({ row }: { row: AgentActivityRow }) {
-  const event = row.event;
-  switch (event.kind) {
-    case 'objective_open':
-      return <ObjectiveOpenRow event={event} />;
-    case 'objective_close':
-      return <ObjectiveCloseRow event={event} />;
-    case 'llm_exchange':
-      return <LlmExchangeRow event={event} />;
-    case 'opaque_http':
-      return <OpaqueHttpRow event={event} />;
+function ThreadItemView({ item }: { item: ThreadItem }) {
+  switch (item.variant) {
+    case 'objective-open':
+      return (
+        <div
+          class="flex items-center gap-3"
+          style="font-family:var(--f-mono);font-size:12px;color:var(--steel);border-left:2px solid var(--steel);padding:6px 12px"
+        >
+          <span>{formatTs(item.ts)}</span>
+          <span>▼</span>
+          <button
+            type="button"
+            onClick={() => selectObjectiveDetail(item.objectiveId)}
+            style="background:transparent;color:var(--steel);font-family:inherit;font-size:inherit;padding:0"
+          >
+            {item.objectiveId}
+          </button>
+          <span style="color:var(--muted)">opened</span>
+        </div>
+      );
+    case 'objective-close':
+      return (
+        <div
+          class="flex items-center gap-3"
+          style="font-family:var(--f-mono);font-size:12px;color:var(--muted);border-left:2px solid var(--rule);padding:6px 12px"
+        >
+          <span>{formatTs(item.ts)}</span>
+          <span>▲</span>
+          <button
+            type="button"
+            onClick={() => selectObjectiveDetail(item.objectiveId)}
+            style="background:transparent;color:var(--ink);font-family:inherit;font-size:inherit;padding:0"
+          >
+            {item.objectiveId}
+          </button>
+          <span>closed ({item.result})</span>
+        </div>
+      );
+    case 'http':
+      return (
+        <div style="font-family:var(--f-mono);font-size:12px;border-left:2px solid var(--rule-strong);padding:6px 12px">
+          <span style="color:var(--muted)">{formatTs(item.ts)}</span>{' '}
+          <span style="color:var(--ink)">{item.method}</span>{' '}
+          <span style="color:var(--muted)">{item.host}</span>
+          <span style="color:var(--ink)">{item.url}</span>
+          {item.status !== null && (
+            <span style="margin-left:8px;color:var(--steel)">{item.status}</span>
+          )}
+        </div>
+      );
+    case 'context-break':
+      return (
+        <div style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);padding:8px 0;border-top:1px dashed var(--rule);border-bottom:1px dashed var(--rule);margin:6px 0;text-align:center;font-style:italic">
+          ↺ context changed — {item.droppedCount} prior message
+          {item.droppedCount === 1 ? '' : 's'} dropped from thread
+        </div>
+      );
+    case 'exchange':
+      return <ExchangeMarker item={item} />;
+    case 'message':
+      return <ThreadMessage role={item.role} content={item.content} />;
   }
 }
 
-function ObjectiveOpenRow({ event }: { event: AgentActivityObjectiveOpen }) {
+function ThreadMessage({ role, content }: { role: string; content: AnthropicContentBlock[] }) {
   return (
-    <div
-      class="flex items-center gap-3"
-      style="font-family:var(--f-mono);font-size:12px;color:var(--steel);border-left:2px solid var(--steel);padding:6px 12px"
-    >
-      <span>{formatTs(event.ts)}</span>
-      <span>▼</span>
-      <button
-        type="button"
-        onClick={() => selectObjectiveDetail(event.objectiveId)}
-        style="background:transparent;color:var(--steel);font-family:inherit;font-size:inherit;padding:0"
-      >
-        {event.objectiveId}
-      </button>
-      <span style="color:var(--muted)">opened</span>
-    </div>
-  );
-}
-
-function ObjectiveCloseRow({ event }: { event: AgentActivityObjectiveClose }) {
-  return (
-    <div
-      class="flex items-center gap-3"
-      style="font-family:var(--f-mono);font-size:12px;color:var(--muted);border-left:2px solid var(--rule);padding:6px 12px"
-    >
-      <span>{formatTs(event.ts)}</span>
-      <span>▲</span>
-      <button
-        type="button"
-        onClick={() => selectObjectiveDetail(event.objectiveId)}
-        style="background:transparent;color:var(--ink);font-family:inherit;font-size:inherit;padding:0"
-      >
-        {event.objectiveId}
-      </button>
-      <span>closed ({event.result})</span>
-    </div>
-  );
-}
-
-function LlmExchangeRow({ event }: { event: AgentActivityLlmExchange }) {
-  const usage = event.entry.response?.usage;
-  return (
-    <div style="border:1px solid var(--rule);border-radius:var(--r-sm);background:var(--ice);padding:12px">
-      <div
-        class="flex items-center justify-between"
-        style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);flex-wrap:wrap;gap:6px"
-      >
-        <span>
-          {formatTs(event.ts)} · {event.duration}ms
-        </span>
-        <span>
-          <span style="color:var(--ink);font-weight:600">{event.entry.request.model ?? '?'}</span>
-          {usage && (
-            <span style="margin-left:8px">
-              in={usage.inputTokens ?? '?'} out={usage.outputTokens ?? '?'}
-              {usage.cacheReadInputTokens !== null && usage.cacheReadInputTokens > 0 && (
-                <span> cache_hit={usage.cacheReadInputTokens}</span>
-              )}
-            </span>
-          )}
-          {event.entry.response?.stopReason && (
-            <span style="margin-left:8px">stop={event.entry.response.stopReason}</span>
-          )}
-        </span>
+    <div style={`border-left:2px solid ${roleBorder(role)};padding:6px 10px`}>
+      <div class="eyebrow" style="margin-bottom:3px">
+        {role}
       </div>
-      <div style="margin-top:8px">
-        <AnthropicEntryView entry={event.entry} />
-      </div>
-    </div>
-  );
-}
-
-function OpaqueHttpRow({ event }: { event: AgentActivityOpaqueHttp }) {
-  const entry = event.entry;
-  return (
-    <div style="font-family:var(--f-mono);font-size:12px;border-left:2px solid var(--rule-strong);padding:6px 12px">
-      <span style="color:var(--muted)">{formatTs(event.ts)}</span>{' '}
-      <span style="color:var(--ink)">{entry.method}</span>{' '}
-      <span style="color:var(--muted)">{entry.host}</span>
-      <span style="color:var(--ink)">{entry.url}</span>
-      {entry.status !== null && (
-        <span style="margin-left:8px;color:var(--steel)">{entry.status}</span>
-      )}
-    </div>
-  );
-}
-
-// ── Shared Anthropic entry renderer ──────────────────────────────
-//
-// Duplicated from TracePanel.tsx to keep the two components
-// independent. A later refactor can hoist these into a shared
-// `AnthropicEntryView` module; for now the duplication is ~80 lines
-// and isn't hurting anything.
-
-function AnthropicEntryView({ entry }: { entry: AnthropicMessagesEntry }) {
-  return (
-    <div style="border-left:2px solid var(--steel);padding-left:8px">
-      {entry.request.system && (
-        <details style="margin-top:4px">
-          <summary style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer">
-            system prompt
-          </summary>
-          <pre style="font-family:var(--f-mono);font-size:11.5px;color:var(--ink);white-space:pre-wrap;margin-top:4px">
-            {entry.request.system}
-          </pre>
-        </details>
-      )}
-      <details style="margin-top:4px">
-        <summary style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer">
-          messages ({entry.request.messages.length + (entry.response?.messages.length ?? 0)})
-        </summary>
-        <div style="margin-top:4px;display:flex;flex-direction:column;gap:4px">
-          {entry.request.messages.map((m, i) => (
-            <MessageBlock key={`req-${i}`} role={m.role} content={m.content} />
-          ))}
-          {entry.response?.messages.map((m, i) => (
-            <MessageBlock key={`resp-${i}`} role={m.role} content={m.content} />
-          ))}
-        </div>
-      </details>
-    </div>
-  );
-}
-
-function MessageBlock({ role, content }: { role: string; content: AnthropicContentBlock[] }) {
-  return (
-    <div style="border-left:1px solid var(--rule);padding-left:10px;font-size:12px">
-      <div class="eyebrow">{role}</div>
       {content.map((block, i) => (
         <ContentBlock key={i} block={block} />
       ))}
     </div>
+  );
+}
+
+function roleBorder(role: string): string {
+  if (role === 'user') return 'var(--steel)';
+  if (role === 'assistant') return 'var(--ember)';
+  if (role === 'system') return 'var(--muted)';
+  return 'var(--rule-strong)';
+}
+
+function ExchangeMarker({ item }: { item: Extract<ThreadItem, { variant: 'exchange' }> }) {
+  return (
+    <details style="margin:4px 0;padding:4px 0;border-top:1px dashed var(--rule);border-bottom:1px dashed var(--rule)">
+      <summary
+        class="flex items-center gap-3 flex-wrap"
+        style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer;padding:2px 0"
+      >
+        <span>
+          {formatTs(item.ts)} · {item.duration}ms
+        </span>
+        <span style="color:var(--ink);font-weight:600">{item.model ?? '?'}</span>
+        {item.usage && (
+          <span>
+            in={item.usage.inputTokens ?? '?'} out={item.usage.outputTokens ?? '?'}
+            {item.usage.cacheReadInputTokens !== null && item.usage.cacheReadInputTokens > 0 && (
+              <> cache_hit={item.usage.cacheReadInputTokens}</>
+            )}
+          </span>
+        )}
+        {item.stopReason && <span>stop={item.stopReason}</span>}
+        {item.status !== null && item.status !== 200 && (
+          <span style="color:var(--err)">status={item.status}</span>
+        )}
+      </summary>
+      <div style="margin-top:6px;padding:6px 0;font-family:var(--f-mono);font-size:11.5px;color:var(--graphite);display:flex;flex-direction:column;gap:4px">
+        {item.entry.request.system && (
+          <details>
+            <summary style="cursor:pointer;color:var(--muted)">system prompt</summary>
+            <pre style="white-space:pre-wrap;margin-top:4px;color:var(--ink)">
+              {item.entry.request.system}
+            </pre>
+          </details>
+        )}
+        <div>
+          max_tokens={item.entry.request.maxTokens ?? '?'}, temperature=
+          {item.entry.request.temperature ?? '?'}
+        </div>
+        {item.entry.request.tools && item.entry.request.tools.length > 0 && (
+          <details>
+            <summary style="cursor:pointer;color:var(--muted)">
+              {item.entry.request.tools.length} tool
+              {item.entry.request.tools.length === 1 ? '' : 's'}
+            </summary>
+            <pre style="white-space:pre-wrap;margin-top:4px">
+              {item.entry.request.tools.map((t) => t.name).join(', ')}
+            </pre>
+          </details>
+        )}
+      </div>
+    </details>
   );
 }
 
@@ -365,7 +599,8 @@ function formatTs(ts: number): string {
   return d.toISOString().replace('T', ' ').slice(11, 19);
 }
 
-/** Test-only reset for filters so unit tests start clean. */
+/** Test-only reset so unit tests start clean. */
 export function __resetAgentTimelineForTests(): void {
   kindFilters.value = { ...DEFAULT_FILTERS };
+  objectiveFilter.value = null;
 }

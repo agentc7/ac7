@@ -134,7 +134,7 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
   const token = input.token ?? process.env[ENV.token];
   if (!token) {
     throw new UsageError(
-      `--token or ${ENV.token} is required — run \`ac7 setup\` or pass the slot token explicitly`,
+      `--token or ${ENV.token} is required — run \`ac7 setup\` or pass the user's bearer token explicitly`,
     );
   }
   const cwd = input.cwd ?? process.cwd();

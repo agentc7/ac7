@@ -170,6 +170,14 @@ async function waitFor(predicate, timeoutMs = 5000) {
     expect(transcript.initialized).toBe(true);
     expect(transcript.toolNames).toEqual([
       'broadcast',
+      'fs_ls',
+      'fs_mkdir',
+      'fs_mv',
+      'fs_read',
+      'fs_rm',
+      'fs_shared',
+      'fs_stat',
+      'fs_write',
       'objectives_cancel',
       'objectives_complete',
       'objectives_create',

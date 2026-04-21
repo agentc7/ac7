@@ -13,24 +13,19 @@
  * to drive EventSource in jsdom is flaky.
  */
 
-import type {
-  AgentActivityRow,
-  BriefingResponse,
-  Objective,
-  RosterResponse,
-} from '@agentc7/sdk/types';
+import type { ActivityRow, BriefingResponse, Objective, RosterResponse } from '@agentc7/sdk/types';
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AgentPage } from '../src/components/AgentPage.js';
 import { __resetAgentTimelineForTests, AgentTimeline } from '../src/components/AgentTimeline.js';
-import {
-  __resetAgentActivityForTests,
-  agentActivityLoading,
-  agentActivityName,
-  agentActivityRows,
-} from '../src/lib/agent-activity.js';
 import { briefing } from '../src/lib/briefing.js';
 import { __resetClientForTests } from '../src/lib/client.js';
+import {
+  __resetMemberActivityForTests,
+  memberActivityLoading,
+  memberActivityName,
+  memberActivityRows,
+} from '../src/lib/member-activity.js';
 import { objectives as objectivesSignal } from '../src/lib/objectives.js';
 import { roster } from '../src/lib/roster.js';
 
@@ -38,12 +33,16 @@ const originalFetch = globalThis.fetch;
 
 const COMMANDER_BRIEFING: BriefingResponse = {
   name: 'ACTUAL',
-  role: 'individual-contributor',
-  authority: 'director',
-  team: { name: 'alpha-team', directive: 'Ship it', brief: '' },
+  role: { title: 'commander', description: '' },
+  permissions: ['members.manage'],
+  team: { name: 'alpha-team', directive: 'Ship it', brief: '', permissionPresets: {} },
   teammates: [
-    { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-    { name: 'ALPHA-1', role: 'implementer', authority: 'individual-contributor' },
+    {
+      name: 'ACTUAL',
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
+    },
+    { name: 'ALPHA-1', role: { title: 'engineer', description: '' }, permissions: [] },
   ],
   openObjectives: [],
   instructions: 'Lead the team.',
@@ -52,23 +51,26 @@ const COMMANDER_BRIEFING: BriefingResponse = {
 const OPERATOR_BRIEFING: BriefingResponse = {
   ...COMMANDER_BRIEFING,
   name: 'ALPHA-1',
-  role: 'implementer',
-  authority: 'individual-contributor',
+  role: { title: 'engineer', description: '' },
+  permissions: [],
 };
 
 const ROSTER: RosterResponse = {
   teammates: [
-    { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-    { name: 'ALPHA-1', role: 'implementer', authority: 'individual-contributor' },
+    {
+      name: 'ACTUAL',
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
+    },
+    { name: 'ALPHA-1', role: { title: 'engineer', description: '' }, permissions: [] },
   ],
   connected: [
     {
-      agentId: 'ALPHA-1',
+      name: 'ALPHA-1',
       connected: 1,
       createdAt: 1_700_000_000_000,
       lastSeen: 1_700_000_000_000,
-      role: 'implementer',
-      authority: 'individual-contributor',
+      role: { title: 'engineer', description: '' },
     },
   ],
 };
@@ -87,11 +89,12 @@ const OBJECTIVE: Objective = {
   completedAt: null,
   result: null,
   blockReason: null,
+  attachments: [],
 };
 
-const LLM_ROW: AgentActivityRow = {
+const LLM_ROW: ActivityRow = {
   id: 1,
-  slotName: 'ALPHA-1',
+  memberName: 'ALPHA-1',
   createdAt: 1_700_000_000_500,
   event: {
     kind: 'llm_exchange',
@@ -125,9 +128,9 @@ const LLM_ROW: AgentActivityRow = {
   },
 };
 
-const OPAQUE_ROW: AgentActivityRow = {
+const OPAQUE_ROW: ActivityRow = {
   id: 2,
-  slotName: 'ALPHA-1',
+  memberName: 'ALPHA-1',
   createdAt: 1_700_000_001_000,
   event: {
     kind: 'opaque_http',
@@ -149,16 +152,16 @@ const OPAQUE_ROW: AgentActivityRow = {
   },
 };
 
-const OPEN_ROW: AgentActivityRow = {
+const OPEN_ROW: ActivityRow = {
   id: 3,
-  slotName: 'ALPHA-1',
+  memberName: 'ALPHA-1',
   createdAt: 1_700_000_002_000,
   event: { kind: 'objective_open', ts: 1_700_000_001_000, objectiveId: 'obj-1' },
 };
 
-const CLOSE_ROW: AgentActivityRow = {
+const CLOSE_ROW: ActivityRow = {
   id: 4,
-  slotName: 'ALPHA-1',
+  memberName: 'ALPHA-1',
   createdAt: 1_700_000_003_000,
   event: {
     kind: 'objective_close',
@@ -170,7 +173,7 @@ const CLOSE_ROW: AgentActivityRow = {
 
 /**
  * Minimal EventSource stub — jsdom doesn't ship one, and the
- * lib's `startAgentActivitySubscribe` needs to construct one.
+ * lib's `startMemberActivitySubscribe` needs to construct one.
  * The stub records all constructions so tests can verify the
  * URL, but it never fires real events.
  */
@@ -196,7 +199,7 @@ const originalEventSource = (globalThis as { EventSource?: unknown }).EventSourc
 
 beforeEach(() => {
   __resetClientForTests();
-  __resetAgentActivityForTests();
+  __resetMemberActivityForTests();
   __resetAgentTimelineForTests();
   // Stub fetch so the lib's hydration call in useEffect doesn't 500
   // every test. We replay the same listAgentActivity response for
@@ -220,7 +223,7 @@ afterEach(() => {
   briefing.value = null;
   roster.value = null;
   objectivesSignal.value = [];
-  __resetAgentActivityForTests();
+  __resetMemberActivityForTests();
   __resetAgentTimelineForTests();
   globalThis.fetch = originalFetch;
   if (originalEventSource === undefined) {
@@ -231,21 +234,21 @@ afterEach(() => {
 });
 
 describe('AgentPage', () => {
-  it('shows a permission denied banner for non-directors', () => {
+  it('shows a permission denied banner for non-admins', () => {
     briefing.value = OPERATOR_BRIEFING;
     render(<AgentPage name="ALPHA-1" viewer="ALPHA-1" />);
-    expect(screen.getByText(/only directors may view/i)).toBeTruthy();
+    expect(screen.getByText(/only admins may view/i)).toBeTruthy();
   });
 
   it('shows the agent header and metadata for directors', () => {
     briefing.value = COMMANDER_BRIEFING;
-    agentActivityName.value = 'ALPHA-1';
+    memberActivityName.value = 'ALPHA-1';
     render(<AgentPage name="ALPHA-1" viewer="ACTUAL" />);
     expect(screen.getByRole('heading', { name: 'ALPHA-1' })).toBeTruthy();
     // Team name from briefing
     expect(screen.getAllByText(/alpha-team/i).length).toBeGreaterThan(0);
     // Role from the roster
-    expect(screen.getByText('implementer')).toBeTruthy();
+    expect(screen.getByText(/engineer/i)).toBeTruthy();
     // Assigned objective appears in the metadata section
     expect(screen.getByText(/obj-1 — Ship the feature/)).toBeTruthy();
     // Online status dot (ALPHA-1 has 1 subscriber in the stub)
@@ -262,8 +265,8 @@ describe('AgentPage', () => {
 describe('AgentTimeline', () => {
   it('renders each event kind with distinct affordances', () => {
     briefing.value = COMMANDER_BRIEFING;
-    agentActivityRows.value = [CLOSE_ROW, OPEN_ROW, OPAQUE_ROW, LLM_ROW];
-    agentActivityLoading.value = false;
+    memberActivityRows.value = [CLOSE_ROW, OPEN_ROW, OPAQUE_ROW, LLM_ROW];
+    memberActivityLoading.value = false;
     const { container } = render(<AgentTimeline />);
 
     // LLM exchange: model name
@@ -281,16 +284,16 @@ describe('AgentTimeline', () => {
 
   it('shows the empty placeholder when no rows are loaded', () => {
     briefing.value = COMMANDER_BRIEFING;
-    agentActivityRows.value = [];
-    agentActivityLoading.value = false;
+    memberActivityRows.value = [];
+    memberActivityLoading.value = false;
     render(<AgentTimeline />);
     expect(screen.getByText(/No activity yet/i)).toBeTruthy();
   });
 
   it('filter toggle hides the matching event kind', () => {
     briefing.value = COMMANDER_BRIEFING;
-    agentActivityRows.value = [LLM_ROW, OPAQUE_ROW];
-    agentActivityLoading.value = false;
+    memberActivityRows.value = [LLM_ROW, OPAQUE_ROW];
+    memberActivityLoading.value = false;
     render(<AgentTimeline />);
 
     // Before toggle: both kinds visible.

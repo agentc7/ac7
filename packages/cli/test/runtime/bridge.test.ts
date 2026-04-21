@@ -169,7 +169,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     send({ jsonrpc: '2.0', method: 'notifications/initialized' });
   });
 
-  it('lists the full 13-tool surface (chat + objective + authority-gated)', async () => {
+  it('lists the full 21-tool surface (chat + objective + filesystem + authority-gated)', async () => {
     send({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
     const response = await waitForMessage((m) => m.id === 2);
     const result = response.result as {
@@ -178,6 +178,14 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     const names = result.tools.map((t) => t.name).sort();
     expect(names).toEqual([
       'broadcast',
+      'fs_ls',
+      'fs_mkdir',
+      'fs_mv',
+      'fs_read',
+      'fs_rm',
+      'fs_shared',
+      'fs_stat',
+      'fs_write',
       'objectives_cancel',
       'objectives_complete',
       'objectives_create',
@@ -259,7 +267,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     sub.write({
       id: 'msg-forwarded',
       ts: 1_700_000_001_000,
-      agentId: AGENT_ID,
+      to: AGENT_ID,
       from: 'alice',
       title: 'build broken',
       body: 'ci failed on main',
@@ -293,7 +301,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     sub.write({
       id: 'msg-self-echo',
       ts: 1_700_000_003_000,
-      agentId: null,
+      to: null,
       from: AGENT_ID,
       title: null,
       body: 'this is my own broadcast — should be dropped',
@@ -303,7 +311,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     sub.write({
       id: 'msg-post-echo',
       ts: 1_700_000_003_500,
-      agentId: null,
+      to: null,
       from: 'alice',
       title: null,
       body: 'real message after the self-echo',
@@ -332,7 +340,7 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     sub.write({
       id: 'msg-spoof',
       ts: 1_700_000_002_000,
-      agentId: AGENT_ID,
+      to: AGENT_ID,
       from: 'alice',
       title: 'genuine title',
       body: 'real body',

@@ -1,24 +1,24 @@
 /**
- * AgentPage — dedicated overview of a single slot.
+ * AgentPage — dedicated overview of a single user.
  *
  *   ←  Overview › name
- *   name · authority · role · team · ●ONLINE
+ *   name · userType · role · team · ●ONLINE
  *   ┌── Objectives ──┐ ┌── Activity ──┐
  *   │ Assigned (3)   │ │  live SSE    │
  *   │ Watching (1)   │ │  timeline    │
  *   └────────────────┘ └──────────────┘
  *
- * Director-gated. Non-directors who navigate here see a permission
+ * Admin-gated. Non-admins who navigate here see a permission
  * notice via .callout.err.
  */
 
 import type { Objective, Teammate } from '@agentc7/sdk/types';
 import { useEffect } from 'preact/hooks';
-import { agentActivityError, startAgentActivitySubscribe } from '../lib/agent-activity.js';
 import { briefing } from '../lib/briefing.js';
+import { memberActivityError, startMemberActivitySubscribe } from '../lib/member-activity.js';
 import { objectives as objectivesSignal } from '../lib/objectives.js';
 import { roster as rosterSignal } from '../lib/roster.js';
-import { selectDmWith, selectObjectiveDetail, selectOverview } from '../lib/view.js';
+import { selectDmWith, selectFiles, selectObjectiveDetail, selectOverview } from '../lib/view.js';
 import { AgentTimeline } from './AgentTimeline.js';
 
 export interface AgentPageProps {
@@ -30,15 +30,15 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
   const b = briefing.value;
   const rosterResp = rosterSignal.value;
   const objectives = objectivesSignal.value;
-  const errorMessage = agentActivityError.value;
+  const errorMessage = memberActivityError.value;
 
-  const isDirector = b?.authority === 'director';
+  const isAdmin = b?.permissions.includes('members.manage') ?? false;
 
   useEffect(() => {
-    if (!isDirector) return;
-    const teardown = startAgentActivitySubscribe({ name });
+    if (!isAdmin) return;
+    const teardown = startMemberActivitySubscribe({ name });
     return () => teardown();
-  }, [name, isDirector]);
+  }, [name, isAdmin]);
 
   if (!b) {
     return (
@@ -51,7 +51,7 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
     );
   }
 
-  if (!isDirector) {
+  if (!isAdmin) {
     return (
       <div
         class="flex-1 overflow-y-auto"
@@ -64,7 +64,7 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
           </div>
           <div class="body">
             <div class="title">Restricted</div>
-            <div class="msg">Only directors may view another slot's activity timeline.</div>
+            <div class="msg">Only admins may view another user's activity timeline.</div>
           </div>
         </div>
       </div>
@@ -72,7 +72,7 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
   }
 
   const teammate: Teammate | undefined = rosterResp?.teammates.find((t) => t.name === name);
-  const agent = rosterResp?.connected.find((c) => c.agentId === name);
+  const agent = rosterResp?.connected.find((c) => c.name === name);
   const isOnline = Boolean(agent && agent.connected > 0);
 
   const assigned = objectives.filter(
@@ -100,11 +100,12 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
           >
             {name}
           </h1>
-          {teammate?.authority && (
+          {teammate && (
             <span
-              class={`badge ${teammate.authority === 'director' ? 'solid' : teammate.authority === 'manager' ? 'ember' : 'soft'}`}
+              class={`badge ${teammate.permissions.includes('members.manage') ? 'solid' : teammate.permissions.includes('objectives.create') ? 'ember' : 'soft'}`}
+              title={teammate.role.description.length > 0 ? teammate.role.description : undefined}
             >
-              {formatAuthority(teammate.authority)}
+              {teammate.role.title.toUpperCase()}
             </span>
           )}
           <span class={`badge ${isOnline ? 'soft' : 'muted'}`}>
@@ -125,16 +126,21 @@ export function AgentPage({ name, viewer }: AgentPageProps) {
             team: <span style="color:var(--ink);font-weight:600">{b.team.name}</span>
           </span>
         </div>
-        {viewer !== name && (
+        <div style="margin-top:14px;display:flex;gap:8px;flex-wrap:wrap">
+          {viewer !== name && (
+            <button type="button" onClick={() => selectDmWith(name)} class="btn btn-ghost btn-sm">
+              → Open DM with {name}
+            </button>
+          )}
           <button
             type="button"
-            onClick={() => selectDmWith(name)}
+            onClick={() => selectFiles(`/${name}`)}
             class="btn btn-ghost btn-sm"
-            style="margin-top:14px"
+            title={`Browse ${name}'s files`}
           >
-            → Open DM with {name}
+            → Browse files
           </button>
-        )}
+        </div>
       </div>
 
       <div
@@ -218,9 +224,4 @@ function ObjectiveRefList({
       )}
     </div>
   );
-}
-
-function formatAuthority(authority: string): string {
-  if (authority === 'individual-contributor') return 'IC';
-  return authority;
 }

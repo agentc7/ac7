@@ -14,19 +14,17 @@
  */
 
 import { Client } from '@agentc7/sdk/client';
-import type { Role, Team } from '@agentc7/sdk/types';
+import type { Team } from '@agentc7/sdk/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
-import { createSlotStore } from '../src/slots.js';
 
 const OP_TOKEN = 'ac7_shutdown_test_op';
 const TEAM: Team = {
   name: 'shutdown-test-team',
   directive: 'Verify shutdown does not hang on live SSE subscribers.',
   brief: '',
-};
-const ROLES: Record<string, Role> = {
-  'individual-contributor': { description: '', instructions: '' },
+  permissionPresets: {},
 };
 
 describe('runServer shutdown with live SSE subscriber', () => {
@@ -34,18 +32,18 @@ describe('runServer shutdown with live SSE subscriber', () => {
   let client: Client;
 
   beforeAll(async () => {
-    const slots = createSlotStore([
+    const members = createMemberStore([
       {
         name: 'ACTUAL',
-        role: 'individual-contributor',
-        authority: 'director',
+        role: { title: 'commander', description: '' },
+        permissions: ['members.manage'],
         token: OP_TOKEN,
       },
     ]);
     server = await runServer({
-      slots,
+      members,
       team: TEAM,
-      roles: ROLES,
+
       port: 0,
       host: '127.0.0.1',
       dbPath: ':memory:',

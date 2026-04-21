@@ -59,9 +59,9 @@ class MockEventSource {
 beforeEach(() => {
   session.value = {
     status: 'authenticated',
-    slot: 'ACTUAL',
-    role: 'individual-contributor',
-    authority: 'director',
+    member: 'ACTUAL',
+    role: { title: 'commander', description: '' },
+    permissions: ['members.manage'],
     expiresAt: 9_999_999_999_999,
   };
   __resetMessagesForTests();
@@ -102,12 +102,13 @@ function mkMsg(overrides: Partial<Message>): Message {
   return {
     id: 'm1',
     ts: 1_700_000_000_000,
-    agentId: null,
+    to: null,
     from: 'build-bot',
     title: null,
     body: 'hello',
     level: 'info',
     data: {},
+    attachments: [],
     ...overrides,
   };
 }
@@ -131,7 +132,7 @@ describe('<Transcript />', () => {
   it('switches threads when the view signal changes', async () => {
     appendMessages('ACTUAL', [
       mkMsg({ id: 'p', ts: 1, body: 'primary msg' }),
-      mkMsg({ id: 'd', ts: 2, agentId: 'build-bot', from: 'ACTUAL', body: 'dm msg' }),
+      mkMsg({ id: 'd', ts: 2, to: 'build-bot', from: 'ACTUAL', body: 'dm msg' }),
     ]);
     const { rerender } = render(<Transcript viewer="ACTUAL" />);
     expect(screen.getByText('primary msg')).toBeTruthy();
@@ -148,17 +149,20 @@ describe('<Sidebar />', () => {
   function setRoster(connected: Record<string, number> = {}) {
     roster.value = {
       teammates: [
-        { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-        { name: 'build-bot', role: 'implementer', authority: 'individual-contributor' },
-        { name: 'test-agent-1', role: 'watcher', authority: 'individual-contributor' },
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
+        { name: 'test-agent-1', role: { title: 'watcher', description: '' }, permissions: [] },
       ],
-      connected: Object.entries(connected).map(([agentId, count]) => ({
-        agentId,
+      connected: Object.entries(connected).map(([name, count]) => ({
+        name,
         connected: count,
         createdAt: 0,
         lastSeen: 0,
         role: null,
-        authority: 'individual-contributor' as const,
       })),
     };
   }
@@ -236,12 +240,16 @@ describe('<Sidebar />', () => {
   it('falls back to briefing teammates when roster is still null (cold start)', () => {
     briefing.value = {
       name: 'ACTUAL',
-      role: 'individual-contributor',
-      authority: 'director',
-      team: { name: 'alpha', directive: 'ship', brief: '' },
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
+      team: { name: 'alpha', directive: 'ship', brief: '', permissionPresets: {} },
       teammates: [
-        { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-        { name: 'build-bot', role: 'implementer', authority: 'individual-contributor' },
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
       ],
       openObjectives: [],
       instructions: '',
@@ -264,7 +272,7 @@ describe('<Composer />', () => {
           message: {
             id: 'echo',
             ts: 1,
-            agentId: null,
+            to: null,
             from: 'ACTUAL',
             title: null,
             body: 'ping',
@@ -301,7 +309,7 @@ describe('<Composer />', () => {
             message: {
               id: 'echo',
               ts: 1,
-              agentId: 'build-bot',
+              name: 'build-bot',
               from: 'ACTUAL',
               title: null,
               body: 'hey',
@@ -320,8 +328,8 @@ describe('<Composer />', () => {
     await waitFor(() => {
       expect(seen).toHaveLength(1);
     });
-    const body = JSON.parse(seen[0]?.body as string) as { agentId?: string; body: string };
-    expect(body.agentId).toBe('build-bot');
+    const body = JSON.parse(seen[0]?.body as string) as { to?: string; body: string };
+    expect(body.to).toBe('build-bot');
     expect(body.body).toBe('hey');
   });
 });
@@ -335,17 +343,20 @@ describe('<RosterPanel />', () => {
   it('marks teammates as online when connected count > 0', async () => {
     roster.value = {
       teammates: [
-        { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-        { name: 'build-bot', role: 'implementer', authority: 'individual-contributor' },
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
       ],
       connected: [
         {
-          agentId: 'build-bot',
+          name: 'build-bot',
           connected: 1,
           createdAt: 0,
           lastSeen: 0,
-          role: 'implementer',
-          authority: 'individual-contributor',
+          role: { title: 'engineer', description: '' },
         },
       ],
     };
@@ -361,8 +372,12 @@ describe('<RosterPanel />', () => {
   it('clicking a teammate opens a DM thread via view', async () => {
     roster.value = {
       teammates: [
-        { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-        { name: 'build-bot', role: 'implementer', authority: 'individual-contributor' },
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
       ],
       connected: [],
     };
@@ -377,8 +392,12 @@ describe('<RosterPanel />', () => {
   it('self-row is NOT clickable (no DM-yourself button)', () => {
     roster.value = {
       teammates: [
-        { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-        { name: 'build-bot', role: 'implementer', authority: 'individual-contributor' },
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
       ],
       connected: [],
     };
@@ -410,18 +429,24 @@ describe('briefing bootstrap', () => {
     const { Header } = await import('../src/components/Header.js');
     briefing.value = {
       name: 'ACTUAL',
-      role: 'individual-contributor',
-      authority: 'director',
-      team: { name: 'alpha-team', directive: 'ship', brief: '' },
-      teammates: [{ name: 'ACTUAL', role: 'individual-contributor', authority: 'director' }],
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
+      team: { name: 'alpha-team', directive: 'ship', brief: '', permissionPresets: {} },
+      teammates: [
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+      ],
       openObjectives: [],
       instructions: '',
     };
     render(<Header />);
     expect(screen.getByText('ACTUAL')).toBeTruthy();
-    // Header now surfaces rank (authority) next to the name —
-    // director was stamped on the session in beforeEach.
-    expect(screen.getByText('director')).toBeTruthy();
+    // Header surfaces the userType pill next to the name —
+    // admin was stamped on the session in beforeEach.
+    expect(screen.getByText(/COMMANDER/)).toBeTruthy();
     expect(screen.getByText(/alpha-team/)).toBeTruthy();
   });
 });
@@ -454,14 +479,21 @@ describe('<Sidebar /> overview button', () => {
   it('does NOT render team name or directive in the sidebar (those live in the Overview panel)', () => {
     briefing.value = {
       name: 'ACTUAL',
-      role: 'individual-contributor',
-      authority: 'director',
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
       team: {
         name: 'alpha-team',
         directive: 'Ship the payment service.',
         brief: '',
+        permissionPresets: {},
       },
-      teammates: [{ name: 'ACTUAL', role: 'individual-contributor', authority: 'director' }],
+      teammates: [
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+      ],
       openObjectives: [],
       instructions: '',
     };
@@ -476,19 +508,32 @@ describe('<RosterPanel /> directive header', () => {
   it('renders team name and directive at the top when briefing is set', () => {
     briefing.value = {
       name: 'ACTUAL',
-      role: 'individual-contributor',
-      authority: 'director',
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
       team: {
         name: 'alpha-team',
         directive: 'Ship the payment service.',
         brief: 'Longer context about the operating window.',
+        permissionPresets: {},
       },
-      teammates: [{ name: 'ACTUAL', role: 'individual-contributor', authority: 'director' }],
+      teammates: [
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+      ],
       openObjectives: [],
       instructions: '',
     };
     roster.value = {
-      teammates: [{ name: 'ACTUAL', role: 'individual-contributor', authority: 'director' }],
+      teammates: [
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+      ],
       connected: [],
     };
     render(<RosterPanel viewer="ACTUAL" />);
@@ -499,7 +544,13 @@ describe('<RosterPanel /> directive header', () => {
 
   it('omits the directive header when briefing is null', () => {
     roster.value = {
-      teammates: [{ name: 'ACTUAL', role: 'individual-contributor', authority: 'director' }],
+      teammates: [
+        {
+          name: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
+        },
+      ],
       connected: [],
     };
     render(<RosterPanel viewer="ACTUAL" />);

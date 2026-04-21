@@ -1,37 +1,31 @@
 /**
- * `ac7 enroll` — rotate or add a TOTP secret for a slot.
+ * `ac7 enroll` — rotate or add a TOTP secret for a user.
  *
- * The wizard's first-run flow offers TOTP enrollment inline for
- * editor-role slots, but it's optional there. This command closes
- * the loop for two real cases:
+ * The wizard auto-enrolls the first admin for TOTP during setup. This
+ * command closes the loop for everyone else:
  *
- *   1. User skipped enrollment during the wizard and now wants to
- *      use the web UI for that slot.
- *   2. User lost the device that had the authenticator app and
- *      needs to rotate the secret. The bearer token in config.json
- *      is the recovery capability for this path — whoever can read
- *      the config file can re-enroll, which is exactly the threat
- *      model we want (physical access to the server = trust).
+ *   1. The admin created another human user via `ac7 user create` (or
+ *      the web UI) and that user now needs to sign into the web UI.
+ *   2. A user lost the device that had the authenticator app and
+ *      needs to rotate the secret. The bearer token in ac7.json is
+ *      the recovery capability for this path — whoever can read the
+ *      config file can re-enroll, which is exactly the threat model
+ *      we want (physical access to the server = trust).
  *
  * Flow (mirrors the wizard's prompt, but with rotation wording):
  *   1. Load the team config at the resolved path.
- *   2. Look up the slot by name; error clearly if missing.
- *   3. Warn if the slot already has a secret — re-enrollment will
+ *   2. Look up the user by name; error clearly if missing.
+ *   3. Warn if the user already has a secret — re-enrollment will
  *      invalidate every authenticator currently bound to it.
  *   4. Generate a fresh secret + otpauth URI.
  *   5. Render a QR to the terminal and print the base32 fallback.
  *   6. Prompt for a live 6-digit confirmation code; retry on errors
  *      up to 3 times; empty input = abort with the config untouched.
- *   7. On success, call `enrollSlotTotp` to atomically rewrite the
+ *   7. On success, call `enrollMemberTotp` to atomically rewrite the
  *      config with the new secret (and reset the replay counter).
  *
- * We duplicate the wizard's QR/verify loop here rather than
- * importing it. The two call sites have different framing (first
- * enrollment vs. rotation), different error messages, and a
- * different outer lifecycle (wizard writes the whole config from
- * scratch, enroll patches one slot in place). Sharing would force
- * the wizard's internal types through the CLI boundary for little
- * code savings.
+ * Agents (lead-agent, agent) don't sign into the web UI and don't
+ * need TOTP; this command rejects them with a useful message.
  */
 
 import { ENV } from '@agentc7/sdk/protocol';
@@ -40,8 +34,8 @@ import { UsageError } from './errors.js';
 export { UsageError };
 
 export interface EnrollCommandInput {
-  /** Name of the slot to (re-)enroll. Required. */
-  slot?: string;
+  /** Name of the user to (re-)enroll. Required. */
+  user?: string;
   /** Override the config file location (defaults to $AC7_CONFIG_PATH → ./ac7.json). */
   configPath?: string;
 }
@@ -53,8 +47,8 @@ export async function runEnrollCommand(
   input: EnrollCommandInput,
   stdout: (line: string) => void,
 ): Promise<void> {
-  if (!input.slot) {
-    throw new UsageError('enroll: --slot <name> is required');
+  if (!input.user) {
+    throw new UsageError('enroll: --user <name> is required');
   }
 
   const server = await loadServerModule();
@@ -72,7 +66,7 @@ export async function runEnrollCommand(
   }
 
   // Load the existing config. Any failure here (missing, invalid)
-  // gets mapped to a user-facing UsageError so the raw SlotLoadError
+  // gets mapped to a user-facing UsageError so the raw MemberLoadError
   // stack doesn't surface.
   let config: Awaited<ReturnType<typeof server.loadTeamConfigFromFile>>;
   try {
@@ -84,27 +78,26 @@ export async function runEnrollCommand(
           '  Run `pnpm wizard` (or `ac7 setup`) first to create one.',
       );
     }
-    if (err instanceof server.SlotLoadError) {
+    if (err instanceof server.MemberLoadError) {
       throw new UsageError(`enroll: ${err.message}`);
     }
     throw err;
   }
 
-  const targetSlot = config.store.resolveByName(input.slot);
-  if (!targetSlot) {
+  const targetUser = config.store.findByName(input.user);
+  if (!targetUser) {
     const known = config.store.names().join(', ');
     throw new UsageError(
-      `enroll: no slot with name '${input.slot}' in ${configPath}\n` +
+      `enroll: no user with name '${input.user}' in ${configPath}\n` +
         `  known names: ${known || '(none)'}`,
     );
   }
-
-  const alreadyEnrolled = Boolean(targetSlot.totpSecret);
+  const alreadyEnrolled = Boolean(targetUser.totpSecret);
   if (alreadyEnrolled) {
     stdout('');
-    stdout(`⚠  '${input.slot}' is already enrolled for web UI login.`);
+    stdout(`⚠  '${input.user}' is already enrolled for web UI login.`);
     stdout('   Re-enrolling rotates the secret and invalidates any authenticator');
-    stdout('   currently bound to this slot. If you proceed, the old device will');
+    stdout('   currently bound to this user. If you proceed, the old device will');
     stdout('   stop working for sign-in on the next restart.');
     stdout('');
   }
@@ -125,15 +118,15 @@ export async function runEnrollCommand(
     const uri = server.otpauthUri({
       secret,
       issuer: TOTP_ISSUER,
-      label: `${TOTP_ISSUER}:${input.slot}`,
+      label: `${TOTP_ISSUER}:${input.user}`,
     });
 
     stdout('');
-    stdout(`-- web UI login for ${input.slot} --`);
+    stdout(`-- web UI login for ${input.user} --`);
     stdout(
       alreadyEnrolled
         ? 'Rotating the TOTP secret. Scan this with your authenticator app:'
-        : 'This role can sign into the browser UI with a 6-digit authenticator code.',
+        : 'This user can sign into the browser UI with a 6-digit authenticator code.',
     );
     if (!alreadyEnrolled) {
       stdout('Scan this with your authenticator app:');
@@ -169,14 +162,14 @@ export async function runEnrollCommand(
       throw new UsageError('enroll: too many bad attempts — no changes written to the config.');
     }
 
-    // Persist the new secret. enrollSlotTotp reloads the config file
-    // defensively, patches the target slot, and rewrites atomically
+    // Persist the new secret. enrollMemberTotp reloads the config file
+    // defensively, patches the target user, and rewrites atomically
     // at 0o600, so a concurrent edit elsewhere in the file doesn't
     // get trampled.
-    server.enrollSlotTotp(configPath, input.slot, secret);
+    server.enrollMemberTotp(configPath, input.user, secret);
 
     stdout('');
-    stdout(`✓ ${alreadyEnrolled ? 're-enrolled' : 'enrolled'} '${input.slot}' for web UI login`);
+    stdout(`✓ ${alreadyEnrolled ? 're-enrolled' : 'enrolled'} '${input.user}' for web UI login`);
     stdout(`  config: ${configPath}`);
     stdout('');
     if (alreadyEnrolled) {

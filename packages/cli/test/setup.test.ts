@@ -37,19 +37,21 @@ const VALID_CONFIG_JSON = JSON.stringify({
     name: 'alpha-team',
     directive: 'ship the payment service',
     brief: '',
+    permissionPresets: {},
   },
-  roles: {
-    'individual-contributor': { description: '', instructions: '' },
-    implementer: { description: '', instructions: '' },
-  },
-  slots: [
+  members: [
     {
       name: 'ACTUAL',
-      role: 'individual-contributor',
-      authority: 'director',
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
       tokenHash: `sha256:${'a'.repeat(64)}`,
     },
-    { name: 'ALPHA-1', role: 'implementer', tokenHash: `sha256:${'b'.repeat(64)}` },
+    {
+      name: 'ALPHA-1',
+      role: { title: 'engineer', description: '' },
+      permissions: [],
+      tokenHash: `sha256:${'b'.repeat(64)}`,
+    },
   ],
 });
 

@@ -22,11 +22,11 @@ import { createServer as createHttpServer, type Server as HttpServer } from 'nod
 import { dirname, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Broker } from '@agentc7/core';
-import type { Role, Team } from '@agentc7/sdk/types';
+import type { Team } from '@agentc7/sdk/types';
 import { serve } from '@hono/node-server';
-import { type AgentActivityStore, createSqliteAgentActivityStore } from './agent-activity.js';
 import { createApp } from './app.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
+import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
 import { createHttp2ServerFactory } from './https/server.js';
 import {
   HttpsConfigError,
@@ -35,27 +35,23 @@ import {
   loadOrGenerateSelfSigned,
 } from './https/store.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
+import { type ActivityStore, createSqliteActivityStore } from './member-activity.js';
+import {
+  defaultHttpsConfig,
+  type HttpsConfig,
+  type MemberStore,
+  persistMemberStore,
+  type WebPushConfig,
+  writeWebPushConfig,
+} from './members.js';
 import { createSqliteObjectivesStore } from './objectives.js';
 import { dispatchPush } from './push/dispatch.js';
 import { PushSubscriptionStore } from './push/store.js';
 import { configureVapid, generateVapidKeys } from './push/vapid.js';
 import { SessionStore } from './sessions.js';
-import {
-  defaultHttpsConfig,
-  type HttpsConfig,
-  type SlotStore,
-  type WebPushConfig,
-  writeWebPushConfig,
-} from './slots.js';
 import { SqliteEventLog } from './sqlite-event-log.js';
 import { SERVER_VERSION } from './version.js';
 
-export {
-  type AgentActivityStore,
-  createSqliteAgentActivityStore,
-  parseDurationMs,
-  pruneActivityDb,
-} from './agent-activity.js';
 export { composeBriefing } from './briefing.js';
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export { HttpsConfigError, type LoadedCert } from './https/store.js';
@@ -66,32 +62,42 @@ export {
   resolveKek,
 } from './kek.js';
 export {
+  type ActivityStore,
+  createSqliteActivityStore,
+  parseDurationMs,
+  pruneActivityDb,
+} from './member-activity.js';
+export {
+  type AddMemberInput,
+  CONFIG_FILE_COMMENT,
+  ConfigNotFoundError,
+  createMemberStore,
+  defaultConfigPath,
+  defaultHttpsConfig,
+  enrollMemberTotp,
+  exampleConfig,
+  generateMemberToken,
+  type HttpsConfig,
+  hashToken,
+  type LoadedMember,
+  loadTeamConfigFromFile,
+  MemberLoadError,
+  type MemberStore,
+  persistMemberStore,
+  resolvePermissions,
+  rotateMemberToken,
+  setKek,
+  type TeamConfig,
+  teammatesFromMembers,
+  type UpdateMemberPatch,
+  writeTeamConfig,
+} from './members.js';
+export {
   createSqliteObjectivesStore,
   ObjectivesError,
   type ObjectivesStore,
 } from './objectives.js';
 export { SESSION_COOKIE_NAME, SESSION_TTL_MS, SessionStore } from './sessions.js';
-export {
-  CONFIG_FILE_COMMENT,
-  ConfigNotFoundError,
-  createSlotStore,
-  defaultConfigPath,
-  defaultHttpsConfig,
-  enrollSlotTotp,
-  exampleConfig,
-  generateSlotToken,
-  type HttpsConfig,
-  hashToken,
-  type LoadedSlot,
-  loadTeamConfigFromFile,
-  rotateSlotToken,
-  SlotLoadError,
-  type SlotStore,
-  setKek,
-  type TeamConfig,
-  teammatesFromStore,
-  writeTeamConfig,
-} from './slots.js';
 export {
   currentCode as currentTotpCode,
   generateSecret as generateTotpSecret,
@@ -107,12 +113,10 @@ export {
 export { SERVER_VERSION };
 
 export interface RunServerOptions {
-  /** Fully-loaded slot store — the caller is responsible for building this. */
-  slots: SlotStore;
-  /** Team config (name, directive, brief). */
+  /** Fully-loaded member store — the caller is responsible for building this. */
+  members: MemberStore;
+  /** Team config (name, directive, brief, permissionPresets). */
   team: Team;
-  /** Role definitions keyed by role name. */
-  roles: Record<string, Role>;
   /**
    * HTTPS configuration. Omit or pass a mode:'off' config to run
    * plain HTTP. For self-signed mode the caller must also pass
@@ -157,6 +161,18 @@ export interface RunServerOptions {
   port?: number;
   host?: string;
   dbPath?: string;
+  /**
+   * Root directory for the content-addressed blob store backing
+   * filesystem attachments. Defaults to `./data/files`. The path is
+   * created if missing; blobs land under `<root>/<hash-prefix>/...`
+   * with an atomic temp-and-rename upload flow.
+   */
+  filesRoot?: string;
+  /**
+   * Per-file upload cap in bytes. Defaults to 25 MB; the broker
+   * additionally caps at 1 GB regardless of caller value.
+   */
+  maxFileSize?: number;
   /**
    * Dedicated SQLite file for the agent-activity (trace) store.
    *
@@ -264,7 +280,20 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // derivation rules.
   const activityDbPath = options.activityDbPath ?? defaultActivityDbPath(dbPath);
   const activityDb: DatabaseSyncInstance = openDatabase(activityDbPath);
-  const agentActivityStore: AgentActivityStore = createSqliteAgentActivityStore(activityDb);
+  const activityStore: ActivityStore = createSqliteActivityStore(activityDb);
+
+  // Virtual filesystem for file attachments. Blob store holds
+  // content-addressed bytes on disk; the filesystem store holds path
+  // tree + permissions + refcount metadata in the main SQLite.
+  const filesRoot = options.filesRoot ?? './data/files';
+  const blobStore = new LocalBlobStore(filesRoot);
+  const filesStore = createSqliteFilesystemStore({ db, blobs: blobStore });
+  // Pre-seed home directories so browsers can list their own home
+  // without having to write first.
+  for (const s of options.members.members()) {
+    filesStore.ensureHome(s.name);
+  }
+
   sessions.purgeExpired();
 
   // VAPID lifecycle: either the caller provided keys (from the
@@ -299,7 +328,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
       error: (msg, ctx) => log.error(msg, ctx),
     },
   });
-  broker.seedSlots(options.slots.slots());
+  broker.seedMembers(options.members.members());
 
   // Shutdown fan-out: when stop() is called, abort this controller;
   // every open SSE stream listens and tears down. Without this, idle
@@ -342,14 +371,14 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   /**
    * Liveness lookup for the push policy — a name is "live" if
    * the broker registry reports at least one connected subscriber.
-   * `broker.listAgents()` is a cheap snapshot; we call it once per
+   * `broker.listPresences()` is a cheap snapshot; we call it once per
    * push dispatch (not per recipient) in practice, since dispatch
    * builds its own view.
    */
   const isLive = (name: string): boolean => {
-    const agents = broker.listAgents();
+    const agents = broker.listPresences();
     for (const a of agents) {
-      if (a.agentId === name) return a.connected > 0;
+      if (a.name === name) return a.connected > 0;
     }
     return false;
   };
@@ -362,7 +391,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     ? (message: import('@agentc7/sdk/types').Message) => {
         void dispatchPush(message, {
           sessions: pushStore,
-          slots: options.slots,
+          members: options.members,
           logger: log,
           isLive,
         }).catch((err) => {
@@ -374,14 +403,33 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
       }
     : undefined;
 
+  // User-mutation persistence hook. When `configPath` is known the
+  // runtime rewrites the on-disk team config after every add /
+  // update / delete / rotate-token / enroll-totp. Tests without a
+  // config path get a no-op that 501s mutation endpoints — you can't
+  // mutate without persistence or state silently drifts.
+  const persistMembers = options.configPath
+    ? () => {
+        persistMemberStore(
+          options.configPath as string,
+          options.team,
+          options.members,
+          https,
+          webPush,
+        );
+      }
+    : undefined;
+
   const app = createApp({
     broker,
-    slots: options.slots,
+    members: options.members,
     sessions,
     team: options.team,
-    roles: options.roles,
     objectives: objectivesStore,
-    agentActivity: agentActivityStore,
+    activityStore: activityStore,
+    files: filesStore,
+    ...(options.maxFileSize !== undefined ? { maxFileSize: options.maxFileSize } : {}),
+    ...(persistMembers !== undefined ? { persistMembers } : {}),
     version: SERVER_VERSION,
     logger: log,
     secureCookies,

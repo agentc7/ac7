@@ -1,4 +1,4 @@
-import type { Role, Slot, Team, Teammate } from '@agentc7/sdk/types';
+import type { Member, Team, Teammate } from '@agentc7/sdk/types';
 import { describe, expect, it } from 'vitest';
 import { composeBriefing } from '../src/briefing.js';
 
@@ -6,98 +6,80 @@ const TEAM: Team = {
   name: 'alpha-team',
   directive: 'Ship the payment service.',
   brief: 'We own the full lifecycle of the payment service.',
+  permissionPresets: {},
 };
 
-const OPERATOR_ROLE: Role = {
-  description: 'Directs the team.',
+const ACTUAL: Member = {
+  name: 'ACTUAL',
+  role: { title: 'commander', description: 'Leads the team, makes go/no-go calls.' },
+  permissions: ['members.manage'],
   instructions: 'Lead the team and issue directives in the team channel.',
 };
-
-const IMPLEMENTER_ROLE: Role = {
-  description: 'Writes code.',
+const ALPHA_1: Member = {
+  name: 'ALPHA-1',
+  role: { title: 'engineer', description: 'Writes and ships code.' },
+  permissions: [],
   instructions: 'Take direction from command, ship code, report progress.',
 };
-
-const ACTUAL: Slot = { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' };
-const ALPHA_1: Slot = {
-  name: 'ALPHA-1',
-  role: 'implementer',
-  authority: 'individual-contributor',
-};
-const SIERRA: Slot = {
+const SIERRA: Member = {
   name: 'SIERRA',
-  role: 'implementer',
-  authority: 'individual-contributor',
+  role: { title: 'engineer', description: 'Writes and ships code.' },
+  permissions: [],
+  instructions: '',
 };
 
 const TEAMMATES: Teammate[] = [
-  { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-  { name: 'ALPHA-1', role: 'implementer', authority: 'individual-contributor' },
-  { name: 'SIERRA', role: 'implementer', authority: 'individual-contributor' },
+  {
+    name: 'ACTUAL',
+    role: { title: 'commander', description: 'Leads the team, makes go/no-go calls.' },
+    permissions: ['members.manage'],
+  },
+  {
+    name: 'ALPHA-1',
+    role: { title: 'engineer', description: 'Writes and ships code.' },
+    permissions: [],
+  },
+  {
+    name: 'SIERRA',
+    role: { title: 'engineer', description: 'Writes and ships code.' },
+    permissions: [],
+  },
 ];
 
 describe('composeBriefing', () => {
-  it('includes name, role, authority, team, and teammates', () => {
+  it('includes name, role, permissions, team, and teammates', () => {
     const briefing = composeBriefing({
       self: ACTUAL,
-      selfRole: OPERATOR_ROLE,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
     });
     expect(briefing.name).toBe('ACTUAL');
-    expect(briefing.role).toBe('individual-contributor');
-    expect(briefing.authority).toBe('director');
+    expect(briefing.role.title).toBe('commander');
+    expect(briefing.permissions).toContain('members.manage');
     expect(briefing.team).toEqual(TEAM);
     expect(briefing.teammates).toEqual(TEAMMATES);
     expect(briefing.openObjectives).toEqual([]);
   });
 
-  it('surfaces authority in the instructions when elevated', () => {
-    const briefing = composeBriefing({
-      self: ACTUAL,
-      selfRole: OPERATOR_ROLE,
-      team: TEAM,
-      teammates: TEAMMATES,
-      openObjectives: [],
-    });
-    expect(briefing.instructions).toContain('Your rank: director');
-  });
-
-  it('always surfaces rank in the instructions, including for plain individual-contributors', () => {
-    const briefing = composeBriefing({
-      self: ALPHA_1,
-      selfRole: IMPLEMENTER_ROLE,
-      team: TEAM,
-      teammates: TEAMMATES,
-      openObjectives: [],
-    });
-    // Every agent should know its own rank explicitly — absence of
-    // a line is not self-knowledge. IndividualContributors need to see
-    // "Your rank: individual-contributor" as clearly as directors see theirs.
-    expect(briefing.instructions).toContain('Your rank: individual-contributor');
-  });
-
   it('renders complementary instructions that reference team context', () => {
     const briefing = composeBriefing({
       self: ALPHA_1,
-      selfRole: IMPLEMENTER_ROLE,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
     });
     expect(briefing.instructions).toContain('you go by ALPHA-1');
-    expect(briefing.instructions).toContain('Your role here: implementer');
+    expect(briefing.instructions).toContain('Your role here: engineer');
     expect(briefing.instructions).toContain(TEAM.name);
     expect(briefing.instructions).toContain(TEAM.directive);
     expect(briefing.instructions).toContain(TEAM.brief);
-    expect(briefing.instructions).toContain(IMPLEMENTER_ROLE.instructions);
+    expect(briefing.instructions).toContain(ALPHA_1.instructions);
   });
 
   it('lists other teammates and filters self out of the rendered list', () => {
     const briefing = composeBriefing({
       self: ALPHA_1,
-      selfRole: IMPLEMENTER_ROLE,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
@@ -116,7 +98,6 @@ describe('composeBriefing', () => {
     const teamNoBrief: Team = { ...TEAM, brief: '' };
     const briefing = composeBriefing({
       self: ACTUAL,
-      selfRole: OPERATOR_ROLE,
       team: teamNoBrief,
       teammates: TEAMMATES,
       openObjectives: [],
@@ -125,24 +106,19 @@ describe('composeBriefing', () => {
     expect(briefing.instructions).toContain(`Directive: ${teamNoBrief.directive}`);
   });
 
-  it('falls back to a placeholder when selfRole.instructions is empty', () => {
-    const emptyRole: Role = { description: '', instructions: '' };
+  it('omits the personal-instructions block when the member has none', () => {
     const briefing = composeBriefing({
-      self: ACTUAL,
-      selfRole: emptyRole,
+      self: SIERRA,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
     });
-    expect(briefing.instructions).toContain(
-      '(no role-specific instructions defined for individual-contributor)',
-    );
+    expect(briefing.instructions).not.toContain('Personal instructions:');
   });
 
   it('notes that the link suppresses self-echoes on the live stream', () => {
     const briefing = composeBriefing({
       self: SIERRA,
-      selfRole: IMPLEMENTER_ROLE,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
@@ -158,7 +134,6 @@ describe('composeBriefing', () => {
     // `tools/list_changed`.
     const briefing = composeBriefing({
       self: ALPHA_1,
-      selfRole: IMPLEMENTER_ROLE,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [
@@ -176,6 +151,7 @@ describe('composeBriefing', () => {
           completedAt: null,
           result: null,
           blockReason: null,
+          attachments: [],
         },
       ],
     });
@@ -191,14 +167,10 @@ describe('composeBriefing', () => {
   it('teaches the objective mechanism in instructions regardless of current plate', () => {
     const briefing = composeBriefing({
       self: ALPHA_1,
-      selfRole: IMPLEMENTER_ROLE,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
     });
-    // The mechanism explanation + tool verbs are always present so
-    // the agent knows what to do when an objective push arrives,
-    // regardless of whether one is on the plate right now.
     expect(briefing.instructions).toContain('── Objectives ──');
     expect(briefing.instructions).toContain('kind="objective"');
     expect(briefing.instructions).toContain('objectives_list');

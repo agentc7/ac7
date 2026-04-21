@@ -6,7 +6,7 @@
  *
  *   1. Never push to the sender. Own sends are echoes — no self-buzz.
  *   2. Never push to a recipient who already has a live SSE
- *      subscription for their slot. They're looking at the app;
+ *      subscription for their user. They're looking at the app;
  *      another buzz is redundant.
  *   3. DMs addressed to the recipient always push (if rules 1+2 allow).
  *   4. Broadcasts push only if the level is `warning` or higher OR
@@ -35,7 +35,7 @@ export interface ShouldPushOptions {
   recipient: string;
   /**
    * Whether `recipient` already has a live SSE subscriber attached
-   * to their slot. The broker's agent registry tracks this; the
+   * to their user. The broker's agent registry tracks this; the
    * dispatcher queries it per-recipient before calling us.
    */
   recipientIsLive: boolean;
@@ -51,10 +51,10 @@ export function shouldPush(opts: ShouldPushOptions): boolean {
   if (recipientIsLive) return false;
 
   // Rule 3: direct DMs always go through.
-  if (message.agentId === recipient) return true;
+  if (message.to === recipient) return true;
 
   // Rule 4: broadcasts get filtered.
-  if (message.agentId === null) {
+  if (message.to === null) {
     if (HIGH_PRIORITY_LEVELS.has(message.level)) return true;
     // Simple word-boundary match for @name. We don't care about
     // capitalization; names are case-sensitive but mentioning

@@ -2,16 +2,16 @@
  * Session signal — the SPA's single source of truth for "who am I."
  *
  * Three states:
- *   - `loading`                          — initial mount, haven't asked the server yet
- *   - `anonymous`                        — confirmed no valid session; show login
- *   - `{slot, role, authority, …}`       — authenticated; show the shell
+ *   - `loading`                                 — initial mount, haven't asked the server yet
+ *   - `anonymous`                               — confirmed no valid session; show login
+ *   - `{member, role, permissions, …}`          — authenticated; show the shell
  *
  * Components read the signal via Preact's `.value`; writes always go
  * through `bootstrap`, `loginWithTotp`, or `logout` so the state
  * transitions stay auditable in one place.
  */
 
-import type { Authority, SessionResponse } from '@agentc7/sdk/types';
+import type { Permission, Role, SessionResponse } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { getClient } from './client.js';
 
@@ -20,9 +20,9 @@ export type SessionState =
   | { status: 'anonymous' }
   | {
       status: 'authenticated';
-      slot: string;
-      role: string;
-      authority: Authority;
+      member: string;
+      role: Role;
+      permissions: Permission[];
       expiresAt: number;
     };
 
@@ -106,13 +106,9 @@ export class LoginError extends Error {
 function authenticatedFrom(resp: SessionResponse): SessionState {
   return {
     status: 'authenticated',
-    slot: resp.slot,
+    member: resp.member,
     role: resp.role,
-    // Server always stamps an authority on the session response, but
-    // defend against an older server (or a malformed response) by
-    // falling back to the base tier — losing director/manager
-    // capabilities is safer than granting them implicitly.
-    authority: resp.authority ?? 'individual-contributor',
+    permissions: resp.permissions,
     expiresAt: resp.expiresAt,
   };
 }

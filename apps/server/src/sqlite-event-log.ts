@@ -30,30 +30,32 @@ import {
   type EventLogQueryOptions,
   type EventLogTailOptions,
 } from '@agentc7/core';
-import type { LogLevel, Message } from '@agentc7/sdk/types';
+import type { Attachment, LogLevel, Message } from '@agentc7/sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
 
 interface EventRow {
   id: string;
   ts: number;
-  agent_id: string | null;
+  to_name: string | null;
   from_name: string | null;
   title: string | null;
   body: string;
   level: string;
   data: string;
+  attachments: string | null;
 }
 
 const CREATE_SCHEMA = `
   CREATE TABLE IF NOT EXISTS events (
     id TEXT PRIMARY KEY,
     ts INTEGER NOT NULL,
-    agent_id TEXT,
+    to_name TEXT,
     from_name TEXT,
     title TEXT,
     body TEXT NOT NULL,
     level TEXT NOT NULL,
-    data TEXT NOT NULL
+    data TEXT NOT NULL,
+    attachments TEXT
   );
   CREATE INDEX IF NOT EXISTS events_ts_idx ON events (ts);
 `;
@@ -73,35 +75,42 @@ export class SqliteEventLog implements EventLog {
     // "duplicate column name" on fresh DBs where CREATE_SCHEMA already
     // defined the column — that's expected and we swallow only that
     // specific case. Any other SQL error is a real problem and rethrows.
-    try {
-      this.db.exec('ALTER TABLE events ADD COLUMN from_name TEXT');
-    } catch (err) {
-      const msg = (err as Error).message ?? '';
-      if (!msg.includes('duplicate column name')) {
-        throw err;
+    // Two legacy migrations — each wrapped individually so a partial
+    // success doesn't skip the remaining ALTERs.
+    for (const alter of [
+      'ALTER TABLE events ADD COLUMN from_name TEXT',
+      'ALTER TABLE events ADD COLUMN attachments TEXT',
+    ]) {
+      try {
+        this.db.exec(alter);
+      } catch (err) {
+        const msg = (err as Error).message ?? '';
+        if (!msg.includes('duplicate column name')) {
+          throw err;
+        }
       }
     }
     this.insertStmt = this.db.prepare(
-      'INSERT INTO events (id, ts, agent_id, from_name, title, body, level, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+      'INSERT INTO events (id, ts, to_name, from_name, title, body, level, data, attachments) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
     );
     this.tailSinceStmt = this.db.prepare(
-      'SELECT id, ts, agent_id, from_name, title, body, level, data FROM events WHERE ts >= ? ORDER BY ts DESC LIMIT ?',
+      'SELECT id, ts, to_name, from_name, title, body, level, data, attachments FROM events WHERE ts >= ? ORDER BY ts DESC LIMIT ?',
     );
     this.queryFeedStmt = this.db.prepare(
-      `SELECT id, ts, agent_id, from_name, title, body, level, data
+      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
        FROM events
        WHERE ts < ?
-         AND (agent_id IS NULL OR from_name = ? OR agent_id = ?)
+         AND (to_name IS NULL OR from_name = ? OR to_name = ?)
        ORDER BY ts DESC LIMIT ?`,
     );
     this.queryDmStmt = this.db.prepare(
-      `SELECT id, ts, agent_id, from_name, title, body, level, data
+      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
        FROM events
        WHERE ts < ?
-         AND agent_id IS NOT NULL
+         AND to_name IS NOT NULL
          AND (
-           (from_name = ? AND agent_id = ?)
-           OR (from_name = ? AND agent_id = ?)
+           (from_name = ? AND to_name = ?)
+           OR (from_name = ? AND to_name = ?)
          )
        ORDER BY ts DESC LIMIT ?`,
     );
@@ -111,12 +120,13 @@ export class SqliteEventLog implements EventLog {
     this.insertStmt.run(
       message.id,
       message.ts,
-      message.agentId,
+      message.to,
       message.from,
       message.title,
       message.body,
       message.level,
       JSON.stringify(message.data),
+      message.attachments.length > 0 ? JSON.stringify(message.attachments) : null,
     );
   }
 
@@ -182,11 +192,23 @@ function rowToMessage(row: EventRow): Message {
   return {
     id: row.id,
     ts: row.ts,
-    agentId: row.agent_id,
+    to: row.to_name,
     from: row.from_name,
     title: row.title,
     body: row.body,
     level,
     data: JSON.parse(row.data) as Record<string, unknown>,
+    attachments: parseAttachments(row.attachments),
   };
+}
+
+function parseAttachments(raw: string | null): Attachment[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) return parsed as Attachment[];
+  } catch {
+    /* malformed JSON — fall through to empty */
+  }
+  return [];
 }

@@ -1,11 +1,11 @@
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import { PROTOCOL_HEADER } from '@agentc7/sdk/protocol';
-import type { BriefingResponse, Message, Role, RosterResponse, Team } from '@agentc7/sdk/types';
+import type { BriefingResponse, Message, RosterResponse, Team } from '@agentc7/sdk/types';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
+import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
-import { createSlotStore } from '../src/slots.js';
 
 const OP_TOKEN = 'ac7_test_operator_secret';
 const BOT_TOKEN = 'ac7_test_bot_secret';
@@ -14,17 +14,7 @@ const TEAM: Team = {
   name: 'alpha-team',
   directive: 'Ship and operate the payment service.',
   brief: 'We own the full lifecycle.',
-};
-
-const ROLES: Record<string, Role> = {
-  'individual-contributor': {
-    description: 'Directs the team.',
-    instructions: 'Lead the team.',
-  },
-  implementer: {
-    description: 'Writes code.',
-    instructions: 'Ship work and report status.',
-  },
+  permissionPresets: {},
 };
 
 function makeApp() {
@@ -33,19 +23,28 @@ function makeApp() {
     now: () => 1_700_000_000_000,
     idFactory: () => 'msg-fixed',
   });
-  const slots = createSlotStore([
-    { name: 'ACTUAL', role: 'individual-contributor', authority: 'director', token: OP_TOKEN },
-    { name: 'build-bot', role: 'implementer', token: BOT_TOKEN },
+  const members = createMemberStore([
+    {
+      name: 'ACTUAL',
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
+      token: OP_TOKEN,
+    },
+    {
+      name: 'build-bot',
+      role: { title: 'engineer', description: '' },
+      permissions: [],
+      token: BOT_TOKEN,
+    },
   ]);
   // Tests run with an in-memory SQLite solely for the sessions table.
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db);
   const app = createApp({
     broker,
-    slots,
+    members,
     sessions,
     team: TEAM,
-    roles: ROLES,
     version: '0.0.0',
     logger: {
       debug: vi.fn(),
@@ -54,7 +53,7 @@ function makeApp() {
       error: vi.fn(),
     },
   });
-  return { app, broker, slots, sessions, db };
+  return { app, broker, members, sessions, db };
 }
 
 function authed(token: string, body?: unknown): RequestInit {
@@ -87,24 +86,24 @@ describe('app GET /briefing', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as BriefingResponse;
     expect(body.name).toBe('ACTUAL');
-    expect(body.role).toBe('individual-contributor');
-    expect(body.authority).toBe('director');
+    expect(body.role.title).toBe('commander');
+    expect(body.permissions).toContain('members.manage');
     expect(body.team).toEqual(TEAM);
     expect(body.teammates.map((t) => t.name).sort()).toEqual(['ACTUAL', 'build-bot']);
     expect(body.openObjectives).toEqual([]);
     expect(body.instructions).toContain('ACTUAL');
-    expect(body.instructions).toContain('individual-contributor');
+    expect(body.instructions).toContain('commander');
     expect(body.instructions).toContain(TEAM.directive);
   });
 
-  it('returns authority=individual-contributor for slots that omit authority in their config', async () => {
+  it('returns empty permissions for plain members', async () => {
     const { app } = makeApp();
     const res = await app.request('/briefing', authed(BOT_TOKEN));
     expect(res.status).toBe(200);
     const body = (await res.json()) as BriefingResponse;
     expect(body.name).toBe('build-bot');
-    expect(body.role).toBe('implementer');
-    expect(body.authority).toBe('individual-contributor');
+    expect(body.role.title).toBe('engineer');
+    expect(body.permissions).toEqual([]);
   });
 
   it('requires auth', async () => {
@@ -153,16 +152,16 @@ describe('app GET /roster', () => {
   it('returns all teammates from the slot config plus runtime connection state', async () => {
     const { app, broker } = makeApp();
     // Pre-seed both slots so they appear in connected state
-    broker.seedSlots([
-      { name: 'ACTUAL', role: 'individual-contributor', authority: 'director' },
-      { name: 'build-bot', role: 'implementer', authority: 'individual-contributor' },
+    broker.seedMembers([
+      { name: 'ACTUAL', role: { title: 'commander', description: '' } },
+      { name: 'build-bot', role: { title: 'engineer', description: '' } },
     ]);
 
     const res = await app.request('/roster', authed(OP_TOKEN));
     expect(res.status).toBe(200);
     const body = (await res.json()) as RosterResponse;
     expect(body.teammates.map((t) => t.name).sort()).toEqual(['ACTUAL', 'build-bot']);
-    expect(body.connected.map((a) => a.agentId).sort()).toEqual(['ACTUAL', 'build-bot']);
+    expect(body.connected.map((a) => a.name).sort()).toEqual(['ACTUAL', 'build-bot']);
     expect(body.connected.every((a) => a.connected === 0)).toBe(true);
   });
 });
@@ -170,11 +169,11 @@ describe('app GET /roster', () => {
 describe('app GET /subscribe identity', () => {
   it('rejects subscribe to a name other than the caller', async () => {
     const { app } = makeApp();
-    const res = await app.request('/subscribe?agentId=build-bot', authed(OP_TOKEN));
+    const res = await app.request('/subscribe?name=build-bot', authed(OP_TOKEN));
     expect(res.status).toBe(403);
   });
 
-  it('requires agentId query parameter', async () => {
+  it('requires to query parameter', async () => {
     const { app } = makeApp();
     const res = await app.request('/subscribe', authed(OP_TOKEN));
     expect(res.status).toBe(400);
@@ -190,10 +189,7 @@ describe('app POST /push', () => {
       received.push(m);
     });
 
-    const res = await app.request(
-      '/push',
-      authed(OP_TOKEN, { agentId: 'build-bot', body: 'hello' }),
-    );
+    const res = await app.request('/push', authed(OP_TOKEN, { to: 'build-bot', body: 'hello' }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       delivery: { sse: number; targets: number };
@@ -220,10 +216,7 @@ describe('app POST /push', () => {
       botInbox.push(m);
     });
 
-    const res = await app.request(
-      '/push',
-      authed(OP_TOKEN, { agentId: 'build-bot', body: 'status?' }),
-    );
+    const res = await app.request('/push', authed(OP_TOKEN, { to: 'build-bot', body: 'status?' }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as { delivery: { sse: number; targets: number } };
     expect(body.delivery.targets).toBe(1);
@@ -246,7 +239,7 @@ describe('app POST /push', () => {
 
   it('returns 404 when targeting an unknown name', async () => {
     const { app } = makeApp();
-    const res = await app.request('/push', authed(OP_TOKEN, { agentId: 'ghost', body: 'hi' }));
+    const res = await app.request('/push', authed(OP_TOKEN, { to: 'ghost', body: 'hi' }));
     expect(res.status).toBe(404);
   });
 
@@ -256,7 +249,7 @@ describe('app POST /push', () => {
     expect(res.status).toBe(400);
   });
 
-  it('broadcasts to all registered agents when agentId is omitted', async () => {
+  it('broadcasts to all registered agents when to is omitted', async () => {
     const { app, broker } = makeApp();
     await broker.register('a1');
     await broker.register('a2');
@@ -266,20 +259,17 @@ describe('app POST /push', () => {
     expect(body.delivery.targets).toBe(2);
   });
 
-  it('treats explicit agentId: null as a broadcast', async () => {
+  it('treats explicit to: null as a broadcast', async () => {
     const { app, broker } = makeApp();
     await broker.register('a1');
-    const res = await app.request(
-      '/push',
-      authed(OP_TOKEN, { agentId: null, body: 'null-target' }),
-    );
+    const res = await app.request('/push', authed(OP_TOKEN, { to: null, body: 'null-target' }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
       delivery: { targets: number };
-      message: { agentId: string | null };
+      message: { to: string | null };
     };
     expect(body.delivery.targets).toBe(1);
-    expect(body.message.agentId).toBeNull();
+    expect(body.message.to).toBeNull();
   });
 });
 
@@ -291,8 +281,8 @@ describe('app GET /history', () => {
 
     // Use the broker directly to push so we can set from.
     await broker.push({ body: 'broadcast' }, { from: 'ACTUAL' });
-    await broker.push({ agentId: 'build-bot', body: 'dm to bot' }, { from: 'ACTUAL' });
-    await broker.push({ agentId: 'ACTUAL', body: 'dm from bot' }, { from: 'build-bot' });
+    await broker.push({ to: 'build-bot', body: 'dm to bot' }, { from: 'ACTUAL' });
+    await broker.push({ to: 'ACTUAL', body: 'dm from bot' }, { from: 'build-bot' });
 
     // Full feed for 'individual-contributor': broadcast + both DMs
     const full = await app.request('/history', authed(OP_TOKEN));

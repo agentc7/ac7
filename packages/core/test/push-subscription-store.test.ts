@@ -3,7 +3,7 @@ import { InMemoryPushSubscriptionStore, type PushSubscriptionInput } from '../sr
 
 function sampleInput(overrides: Partial<PushSubscriptionInput> = {}): PushSubscriptionInput {
   return {
-    slotName: 'alpha',
+    memberName: 'alpha',
     endpoint: 'https://push.example/endpoint/xyz',
     p256dh: 'p256dh-key',
     auth: 'auth-key',
@@ -45,20 +45,20 @@ describe('InMemoryPushSubscriptionStore.upsert', () => {
   });
 });
 
-describe('InMemoryPushSubscriptionStore.listForSlot', () => {
+describe('InMemoryPushSubscriptionStore.listForMember', () => {
   it('returns only rows owned by the requested slot', async () => {
     const store = new InMemoryPushSubscriptionStore();
-    await store.upsert(sampleInput({ slotName: 'alpha', endpoint: 'https://a' }));
-    await store.upsert(sampleInput({ slotName: 'alpha', endpoint: 'https://b' }));
-    await store.upsert(sampleInput({ slotName: 'bravo', endpoint: 'https://c' }));
-    const alphaRows = await store.listForSlot('alpha');
+    await store.upsert(sampleInput({ memberName: 'alpha', endpoint: 'https://a' }));
+    await store.upsert(sampleInput({ memberName: 'alpha', endpoint: 'https://b' }));
+    await store.upsert(sampleInput({ memberName: 'bravo', endpoint: 'https://c' }));
+    const alphaRows = await store.listForMember('alpha');
     expect(alphaRows).toHaveLength(2);
     expect(alphaRows.map((r) => r.endpoint).sort()).toEqual(['https://a', 'https://b']);
   });
 
   it('returns empty array for slots with no subscriptions', async () => {
     const store = new InMemoryPushSubscriptionStore();
-    expect(await store.listForSlot('ghost')).toEqual([]);
+    expect(await store.listForMember('ghost')).toEqual([]);
   });
 });
 
@@ -76,18 +76,18 @@ describe('InMemoryPushSubscriptionStore.findByEndpoint', () => {
   });
 });
 
-describe('InMemoryPushSubscriptionStore.deleteForSlot', () => {
+describe('InMemoryPushSubscriptionStore.deleteForMember', () => {
   it('removes the row when slot owns it', async () => {
     const store = new InMemoryPushSubscriptionStore();
-    const row = await store.upsert(sampleInput({ slotName: 'alpha', endpoint: 'https://x' }));
-    await store.deleteForSlot(row.id, 'alpha');
+    const row = await store.upsert(sampleInput({ memberName: 'alpha', endpoint: 'https://x' }));
+    await store.deleteForMember(row.id, 'alpha');
     expect(await store.findByEndpoint('https://x')).toBeNull();
   });
 
   it('is a no-op when a different slot asks (id-guess protection)', async () => {
     const store = new InMemoryPushSubscriptionStore();
-    const row = await store.upsert(sampleInput({ slotName: 'alpha', endpoint: 'https://x' }));
-    await store.deleteForSlot(row.id, 'bravo');
+    const row = await store.upsert(sampleInput({ memberName: 'alpha', endpoint: 'https://x' }));
+    await store.deleteForMember(row.id, 'bravo');
     expect(await store.findByEndpoint('https://x')).not.toBeNull();
   });
 });

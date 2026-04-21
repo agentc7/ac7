@@ -23,12 +23,13 @@ function msg(overrides: Partial<Message> = {}): Message {
   return {
     id: overrides.id ?? 'm1',
     ts: 1_700_000_000_000,
-    agentId: null,
+    to: null,
     from: 'przy-1',
     title: null,
     body: 'hello',
     level: 'info',
     data: {},
+    attachments: [],
     ...overrides,
   };
 }

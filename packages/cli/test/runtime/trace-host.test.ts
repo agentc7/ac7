@@ -24,7 +24,7 @@ import { startTraceHost } from '../../src/runtime/trace/host.js';
  */
 function stubBrokerClient(): BrokerClient {
   return {
-    uploadAgentActivity: vi.fn(async (_callsign: string, req: { events: unknown[] }) => ({
+    uploadAgentActivity: vi.fn(async (_memberName: string, req: { events: unknown[] }) => ({
       accepted: req.events.length,
     })),
   } as unknown as BrokerClient;

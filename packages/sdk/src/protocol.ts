@@ -23,10 +23,28 @@ export const PATHS = {
   // Web Push (browser) — VAPID public key + per-device subscriptions.
   pushVapidPublicKey: '/push/vapid-public-key',
   pushSubscriptions: '/push/subscriptions',
-  // Objectives — Director/Manager create & assign, assignees execute.
+  // Objectives — members with `objectives.create` post and assign,
+  // assignees execute, watchers observe.
   objectives: '/objectives',
-  // The helpers below compose `:id` paths at runtime rather than
-  // templating here, since `PATHS` is keyed by identifier not URL.
+  // Members — requires `members.manage` for mutations. Top-level GET
+  // is dual-auth (everyone can read the teammate list); mutating verbs
+  // gate on the permission. The helpers below compose the `:name`
+  // subpaths.
+  members: '/members',
+  // Filesystem — per-member home directories with content-addressed
+  // blob storage. The dedicated `read/*` catch-all supports friendly
+  // URLs for <a href> and <img src>; other ops take path via query or body.
+  fsList: '/fs/ls',
+  fsStat: '/fs/stat',
+  fsRead: '/fs/read',
+  fsWrite: '/fs/write',
+  fsMkdir: '/fs/mkdir',
+  fsRm: '/fs/rm',
+  fsMv: '/fs/mv',
+  fsShared: '/fs/shared',
+  // The helpers below compose `:id` / `:name` paths at runtime
+  // rather than templating here, since `PATHS` is keyed by
+  // identifier not URL.
 } as const;
 
 /** Path builders for objective subresources (the `:id` segment varies). */
@@ -40,15 +58,36 @@ export const OBJECTIVE_PATHS = {
 } as const;
 
 /**
- * Path builders for per-agent activity stream endpoints.
+ * Path builders for per-member subresources.
  *
- *   POST /agents/:name/activity            — append (self only)
- *   GET  /agents/:name/activity            — range query (self or director)
- *   GET  /agents/:name/activity/stream     — SSE live tail (self or director)
+ *   PATCH  /members/:name                   — update (members.manage)
+ *   DELETE /members/:name                   — delete (members.manage)
+ *   POST   /members/:name/rotate-token      — rotate bearer token (members.manage or self)
+ *   POST   /members/:name/enroll-totp       — (re-)enroll TOTP (members.manage or self)
+ *   POST   /members/:name/activity          — append activity event (self only)
+ *   GET    /members/:name/activity          — range query (self or activity.read)
+ *   GET    /members/:name/activity/stream   — SSE live tail (self or activity.read)
  */
-export const AGENT_PATHS = {
-  activity: (name: string) => `/agents/${encodeURIComponent(name)}/activity`,
-  activityStream: (name: string) => `/agents/${encodeURIComponent(name)}/activity/stream`,
+export const MEMBER_PATHS = {
+  one: (name: string) => `/members/${encodeURIComponent(name)}`,
+  rotateToken: (name: string) => `/members/${encodeURIComponent(name)}/rotate-token`,
+  enrollTotp: (name: string) => `/members/${encodeURIComponent(name)}/enroll-totp`,
+  activity: (name: string) => `/members/${encodeURIComponent(name)}/activity`,
+  activityStream: (name: string) => `/members/${encodeURIComponent(name)}/activity/stream`,
+} as const;
+
+/**
+ * Path builder for the `/fs/read/<path>` download endpoint. The
+ * server treats the trailing segment as a catch-all so friendly URLs
+ * like `/fs/read/alice/uploads/foo.pdf` work directly in `<a href>`
+ * and `<img src>`. Each segment is URL-encoded individually so names
+ * with spaces or special characters stay safe.
+ */
+export const FS_PATHS = {
+  read: (virtualPath: string): string => {
+    const segments = virtualPath.split('/').filter((s) => s.length > 0);
+    return `/fs/read/${segments.map(encodeURIComponent).join('/')}`;
+  },
 } as const;
 
 export const DEFAULT_PORT = 8717 as const;

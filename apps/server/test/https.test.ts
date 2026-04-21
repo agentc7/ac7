@@ -10,16 +10,16 @@ import { connect as http2Connect } from 'node:http2';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Broker, InMemoryEventLog } from '@agentc7/core';
-import type { Role, Team } from '@agentc7/sdk/types';
+import type { Team } from '@agentc7/sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { certExpiryMs, generateSelfSignedCert } from '../src/https/cert.js';
 import { createHttp2ServerFactory } from '../src/https/server.js';
 import { HttpsConfigError, loadCustomCert, loadOrGenerateSelfSigned } from '../src/https/store.js';
+import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
 import { SessionStore } from '../src/sessions.js';
-import { createSlotStore } from '../src/slots.js';
 
 const OP_TOKEN = 'ac7_https_test_operator_token';
 
@@ -27,10 +27,7 @@ const TEAM: Team = {
   name: 'alpha-team',
   directive: 'Verify the HTTPS surface.',
   brief: '',
-};
-
-const ROLES: Record<string, Role> = {
-  'individual-contributor': { description: '', instructions: '' },
+  permissionPresets: {},
 };
 
 const dirsToClean: string[] = [];
@@ -223,11 +220,11 @@ describe('createHttp2ServerFactory', () => {
 
 describe('secureCookies option', () => {
   it('sets Secure on session cookies when enabled', async () => {
-    const slots = createSlotStore([
+    const members = createMemberStore([
       {
         name: 'ACTUAL',
-        role: 'individual-contributor',
-        authority: 'director',
+        role: { title: 'commander', description: '' },
+        permissions: ['members.manage'],
         token: OP_TOKEN,
         totpSecret: 'JBSWY3DPEHPK3PXP',
       },
@@ -247,10 +244,10 @@ describe('secureCookies option', () => {
 
     const app = createApp({
       broker,
-      slots,
+      members,
       sessions,
       team: TEAM,
-      roles: ROLES,
+
       version: '0.0.0',
       secureCookies: true,
       logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -275,18 +272,18 @@ describe('secureCookies option', () => {
 describe('runServer with self-signed HTTPS', () => {
   it('boots on HTTP/2 and responds to /healthz', async () => {
     const configDir = tmpDir();
-    const slots = createSlotStore([
+    const members = createMemberStore([
       {
         name: 'ACTUAL',
-        role: 'individual-contributor',
-        authority: 'director',
+        role: { title: 'commander', description: '' },
+        permissions: ['members.manage'],
         token: OP_TOKEN,
       },
     ]);
     const running = await runServer({
-      slots,
+      members,
       team: TEAM,
-      roles: ROLES,
+
       https: {
         mode: 'self-signed',
         bindHttp: 0,
@@ -336,16 +333,16 @@ describe('runServer with self-signed HTTPS', () => {
 
     // First boot: generates + persists.
     const r1 = await runServer({
-      slots: createSlotStore([
+      members: createMemberStore([
         {
           name: 'ACTUAL',
-          role: 'individual-contributor',
-          authority: 'director',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
           token: OP_TOKEN,
         },
       ]),
       team: TEAM,
-      roles: ROLES,
+
       https: {
         mode: 'self-signed',
         bindHttp: 0,
@@ -366,16 +363,16 @@ describe('runServer with self-signed HTTPS', () => {
 
     // Second boot: reuses.
     const r2 = await runServer({
-      slots: createSlotStore([
+      members: createMemberStore([
         {
           name: 'ACTUAL',
-          role: 'individual-contributor',
-          authority: 'director',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
           token: OP_TOKEN,
         },
       ]),
       team: TEAM,
-      roles: ROLES,
+
       https: {
         mode: 'self-signed',
         bindHttp: 0,

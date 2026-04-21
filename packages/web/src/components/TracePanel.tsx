@@ -1,11 +1,11 @@
 /**
- * TracePanel — director-only view of captured LLM traces for an
+ * TracePanel — admin-only view of captured LLM traces for an
  * objective.
  *
  * In the activity-stream architecture, an "objective trace" is a
  * **time-range slice** of the assignee's agent activity stream
  * rather than a separately-stored table. We query
- * `GET /agents/<assignee>/activity` with:
+ * `GET /users/<assignee>/activity` with:
  *
  *   - `from = objective.createdAt`
  *   - `to   = objective.completedAt ?? now`
@@ -13,17 +13,17 @@
  *
  * and render the resulting LLM exchanges.
  *
- * Authority gate is enforced in two places:
+ * UserType gate is enforced in two places:
  *   - Client: the parent `ObjectiveDetail` only mounts us when
- *     `briefing.authority === 'director'`.
- *   - Server: `GET /agents/:name/activity` returns 403 to any
- *     non-director reading another slot.
+ *     `briefing.userType === 'admin'`.
+ *   - Server: `GET /users/:name/activity` returns 403 to any
+ *     non-admin reading another user.
  *
  * The trace content is already redacted at runner upload time.
  */
 
 import type {
-  AgentActivityLlmExchange,
+  ActivityLlmExchange,
   AnthropicContentBlock,
   AnthropicMessagesEntry,
   Objective,
@@ -34,7 +34,7 @@ import { useEffect } from 'preact/hooks';
 import { highlightXmlTags } from '../lib/channel-highlight.js';
 import { getClient } from '../lib/client.js';
 
-const exchanges = signal<AgentActivityLlmExchange[]>([]);
+const exchanges = signal<ActivityLlmExchange[]>([]);
 const loading = signal(false);
 const loadError = signal<string | null>(null);
 const expanded = signal(true);
@@ -47,7 +47,7 @@ async function loadExchanges(objective: Objective): Promise<void> {
     // still-active objectives we widen the upper bound to "now"
     // so recent activity lands in the view.
     const to = objective.completedAt ?? Date.now();
-    const rows = await getClient().listAgentActivity(objective.assignee, {
+    const rows = await getClient().listActivity(objective.assignee, {
       from: objective.createdAt,
       to,
       kind: 'llm_exchange',
@@ -58,7 +58,7 @@ async function loadExchanges(objective: Objective): Promise<void> {
     const ordered = [...rows].reverse();
     exchanges.value = ordered
       .map((row) => row.event)
-      .filter((ev): ev is AgentActivityLlmExchange => ev.kind === 'llm_exchange');
+      .filter((ev): ev is ActivityLlmExchange => ev.kind === 'llm_exchange');
   } catch (err) {
     loadError.value = err instanceof Error ? err.message : String(err);
   } finally {
@@ -126,7 +126,7 @@ export function TracePanel({ objective }: TracePanelProps): JSX.Element {
   );
 }
 
-function ExchangeRow({ exchange }: { exchange: AgentActivityLlmExchange }): JSX.Element {
+function ExchangeRow({ exchange }: { exchange: ActivityLlmExchange }): JSX.Element {
   return (
     <div class="card" style="padding:12px">
       <div

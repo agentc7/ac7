@@ -111,9 +111,9 @@ describe('<Login />', () => {
       '/session/totp': () => ({
         status: 200,
         body: {
-          slot: 'ACTUAL',
-          role: 'individual-contributor',
-          authority: 'director',
+          member: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
           expiresAt: 9_999_999_999_999,
         },
       }),
@@ -128,9 +128,9 @@ describe('<Login />', () => {
       expect(session.value.status).toBe('authenticated');
     });
     if (session.value.status === 'authenticated') {
-      expect(session.value.slot).toBe('ACTUAL');
-      expect(session.value.role).toBe('individual-contributor');
-      expect(session.value.authority).toBe('director');
+      expect(session.value.member).toBe('ACTUAL');
+      expect(session.value.role.title).toBe('commander');
+      expect(session.value.permissions).toContain('members.manage');
     }
   });
 });
@@ -164,9 +164,9 @@ describe('<App /> auth gate', () => {
       '/session': () => ({
         status: 200,
         body: {
-          slot: 'ACTUAL',
-          role: 'individual-contributor',
-          authority: 'director',
+          member: 'ACTUAL',
+          role: { title: 'commander', description: '' },
+          permissions: ['members.manage'],
           expiresAt: 9_999_999_999_999,
         },
       }),
@@ -176,9 +176,9 @@ describe('<App /> auth gate', () => {
 
     await waitFor(() => {
       expect(screen.getByText('ACTUAL')).toBeTruthy();
-      // Header now surfaces rank (authority), not role — director
-      // was stamped on the session above, so that's what renders.
-      expect(screen.getByText('director')).toBeTruthy();
+      // Header surfaces the userType pill, not the role — admin was
+      // stamped on the session above, so the ADMIN pill renders.
+      expect(screen.getByText(/COMMANDER/)).toBeTruthy();
       expect(screen.getByRole('button', { name: /sign out/i })).toBeTruthy();
     });
   });

@@ -5,13 +5,14 @@
  * tmp config and collect stdout. The interactive TOTP verify loop
  * isn't exercised here — that's covered by the wizard's own test
  * suite (`apps/server/test/wizard.test.ts`) which shares the same
- * `verifyCode` + `enrollSlotTotp` primitives. Here we focus on the
+ * `verifyCode` + `enrollUserTotp` primitives. Here we focus on the
  * CLI wrapper's error paths and dispatch:
  *
- *   - missing --slot argument
+ *   - missing --user argument
  *   - no config file at the resolved path
- *   - config exists but doesn't contain the named slot
+ *   - config exists but doesn't contain the named user
  *   - invalid / corrupt existing config
+ *   - agent userType cannot enroll for web UI
  *   - non-TTY stdin (the interactive flow needs a real terminal)
  */
 
@@ -40,52 +41,53 @@ const VALID_CONFIG_JSON = JSON.stringify({
     name: 'alpha-team',
     directive: 'ship',
     brief: '',
+    permissionPresets: {},
   },
-  roles: {
-    'individual-contributor': { description: '', instructions: '' },
-    implementer: { description: '', instructions: '' },
-  },
-  slots: [
+  members: [
     {
       name: 'ACTUAL',
-      role: 'individual-contributor',
-      authority: 'director',
+      role: { title: 'commander', description: '' },
+      permissions: ['members.manage'],
       tokenHash: `sha256:${'a'.repeat(64)}`,
     },
-    { name: 'ALPHA-1', role: 'implementer', tokenHash: `sha256:${'b'.repeat(64)}` },
+    {
+      name: 'ALPHA-1',
+      role: { title: 'engineer', description: '' },
+      permissions: [],
+      tokenHash: `sha256:${'b'.repeat(64)}`,
+    },
   ],
 });
 
 describe('runEnrollCommand', () => {
-  it('errors when --slot is missing', async () => {
+  it('errors when --user is missing', async () => {
     await expect(runEnrollCommand({}, () => {})).rejects.toThrow(UsageError);
     try {
       await runEnrollCommand({}, () => {});
     } catch (err) {
-      expect((err as Error).message).toContain('--slot');
+      expect((err as Error).message).toContain('--user');
     }
   });
 
   it('errors when the config file does not exist', async () => {
     const configPath = tmpPath();
     // Don't write the file — tmpPath only mkdtemps the dir.
-    await expect(runEnrollCommand({ slot: 'ACTUAL', configPath }, () => {})).rejects.toThrow(
+    await expect(runEnrollCommand({ user: 'ACTUAL', configPath }, () => {})).rejects.toThrow(
       UsageError,
     );
     try {
-      await runEnrollCommand({ slot: 'ACTUAL', configPath }, () => {});
+      await runEnrollCommand({ user: 'ACTUAL', configPath }, () => {});
     } catch (err) {
       const msg = (err as Error).message;
       expect(msg).toContain('no config file');
-      expect(msg).toContain('pnpm wizard');
     }
   });
 
-  it('errors with the list of known names when the slot is unknown', async () => {
+  it('errors with the list of known names when the user is unknown', async () => {
     const configPath = tmpPath();
     writeFileSync(configPath, VALID_CONFIG_JSON);
     try {
-      await runEnrollCommand({ slot: 'ghost', configPath }, () => {});
+      await runEnrollCommand({ user: 'ghost', configPath }, () => {});
       throw new Error('expected UsageError');
     } catch (err) {
       expect(err).toBeInstanceOf(UsageError);
@@ -99,7 +101,7 @@ describe('runEnrollCommand', () => {
   it('errors when the existing config is invalid', async () => {
     const configPath = tmpPath();
     writeFileSync(configPath, '{ "nope": true }');
-    await expect(runEnrollCommand({ slot: 'ACTUAL', configPath }, () => {})).rejects.toThrow(
+    await expect(runEnrollCommand({ user: 'ACTUAL', configPath }, () => {})).rejects.toThrow(
       UsageError,
     );
   });
@@ -107,13 +109,13 @@ describe('runEnrollCommand', () => {
   it('bails with a friendly UsageError when stdin is not a TTY', async () => {
     // Vitest typically runs with stdin detached, so the non-TTY path
     // is the default here. This confirms enroll reaches the interactive
-    // phase cleanly (past slot lookup, past the "already enrolled"
+    // phase cleanly (past user lookup, past the "already enrolled"
     // warning) before tripping the TTY guard.
     const configPath = tmpPath();
     writeFileSync(configPath, VALID_CONFIG_JSON);
     const output: string[] = [];
     await expect(
-      runEnrollCommand({ slot: 'ACTUAL', configPath }, (line) => output.push(line)),
+      runEnrollCommand({ user: 'ACTUAL', configPath }, (line) => output.push(line)),
     ).rejects.toThrow(/not a TTY/);
   });
 });

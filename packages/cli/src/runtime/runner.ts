@@ -281,8 +281,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   log('runner: IPC socket bound', {
     socketPath,
     name: briefing.name,
-    role: briefing.role,
-    authority: briefing.authority,
+    role: briefing.role.title,
     openObjectives: briefing.openObjectives.length,
     version: CLI_VERSION,
   });

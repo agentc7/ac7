@@ -1,16 +1,16 @@
 /**
  * Dual-auth middleware: bearer token OR session cookie, both resolving
- * to the same `LoadedSlot`.
+ * to the same `LoadedMember`.
  *
  * ac7 has two auth planes:
  *   - machine (MCP link): `Authorization: Bearer ac7_...` — long-lived
- *     tokens in the config file, resolved via `slots.resolve(raw)`
+ *     tokens in the config file, resolved via `members.resolve(raw)`
  *   - human (web SPA):    `Cookie: ac7_session=...` — minted after TOTP
- *     verification, resolved via `sessions.get(id)` → `slots.resolveByName`
+ *     verification, resolved via `sessions.get(id)` → `members.findByName`
  *
- * Both paths attach the same `LoadedSlot` to `c.var.slot`. Downstream
+ * Both paths attach the same `LoadedMember` to `c.var.member`. Downstream
  * handlers (/briefing, /push, /subscribe, /history) don't care which
- * plane authenticated the request — the identity surface is the slot.
+ * plane authenticated the request — the identity surface is the member.
  *
  * Why a session *and* bearer token on the same request should never
  * happen in practice: the SPA only sends the cookie, the MCP link only
@@ -22,18 +22,18 @@
 import type { MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
 import type { Logger } from './logger.js';
+import type { LoadedMember, MemberStore } from './members.js';
 import { SESSION_COOKIE_NAME, type SessionStore } from './sessions.js';
-import type { LoadedSlot, SlotStore } from './slots.js';
 
 export interface AuthDependencies {
-  slots: SlotStore;
+  members: MemberStore;
   sessions: SessionStore;
   logger: Logger;
 }
 
 export type AuthBindings = {
   Variables: {
-    slot: LoadedSlot;
+    member: LoadedMember;
     /** Id of the session that authenticated, if any. Null on bearer auth. */
     sessionId: string | null;
   };
@@ -45,7 +45,7 @@ export type AuthBindings = {
  * credentials" from "stale session" and redirect accordingly.
  */
 export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<AuthBindings> {
-  const { slots, sessions, logger } = deps;
+  const { members, sessions, logger } = deps;
 
   return async (c, next) => {
     // Bearer token wins if present — keeps machine-path semantics
@@ -56,11 +56,11 @@ export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<
       if (raw.length === 0) {
         return c.json({ error: 'missing bearer token' }, 401);
       }
-      const slot = slots.resolve(raw);
-      if (!slot) {
+      const member = members.resolve(raw);
+      if (!member) {
         return c.json({ error: 'unknown token' }, 401);
       }
-      c.set('slot', slot);
+      c.set('member', member);
       c.set('sessionId', null);
       await next();
       return;
@@ -75,19 +75,19 @@ export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<
         // to drop its session signal and redirect to /login.
         return c.json({ error: 'session expired' }, 401);
       }
-      const slot = slots.resolveByName(session.slotName);
-      if (!slot) {
-        // Slot was removed from config while a session was still live.
+      const member = members.findByName(session.memberName);
+      if (!member) {
+        // Member was removed from config while a session was still live.
         // Nuke the session so subsequent requests don't keep hitting this.
-        logger.warn('session references unknown slot', {
+        logger.warn('session references unknown member', {
           sessionId,
-          name: session.slotName,
+          name: session.memberName,
         });
         sessions.delete(sessionId);
-        return c.json({ error: 'session slot no longer exists' }, 401);
+        return c.json({ error: 'session member no longer exists' }, 401);
       }
       sessions.touch(sessionId);
-      c.set('slot', slot);
+      c.set('member', member);
       c.set('sessionId', sessionId);
       await next();
       return;

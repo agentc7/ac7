@@ -26,7 +26,9 @@ import { effect, signal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
 import { AgentPage } from '../components/AgentPage.js';
 import { Composer } from '../components/Composer.js';
+import { FilesPanel } from '../components/FilesPanel.js';
 import { Header } from '../components/Header.js';
+import { MembersPanel } from '../components/MembersPanel.js';
 import { ObjectiveCreate } from '../components/ObjectiveCreate.js';
 import { ObjectiveDetail } from '../components/ObjectiveDetail.js';
 import { ObjectivesPanel } from '../components/ObjectivesPanel.js';
@@ -59,7 +61,7 @@ export function Shell() {
 
   useEffect(() => {
     if (s.status !== 'authenticated') return;
-    const name = s.slot;
+    const name = s.member;
     let disposeSubscribe: (() => void) | null = null;
     let disposeRoster: (() => void) | null = null;
     let disposeAutoRead: (() => void) | null = null;
@@ -183,7 +185,7 @@ export function Shell() {
     };
     // We only want this effect firing when the authenticated slot
     // actually changes (logout → login as a different slot).
-  }, [s.status === 'authenticated' ? s.slot : null]);
+  }, [s.status === 'authenticated' ? s.member : null]);
 
   if (s.status !== 'authenticated') return null;
 
@@ -219,8 +221,8 @@ export function Shell() {
           </div>
         )}
         <div class="flex flex-1 min-h-0 overflow-hidden">
-          <Sidebar viewer={s.slot} />
-          <section class="flex-1 flex flex-col min-w-0 min-h-0">{renderView(v, s.slot)}</section>
+          <Sidebar viewer={s.member} />
+          <section class="flex-1 flex flex-col min-w-0 min-h-0">{renderView(v, s.member)}</section>
         </div>
       </main>
     </>
@@ -256,6 +258,10 @@ function renderView(v: View, viewer: string) {
       return <ObjectiveCreate />;
     case 'agent-detail':
       return <AgentPage name={v.name} viewer={viewer} />;
+    case 'files':
+      return <FilesPanel viewer={viewer} path={v.path} />;
+    case 'members':
+      return <MembersPanel />;
   }
 }
 

@@ -23,11 +23,13 @@ npx @agentc7/cli claude-code --doctor
 ## Commands
 
 ```
-ac7 setup       [--config-path <path>]                                 first-run wizard (team + slots + TOTP)
-ac7 enroll      --slot <name> [--config-path <path>]               (re-)enroll a slot for web UI login
+ac7 setup       [--config-path <path>]                                 first-run wizard (team + first admin + TOTP)
+ac7 user        list | create | update | delete [--config-path <path>]   offline user management
+ac7 enroll      --user <name> [--config-path <path>]                   (re-)enroll a user for web UI login
+ac7 rotate      --user <name> [--config-path <path>]                   rotate a user's bearer token
 ac7 claude-code [--no-trace] [--doctor] [-- <claude args>...]          spawn claude wrapped in a ac7 runner
 ac7 push        --body <text> (--agent <id> | --broadcast) [--title <t>] [--level <lvl>] [--data key=value]...
-ac7 roster                                                             list slots, authority, and connection state
+ac7 roster                                                             list teammates, userType, and connection state
 ac7 objectives  list | view | create | update | complete | cancel | reassign   team objectives
 ac7 serve       [--config-path <path>] [--port <n>] [--host <h>] [--db <path>]
 ```
@@ -92,8 +94,8 @@ individual contributors never invoke it directly.
 # 1. Start a broker (first run triggers the team setup wizard)
 ac7 serve
 
-# 2. In another terminal, set your slot token
-export AC7_TOKEN=ac7_your_slot_token
+# 2. In another terminal, set your user's bearer token
+export AC7_TOKEN=ac7_your_bearer_token
 
 # 3. Preflight check the environment
 ac7 claude-code --doctor

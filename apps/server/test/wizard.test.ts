@@ -1,15 +1,20 @@
+/**
+ * First-run wizard tests.
+ *
+ * The wizard collects a team + first admin member, auto-enrolls the
+ * admin in TOTP, and writes the config. Tests stub stdin with a
+ * scripted queue so each test drives the exact sequence of prompts
+ * the wizard asks, and pin the TOTP secret + clock so verification
+ * is deterministic.
+ */
+
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { loadTeamConfigFromFile, SlotLoadError } from '../src/slots.js';
+import { loadTeamConfigFromFile, MemberLoadError } from '../src/members.js';
 import { currentCode } from '../src/totp.js';
-import {
-  DEFAULT_ROLES,
-  type RunWizardOptions,
-  runFirstRunWizard,
-  type WizardIO,
-} from '../src/wizard.js';
+import { type RunWizardOptions, runFirstRunWizard, type WizardIO } from '../src/wizard.js';
 
 interface MockIO extends WizardIO {
   output: string[];
@@ -38,6 +43,10 @@ function mockIO(scripted: string[], isInteractive = true): MockIO {
   };
 }
 
+/** Deterministic TOTP secret + clock pair for reproducible code verification. */
+const FIXED_TOTP_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+const FIXED_NOW_MS = 1_700_000_000_000;
+
 describe('runFirstRunWizard', () => {
   const dirsToClean: string[] = [];
 
@@ -53,413 +62,147 @@ describe('runFirstRunWizard', () => {
     return join(dir, 'ac7.json');
   }
 
-  it('creates a team with a single director slot using defaults', async () => {
-    const configPath = tmpConfigPath();
-    let tokenCounter = 0;
-    const io = mockIO([
-      // team name (default my-team)
-      '',
-      // directive (required)
-      'Ship the payment service',
-      // brief (empty)
-      '',
-      // slot 1: name (default individual-contributor-1)
-      '',
-      // slot 1: role (default individual-contributor)
-      '',
-      // slot 1: authority (default director)
-      '',
-      // press enter after banner
-      '',
-      // enable web UI login? (skip for this test)
-      'n',
-      // add another slot? no
-      'n',
-    ]);
-
-    const config = await runFirstRunWizard({
+  function wizardOpts(configPath: string, io: WizardIO): RunWizardOptions {
+    return {
       configPath,
       io,
-      tokenFactory: () => `ac7_test_token_${++tokenCounter}`,
-      qrRenderer: () => '',
-    });
+      tokenFactory: () => 'ac7_test_fixed_token',
+      totpSecretFactory: () => FIXED_TOTP_SECRET,
+      now: () => FIXED_NOW_MS,
+      qrRenderer: () => '«qr»',
+    };
+  }
 
-    expect(config.store.size()).toBe(1);
-    const actual = config.store.resolve('ac7_test_token_1');
-    expect(actual?.name).toBe('individual-contributor-1');
-    expect(actual?.role).toBe('individual-contributor');
-    expect(actual?.authority).toBe('director');
+  // Happy-path script: team name (default), directive, brief (skip),
+  // admin name (default), role title (default), role description (skip),
+  // press enter after token banner, TOTP code.
+  function happyScript(code: string, overrides: Partial<Record<string, string>> = {}): string[] {
+    return [
+      overrides.teamName ?? '',
+      overrides.directive ?? 'Ship the payment service',
+      overrides.brief ?? '',
+      overrides.adminName ?? '',
+      overrides.roleTitle ?? '',
+      overrides.roleDescription ?? '',
+      '',
+      code,
+    ];
+  }
+
+  it('creates a team + first admin and writes a loadable config', async () => {
+    const configPath = tmpConfigPath();
+    const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
+    const io = mockIO(happyScript(code));
+
+    const config = await runFirstRunWizard(wizardOpts(configPath, io));
+
     expect(config.team.name).toBe('my-team');
     expect(config.team.directive).toBe('Ship the payment service');
     expect(config.team.brief).toBe('');
-
-    const onDisk = JSON.parse(readFileSync(configPath, 'utf8')) as {
-      team: { name: string; directive: string; brief: string };
-      roles: Record<string, { description?: string; instructions?: string }>;
-      slots: Array<{ name: string; role: string; authority?: string; tokenHash: string }>;
-    };
-    expect(onDisk.team.name).toBe('my-team');
-    expect(onDisk.team.directive).toBe('Ship the payment service');
-    expect(onDisk.slots).toHaveLength(1);
-    expect(onDisk.slots[0]?.name).toBe('individual-contributor-1');
-    expect(onDisk.slots[0]?.role).toBe('individual-contributor');
-    expect(onDisk.slots[0]?.authority).toBe('director');
-    expect(onDisk.slots[0]?.tokenHash).toMatch(/^sha256:/);
-
-    // All 4 default roles ship with every generated config.
-    expect(Object.keys(onDisk.roles).sort()).toEqual([
-      'implementer',
-      'individual-contributor',
-      'reviewer',
-      'watcher',
-    ]);
-
-    // File can be re-loaded round-trip.
-    const reloaded = loadTeamConfigFromFile(configPath);
-    const reloadedSlot = reloaded.store.resolve('ac7_test_token_1');
-    expect(reloadedSlot?.name).toBe('individual-contributor-1');
-    expect(reloadedSlot?.authority).toBe('director');
-  });
-
-  it('collects multiple slots with mixed authority tiers', async () => {
-    const configPath = tmpConfigPath();
-    let tokenCounter = 0;
-    const io = mockIO([
-      'alpha-team',
-      'ship the payment service',
-      'we own the full lifecycle',
-      // slot 1 — director (TOTP prompt fires, skip)
-      'ACTUAL',
-      'individual-contributor',
-      '', // default director
-      '',
-      'n',
-      'y',
-      // slot 2 — individual-contributor (no TOTP prompt)
-      'ALPHA-1',
-      'implementer',
-      '', // default individual-contributor
-      '',
-      'no',
-    ]);
-
-    const config = await runFirstRunWizard({
-      configPath,
-      io,
-      tokenFactory: () => `ac7_test_token_${++tokenCounter}`,
-      qrRenderer: () => '',
-    });
-
-    expect(config.store.size()).toBe(2);
-    expect(config.store.resolve('ac7_test_token_1')?.name).toBe('ACTUAL');
-    expect(config.store.resolve('ac7_test_token_1')?.authority).toBe('director');
-    expect(config.store.resolve('ac7_test_token_2')?.name).toBe('ALPHA-1');
-    expect(config.store.resolve('ac7_test_token_2')?.role).toBe('implementer');
-    expect(config.store.resolve('ac7_test_token_2')?.authority).toBe('individual-contributor');
-    expect(config.team.name).toBe('alpha-team');
-    expect(config.team.brief).toBe('we own the full lifecycle');
-  });
-
-  it('accepts manager as an explicit authority', async () => {
-    const configPath = tmpConfigPath();
-    let tokenCounter = 0;
-    const io = mockIO([
-      'alpha-team',
-      'directive',
-      '',
-      // slot 1: director (default)
-      'ACTUAL',
-      'individual-contributor',
-      '',
-      '',
-      'n',
-      'y',
-      // slot 2: explicit manager
-      'LT-ONE',
-      'individual-contributor',
-      'manager',
-      '',
-      // LT gets TOTP prompt — skip
-      'n',
-      'n',
-    ]);
-    const config = await runFirstRunWizard({
-      configPath,
-      io,
-      tokenFactory: () => `ac7_t_${++tokenCounter}`,
-      qrRenderer: () => '',
-    });
-    expect(config.store.resolve('ac7_t_2')?.authority).toBe('manager');
-  });
-
-  it('re-prompts on invalid authority', async () => {
-    const configPath = tmpConfigPath();
-    const io = mockIO([
-      'team',
-      'hold the line',
-      '',
-      'ACTUAL',
-      'individual-contributor',
-      // invalid authority, then valid
-      'admin',
-      '',
-      // press enter after banner
-      '',
-      'n',
-      'n',
-    ]);
-    const config = await runFirstRunWizard({
-      configPath,
-      io,
-      tokenFactory: () => 'ac7_tok',
-      qrRenderer: () => '',
-    });
+    expect(config.team.permissionPresets).toBeDefined();
     expect(config.store.size()).toBe(1);
-    expect(io.output.some((l) => l.includes('authority must be one of'))).toBe(true);
-  });
+    expect(config.store.hasAdmin()).toBe(true);
 
-  it('re-prompts on invalid name and accepts custom roles with a note', async () => {
-    const configPath = tmpConfigPath();
-    const io = mockIO([
-      'team',
-      'hold the line',
-      '',
-      // invalid names, then a valid one
-      'has spaces',
-      'also invalid!',
-      'valid-name',
-      // custom role — accepted with note, auto-added to config
-      'custom-role',
-      // director default
-      '',
-      '',
-      // director → TOTP prompt fires, skip
-      'n',
-      'n',
-    ]);
+    const admin = config.store.findByName('ACTUAL');
+    expect(admin).toBeTruthy();
+    expect(admin?.permissions).toContain('members.manage');
+    expect(admin?.role.title).toBe('commander');
+    expect(admin?.totpSecret).toBe(FIXED_TOTP_SECRET);
+    expect(admin?.totpLastCounter).toBe(0);
 
-    const config = await runFirstRunWizard({
-      configPath,
-      io,
-      tokenFactory: () => 'ac7_mocked_token',
-      qrRenderer: () => '',
-    });
-
-    expect(config.store.size()).toBe(1);
-    expect(config.store.resolve('ac7_mocked_token')?.name).toBe('valid-name');
-    expect(config.store.resolve('ac7_mocked_token')?.role).toBe('custom-role');
-    expect(config.roles['custom-role']).toBeDefined();
-    expect(io.output.some((l) => l.includes('alphanumeric'))).toBe(true);
-    expect(io.output.some((l) => l.includes('custom role'))).toBe(true);
-
-    // Generated config must be loadable — custom role was auto-injected.
+    // On-disk config loads cleanly and still resolves via the token.
     const reloaded = loadTeamConfigFromFile(configPath);
-    expect(reloaded.store.resolve('ac7_mocked_token')?.role).toBe('custom-role');
-    expect(reloaded.roles['custom-role']).toBeDefined();
+    expect(reloaded.store.size()).toBe(1);
+    const resolved = reloaded.store.resolve('ac7_test_fixed_token');
+    expect(resolved?.name).toBe('ACTUAL');
+    expect(resolved?.permissions).toContain('members.manage');
+
+    expect(io.remaining()).toBe(0);
   });
 
-  it('rejects role keys with invalid characters', async () => {
+  it('ships admin + operator permission presets in the generated config', async () => {
     const configPath = tmpConfigPath();
+    const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
+    const io = mockIO(happyScript(code));
+    const config = await runFirstRunWizard(wizardOpts(configPath, io));
+
+    expect(config.team.permissionPresets.admin).toBeDefined();
+    expect(config.team.permissionPresets.admin).toContain('members.manage');
+    expect(config.team.permissionPresets.operator).toContain('objectives.create');
+  });
+
+  it('accepts a custom admin role title', async () => {
+    const configPath = tmpConfigPath();
+    const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
+    const io = mockIO(happyScript(code, { roleTitle: 'chief', roleDescription: 'Runs the ship' }));
+    const config = await runFirstRunWizard(wizardOpts(configPath, io));
+
+    const admin = config.store.findByName('ACTUAL');
+    expect(admin?.role.title).toBe('chief');
+    expect(admin?.role.description).toBe('Runs the ship');
+  });
+
+  it('re-prompts on an invalid admin name and keeps going', async () => {
+    const configPath = tmpConfigPath();
+    const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
     const io = mockIO([
-      'team',
-      'directive',
+      '', // team name
+      'Ship', // directive
+      '', // brief
+      'has spaces', // bad name, rejected
+      'chief', // good name
+      '', // role title (default)
+      '', // role description (skip)
       '',
-      'ACTUAL',
-      // invalid role key (contains space), then valid
-      'bad role',
-      'individual-contributor',
-      // director default
-      '',
-      '',
-      // skip web UI login
-      'n',
-      // add another slot? no
-      'n',
+      code,
     ]);
-    await runFirstRunWizard({
-      configPath,
-      io,
-      tokenFactory: () => 'ac7_token',
-      qrRenderer: () => '',
-    });
-    expect(io.output.some((l) => l.includes('role must be alphanumeric'))).toBe(true);
+    const config = await runFirstRunWizard(wizardOpts(configPath, io));
+    expect(config.store.findByName('chief')).toBeTruthy();
+    expect(io.output.some((l) => l.includes('alphanumeric with . _ -'))).toBe(true);
   });
 
-  it('rejects duplicate names within the same session', async () => {
+  it('re-prompts on a bad TOTP code and succeeds on retry', async () => {
     const configPath = tmpConfigPath();
-    let tokenCounter = 0;
-    const io = mockIO([
-      'team',
-      'hold the line',
-      '',
-      'ACTUAL',
-      'individual-contributor',
-      '', // director
-      '',
-      'n',
-      'y',
-      // duplicate → re-prompted
-      'ACTUAL',
-      'ALPHA-1',
-      'implementer',
-      '', // individual-contributor
-      '',
-      'n',
-    ]);
-    const config = await runFirstRunWizard({
-      configPath,
-      io,
-      tokenFactory: () => `ac7_t_${++tokenCounter}`,
-      qrRenderer: () => '',
-    });
-    expect(config.store.names().sort()).toEqual(['ACTUAL', 'ALPHA-1']);
-    expect(io.output.some((l) => l.includes("'ACTUAL' already added"))).toBe(true);
+    const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
+    const io = mockIO([...happyScript('000000'), code]);
+    const config = await runFirstRunWizard(wizardOpts(configPath, io));
+    expect(config.store.size()).toBe(1);
+    expect(io.output.some((l) => l.includes('try again'))).toBe(true);
   });
 
-  it('throws SlotLoadError when the IO is not interactive', async () => {
+  it('aborts with MemberLoadError after repeated bad TOTP codes', async () => {
     const configPath = tmpConfigPath();
-    const io = mockIO([], false);
-    await expect(runFirstRunWizard({ configPath, io, tokenFactory: () => 'tok' })).rejects.toThrow(
-      SlotLoadError,
+    const io = mockIO([...happyScript('000000'), '111111', '222222']);
+    await expect(runFirstRunWizard(wizardOpts(configPath, io))).rejects.toBeInstanceOf(
+      MemberLoadError,
     );
   });
 
-  it('ships all 4 default roles (individual-contributor, implementer, reviewer, watcher)', () => {
-    expect(Object.keys(DEFAULT_ROLES).sort()).toEqual([
-      'implementer',
-      'individual-contributor',
-      'reviewer',
-      'watcher',
-    ]);
+  it('throws MemberLoadError when the IO is non-interactive', async () => {
+    const configPath = tmpConfigPath();
+    const io = mockIO([], false);
+    await expect(runFirstRunWizard(wizardOpts(configPath, io))).rejects.toMatchObject({
+      name: 'MemberLoadError',
+      message: expect.stringContaining('not a TTY'),
+    });
   });
 
-  // ── TOTP enrollment ────────────────────────────────────────────────
+  it('reloads the written config and resolves the plaintext token', async () => {
+    const configPath = tmpConfigPath();
+    const code = currentCode(FIXED_TOTP_SECRET, FIXED_NOW_MS);
+    const io = mockIO(happyScript(code));
+    await runFirstRunWizard(wizardOpts(configPath, io));
 
-  describe('TOTP enrollment', () => {
-    const FIXED_SECRET = 'JBSWY3DPEHPK3PXP';
-    const FIXED_NOW = 1_700_000_000_000;
+    const reloaded = loadTeamConfigFromFile(configPath);
+    const resolved = reloaded.store.resolve('ac7_test_fixed_token');
+    expect(resolved).toBeTruthy();
+    expect(resolved?.permissions).toContain('members.manage');
 
-    function enrollmentOptions(io: WizardIO, configPath: string): RunWizardOptions {
-      return {
-        configPath,
-        io,
-        tokenFactory: () => 'ac7_test_token',
-        totpSecretFactory: () => FIXED_SECRET,
-        now: () => FIXED_NOW,
-        qrRenderer: () => '[qr-code]',
-      };
-    }
-
-    it('enrolls a director slot with a valid code and persists the secret', async () => {
-      const configPath = tmpConfigPath();
-      const code = currentCode(FIXED_SECRET, FIXED_NOW);
-      const io = mockIO([
-        '',
-        'directive',
-        '',
-        'ACTUAL',
-        'individual-contributor',
-        '', // director (default)
-        '',
-        // enable web UI login? default Y
-        'y',
-        // enter the 6-digit code
-        code,
-        // add another slot? no
-        'n',
-      ]);
-      const config = await runFirstRunWizard(enrollmentOptions(io, configPath));
-      expect(config.store.resolve('ac7_test_token')?.totpSecret).toBe(FIXED_SECRET);
-
-      const reloaded = loadTeamConfigFromFile(configPath);
-      expect(reloaded.store.resolve('ac7_test_token')?.totpSecret).toBe(FIXED_SECRET);
-      expect(io.output.some((l) => l.includes('enrollment confirmed for ACTUAL'))).toBe(true);
-    });
-
-    it('re-prompts on an incorrect code and accepts the retry', async () => {
-      const configPath = tmpConfigPath();
-      const code = currentCode(FIXED_SECRET, FIXED_NOW);
-      const io = mockIO([
-        '',
-        'directive',
-        '',
-        'ACTUAL',
-        'individual-contributor',
-        '', // director
-        '',
-        'y',
-        '000000',
-        code,
-        'n',
-      ]);
-      const config = await runFirstRunWizard(enrollmentOptions(io, configPath));
-      expect(config.store.resolve('ac7_test_token')?.totpSecret).toBe(FIXED_SECRET);
-      expect(io.output.some((l) => l.includes('that code is incorrect'))).toBe(true);
-    });
-
-    it('skips enrollment when the user answers n at the prompt', async () => {
-      const configPath = tmpConfigPath();
-      const io = mockIO([
-        '',
-        'directive',
-        '',
-        'ACTUAL',
-        'individual-contributor',
-        '',
-        '',
-        'n',
-        'n',
-      ]);
-      const config = await runFirstRunWizard(enrollmentOptions(io, configPath));
-      expect(config.store.resolve('ac7_test_token')?.totpSecret).toBeFalsy();
-      expect(io.output.some((l) => l.includes('ac7 enroll --slot ACTUAL'))).toBe(true);
-    });
-
-    it('bails after too many bad codes without persisting a secret', async () => {
-      const configPath = tmpConfigPath();
-      const io = mockIO([
-        '',
-        'directive',
-        '',
-        'ACTUAL',
-        'individual-contributor',
-        '',
-        '',
-        'y',
-        '000000',
-        '111111',
-        '222222',
-        'n',
-      ]);
-      const config = await runFirstRunWizard(enrollmentOptions(io, configPath));
-      expect(config.store.resolve('ac7_test_token')?.totpSecret).toBeFalsy();
-      expect(io.output.some((l) => l.includes('too many bad attempts'))).toBe(true);
-    });
-
-    it('does NOT prompt TOTP for plain-individual-contributor-authority slots', async () => {
-      // The scenario: a single slot that the user explicitly marks as
-      // individual-contributor authority. Since at least one director is required,
-      // the wizard rejects the config at write time — but the point of
-      // this test is just that the TOTP prompt never fires. We catch
-      // the SlotLoadError at the end.
-      const configPath = tmpConfigPath();
-      const io = mockIO([
-        '',
-        'directive',
-        '',
-        'ACTUAL',
-        'individual-contributor',
-        'individual-contributor', // explicitly downgrade authority
-        '',
-        // no TOTP prompt — go straight to "add another slot?"
-        'n',
-      ]);
-      await expect(runFirstRunWizard(enrollmentOptions(io, configPath))).rejects.toThrow(
-        /at least one slot must have authority=director/,
-      );
-      // If the TOTP prompt had fired, the queue would exhaust before
-      // we got to the "no director" check.
-      expect(io.output.every((l) => !l.includes('enable web UI login'))).toBe(true);
-    });
+    // And the on-disk JSON shape: `members:` top-level array, single entry.
+    const raw = JSON.parse(readFileSync(configPath, 'utf8')) as {
+      members: Array<{ name: string; permissions: string[] }>;
+    };
+    expect(raw.members).toHaveLength(1);
+    expect(raw.members[0]?.permissions).toContain('admin');
   });
 });

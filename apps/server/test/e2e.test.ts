@@ -15,10 +15,10 @@ import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@agentc7/sdk/client';
-import type { Role, Team } from '@agentc7/sdk/types';
+import type { Team } from '@agentc7/sdk/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
-import { createSlotStore } from '../src/slots.js';
 
 interface JsonRpcMessage {
   jsonrpc?: '2.0';
@@ -32,7 +32,7 @@ interface JsonRpcMessage {
 const LINK_BINARY = resolve(
   fileURLToPath(new URL('../../../packages/link/dist/index.js', import.meta.url)),
 );
-// agentId === slot.name is enforced by the broker. Three
+// to === slot.name is enforced by the broker. Three
 // slots exercise: individual-contributor → agent (ACTUAL → e2e-agent), and
 // agent-as-individual-contributor (e2e-agent → e2e-peer).
 const AGENT_ID = 'e2e-agent';
@@ -45,17 +45,7 @@ const TEAM: Team = {
   name: 'e2e-team',
   directive: 'Exercise the full ac7 stack end-to-end.',
   brief: '',
-};
-
-const ROLES: Record<string, Role> = {
-  'individual-contributor': {
-    description: 'Directs the team.',
-    instructions: 'Lead.',
-  },
-  implementer: {
-    description: 'Writes code.',
-    instructions: 'Ship work.',
-  },
+  permissionPresets: {},
 };
 
 // Skipped during the runner/bridge refactor (Phase 1): this e2e test
@@ -72,20 +62,29 @@ describe.skip('end-to-end: individual-contributor → broker → link → channe
   let stdoutBuf = '';
 
   beforeAll(async () => {
-    const slots = createSlotStore([
+    const members = createMemberStore([
       {
         name: 'ACTUAL',
-        role: 'individual-contributor',
-        authority: 'director',
+        role: { title: 'commander', description: '' },
+        permissions: ['members.manage'],
         token: OP_TOKEN,
       },
-      { name: AGENT_ID, role: 'implementer', token: AGENT_TOKEN },
-      { name: PEER_AGENT_ID, role: 'implementer', token: PEER_TOKEN },
+      {
+        name: AGENT_ID,
+        role: { title: 'engineer', description: '' },
+        permissions: [],
+        token: AGENT_TOKEN,
+      },
+      {
+        name: PEER_AGENT_ID,
+        role: { title: 'engineer', description: '' },
+        permissions: [],
+        token: PEER_TOKEN,
+      },
     ]);
     server = await runServer({
-      slots,
+      members,
       team: TEAM,
-      roles: ROLES,
       port: 0,
       host: '127.0.0.1',
       dbPath: ':memory:',
@@ -157,7 +156,7 @@ describe.skip('end-to-end: individual-contributor → broker → link → channe
     // Wait until the link subscribes (connected > 0).
     await waitUntil(async () => {
       const { connected } = await client.roster();
-      const us = connected.find((a) => a.agentId === AGENT_ID);
+      const us = connected.find((a) => a.name === AGENT_ID);
       return Boolean(us && us.connected > 0);
     }, 5_000);
   }, 20_000);
@@ -172,7 +171,7 @@ describe.skip('end-to-end: individual-contributor → broker → link → channe
 
   it('individual-contributor push via SDK surfaces as a channel event on link stdio', async () => {
     await client.push({
-      agentId: AGENT_ID,
+      to: AGENT_ID,
       body: 'end-to-end test push',
       title: 'e2e',
       level: 'warning',

@@ -1,11 +1,11 @@
 /**
  * Session store — cookie-backed human web-UI sessions.
  *
- * A session is a server-issued capability: after a human completes TOTP
- * verification, the caller mints a session row binding a random `id` to
- * a slot name. Every subsequent request presenting the cookie
- * resolves back to the slot via the dual-auth middleware, same as a
- * bearer-token request.
+ * A session is a server-issued capability: after TOTP verification,
+ * the caller mints a session row binding a random `id` to a member
+ * name. Every subsequent request presenting the cookie resolves back
+ * to the member via the dual-auth middleware, same as a bearer-token
+ * request.
  *
  * Lifetime: sliding 7-day TTL. Every `touch()` extends `expiresAt`.
  * Expired rows are treated as nonexistent on read and purged by
@@ -25,7 +25,7 @@ export const SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface SessionRow {
   id: string;
-  slotName: string;
+  memberName: string;
   createdAt: number;
   expiresAt: number;
   lastSeen: number;
@@ -34,7 +34,7 @@ export interface SessionRow {
 
 export interface SessionStore {
   /**
-   * Mint a fresh session for `slotName`. Returns the row so the
+   * Mint a fresh session for `memberName`. Returns the row so the
    * caller can put the `id` in a `Set-Cookie` header and return the
    * `expiresAt` to the SPA. The implementation is responsible for
    * generating a cryptographically random `id` of at least 128 bits of
@@ -42,7 +42,7 @@ export interface SessionStore {
    * choice of random source is runtime-specific (`node:crypto` for the
    * Node server, Web Crypto for Workers).
    */
-  create(slotName: string, userAgent: string | null): Promise<SessionRow>;
+  create(memberName: string, userAgent: string | null): Promise<SessionRow>;
 
   /**
    * Look up a session by id. Returns null if the row doesn't exist or
@@ -54,7 +54,7 @@ export interface SessionStore {
   /**
    * Bump `lastSeen` and extend `expiresAt` for an existing session.
    * Called on every authenticated request the session carries, so the
-   * TTL slides as long as the individual-contributor stays active. No-op if the id
+   * TTL slides as long as the member stays active. No-op if the id
    * doesn't exist.
    */
   touch(id: string): Promise<void>;
@@ -97,11 +97,11 @@ export class InMemorySessionStore implements SessionStore {
     this.idGenerator = options.idGenerator ?? defaultIdGenerator;
   }
 
-  async create(slotName: string, userAgent: string | null): Promise<SessionRow> {
+  async create(memberName: string, userAgent: string | null): Promise<SessionRow> {
     const now = this.now();
     const row: SessionRow = {
       id: this.idGenerator(),
-      slotName,
+      memberName,
       createdAt: now,
       expiresAt: now + SESSION_TTL_MS,
       lastSeen: now,

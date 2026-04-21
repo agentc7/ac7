@@ -1,5 +1,5 @@
 /**
- * New-objective form — visible only to managers + directors.
+ * New-objective form — visible to admins, operators, and lead-agents.
  * Fields: title, outcome (required), body, assignee (from roster),
  * optional initial watchers.
  *
@@ -8,18 +8,81 @@
  * brand (component reference, marketing pages).
  */
 
+import type { Attachment } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
+import { getClient } from '../lib/client.js';
 import { createObjective } from '../lib/objectives.js';
 import { roster } from '../lib/roster.js';
+import { session } from '../lib/session.js';
 import { selectObjectiveDetail, selectObjectivesList } from '../lib/view.js';
+
+interface PendingUpload {
+  localId: string;
+  file: File;
+  status: 'uploading' | 'ready' | 'error';
+  attachment?: Attachment;
+  error?: string;
+}
 
 const title = signal('');
 const outcome = signal('');
 const body = signal('');
 const assignee = signal('');
 const watchers = signal<string[]>([]);
+const attachmentUploads = signal<PendingUpload[]>([]);
 const busy = signal(false);
 const err = signal<string | null>(null);
+
+let uploadSeq = 0;
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function startUpload(file: File, viewer: string): void {
+  const entry: PendingUpload = {
+    localId: `upload-${++uploadSeq}`,
+    file,
+    status: 'uploading',
+  };
+  attachmentUploads.value = [...attachmentUploads.value, entry];
+  void (async () => {
+    try {
+      const result = await getClient().fsWrite({
+        path: `/${viewer}/uploads/${file.name}`,
+        mimeType: file.type || 'application/octet-stream',
+        source: file,
+        collision: 'suffix',
+      });
+      attachmentUploads.value = attachmentUploads.value.map((p) =>
+        p.localId === entry.localId
+          ? {
+              ...p,
+              status: 'ready',
+              attachment: {
+                path: result.entry.path,
+                name: result.entry.name,
+                size: result.entry.size ?? file.size,
+                mimeType: result.entry.mimeType ?? 'application/octet-stream',
+              },
+            }
+          : p,
+      );
+    } catch (e) {
+      attachmentUploads.value = attachmentUploads.value.map((p) =>
+        p.localId === entry.localId
+          ? { ...p, status: 'error', error: e instanceof Error ? e.message : 'upload failed' }
+          : p,
+      );
+    }
+  })();
+}
+
+function dismissUpload(localId: string): void {
+  attachmentUploads.value = attachmentUploads.value.filter((p) => p.localId !== localId);
+}
 
 function resetForm(): void {
   title.value = '';
@@ -27,14 +90,23 @@ function resetForm(): void {
   body.value = '';
   assignee.value = '';
   watchers.value = [];
+  attachmentUploads.value = [];
   err.value = null;
 }
 
 export function ObjectiveCreate() {
   const r = roster.value;
   const teammates = r?.teammates ?? [];
+  const sess = session.value;
+  const viewer = sess.status === 'authenticated' ? sess.member : '';
+  const uploads = attachmentUploads.value;
+  const anyUploading = uploads.some((u) => u.status === 'uploading');
+  const readyAttachments = uploads
+    .filter((u) => u.status === 'ready' && u.attachment)
+    .map((u) => u.attachment as Attachment);
   const canSubmit =
     !busy.value &&
+    !anyUploading &&
     title.value.trim().length > 0 &&
     outcome.value.trim().length > 0 &&
     assignee.value.length > 0;
@@ -51,6 +123,7 @@ export function ObjectiveCreate() {
         assignee: assignee.value,
         ...(body.value.trim() ? { body: body.value.trim() } : {}),
         ...(watchers.value.length > 0 ? { watchers: watchers.value } : {}),
+        ...(readyAttachments.length > 0 ? { attachments: readyAttachments } : {}),
       });
       selectObjectiveDetail(created.id);
       resetForm();
@@ -211,6 +284,65 @@ export function ObjectiveCreate() {
           </select>
         </div>
 
+        <div class="field">
+          <span class="field-label">Attachments (optional)</span>
+          <div class="field-help">
+            Files you attach here are available to every thread member (originator, assignee,
+            watchers, and admins) via the objective's discussion. Files upload into your home under
+            /{viewer}/uploads/ and any filename collisions get a numeric suffix.
+          </div>
+          {uploads.length > 0 && (
+            <div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:8px">
+              {uploads.map((u) => (
+                <span
+                  key={u.localId}
+                  style={`display:inline-flex;gap:6px;align-items:center;padding:4px 8px;border-radius:4px;font-size:11.5px;background:${u.status === 'error' ? 'rgba(211,47,47,0.1)' : 'var(--bg-alt)'};border:1px solid ${u.status === 'error' ? 'var(--err, #d32f2f)' : 'var(--rule)'}`}
+                  title={u.error ?? `${u.file.name} · ${formatSize(u.file.size)}`}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={`color:${
+                      u.status === 'ready'
+                        ? 'var(--ok, #2e7d32)'
+                        : u.status === 'error'
+                          ? 'var(--err, #d32f2f)'
+                          : 'var(--muted)'
+                    };font-weight:700`}
+                  >
+                    {u.status === 'uploading' ? '…' : u.status === 'ready' ? '✓' : '!'}
+                  </span>
+                  <span style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                    {u.file.name}
+                  </span>
+                  <span style="color:var(--muted)">{formatSize(u.file.size)}</span>
+                  <button
+                    type="button"
+                    onClick={() => dismissUpload(u.localId)}
+                    aria-label={`Remove ${u.file.name}`}
+                    style="background:none;border:none;padding:0 0 0 4px;cursor:pointer;color:var(--muted);font-size:14px;line-height:1"
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <label class="btn" style="margin-top:8px;cursor:pointer;font-size:12px;width:fit-content">
+            + Attach files
+            <input
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                const files = (e.currentTarget as HTMLInputElement).files;
+                if (!files || !viewer) return;
+                for (const f of Array.from(files)) startUpload(f, viewer);
+                (e.currentTarget as HTMLInputElement).value = '';
+              }}
+            />
+          </label>
+        </div>
+
         {err.value && (
           <div role="alert" class="callout err">
             <div class="icon" aria-hidden="true">
@@ -224,7 +356,7 @@ export function ObjectiveCreate() {
 
         <div>
           <button type="submit" disabled={!canSubmit} class="btn btn-primary btn-lg">
-            {busy.value ? 'Creating…' : 'Create + assign →'}
+            {busy.value ? 'Creating…' : anyUploading ? 'Uploading…' : 'Create + assign →'}
           </button>
         </div>
       </form>

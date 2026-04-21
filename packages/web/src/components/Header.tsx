@@ -2,7 +2,7 @@
  * Header bar — identity + connection status.
  *
  * Layout (left → right):
- *   ☰  ▲ logo  │  NAME · authority · team-name   …   notif · ●ONLINE
+ *   ☰  ▲ logo  │  NAME · role · team-name   …   notif · ●ONLINE
  *
  * Surface is paper with a subtle bottom rule, matching the canonical
  * topbar treatment from theme.css. Connection state uses canonical
@@ -85,14 +85,15 @@ export function Header() {
           class="font-display truncate"
           style="font-weight:700;font-size:18px;letter-spacing:-0.01em;color:var(--ink);line-height:1"
         >
-          {s.slot}
+          {s.member}
         </span>
 
-        {/* Authority pill — `.badge` from theme.css with state variants */}
+        {/* Role title pill — `.badge` from theme.css with privilege tint */}
         <span
-          class={`badge ${s.authority === 'director' ? 'solid' : s.authority === 'manager' ? 'ember' : 'soft'} hidden sm:inline-flex flex-shrink-0`}
+          class={`badge ${s.permissions.includes('members.manage') ? 'solid' : s.permissions.includes('objectives.create') ? 'ember' : 'soft'} hidden sm:inline-flex flex-shrink-0`}
+          title={s.role.description.length > 0 ? s.role.description : undefined}
         >
-          {formatAuthority(s.authority)}
+          {s.role.title.toUpperCase()}
         </span>
 
         {b && (
@@ -125,9 +126,4 @@ export function Header() {
       </div>
     </header>
   );
-}
-
-function formatAuthority(authority: string): string {
-  if (authority === 'individual-contributor') return 'IC';
-  return authority;
 }

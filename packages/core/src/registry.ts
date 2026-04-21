@@ -1,105 +1,100 @@
 /**
- * Agent registry — tracks known agents and their live subscribers.
+ * Presence registry — tracks known members and their live subscribers.
  *
  * "Subscriber" here is a callback invoked when a message targets this
- * agent. The Node server creates one subscriber per live SSE connection;
- * anything else that wants to observe pushes can attach the same way.
+ * member. The Node server creates one subscriber per live SSE
+ * connection; anything else that wants to observe pushes can attach
+ * the same way.
  *
- * Identity model: `agentId === slot.name`. The broker enforces
- * this at the register/subscribe call sites (the registry itself is
- * identity-agnostic so core stays testable without wiring up auth).
- * A mismatched identity surfaces as `AgentIdentityError`.
+ * Identity model: a member's `name` is the key. The broker enforces
+ * that register/subscribe callers authenticate as the same name
+ * they're acting on (the registry itself is identity-agnostic so
+ * core stays testable without wiring up auth). A mismatch surfaces
+ * as `PresenceIdentityError`.
  */
 
-import type { Agent, Authority, Message } from '@agentc7/sdk/types';
+import type { Message, Presence, Role } from '@agentc7/sdk/types';
 
 export type Subscriber = (message: Message) => void | Promise<void>;
 
-export interface AgentState {
-  agent: Agent;
+export interface PresenceState {
+  presence: Presence;
   subscribers: Set<Subscriber>;
 }
 
 /**
  * Thrown by `Broker.register` / `Broker.subscribe` when the caller's
- * authenticated slot name doesn't match the agentId they're trying
- * to act on. Runtime adapters translate this into an HTTP 403.
+ * authenticated member name doesn't match the name they're trying to
+ * act on. Runtime adapters translate this into an HTTP 403.
  */
-export class AgentIdentityError extends Error {
-  readonly agentId: string;
-  readonly slotName: string;
-  constructor(agentId: string, slotName: string) {
+export class PresenceIdentityError extends Error {
+  readonly targetName: string;
+  readonly callerName: string;
+  constructor(targetName: string, callerName: string) {
     super(
-      `slot '${slotName}' cannot act on agent '${agentId}'; ` +
-        `agentId must equal the calling slot's name`,
+      `member '${callerName}' cannot act on '${targetName}'; ` +
+        "the target name must equal the caller's authenticated name",
     );
-    this.name = 'AgentIdentityError';
-    this.agentId = agentId;
-    this.slotName = slotName;
+    this.name = 'PresenceIdentityError';
+    this.targetName = targetName;
+    this.callerName = callerName;
   }
 }
 
-export class AgentRegistry {
-  private readonly agents = new Map<string, AgentState>();
+export class PresenceRegistry {
+  private readonly presences = new Map<string, PresenceState>();
 
   /**
-   * Look up or create an agent state entry. Updates `lastSeen` on each
-   * call so the list endpoint reflects recent activity. Role + authority
-   * are first-register-wins: once set, subsequent registrations ignore
-   * the values (registry is authoritative about slot identity, not
-   * about runtime role changes).
+   * Look up or create a presence entry for `name`. Updates `lastSeen`
+   * on each call so the list endpoint reflects recent activity. Role
+   * is first-register-wins: once set, subsequent registrations ignore
+   * the value (the registry is authoritative about online/offline,
+   * not about role changes).
    */
-  registerOrGet(
-    agentId: string,
-    now: number,
-    role: string | null = null,
-    authority: Authority = 'individual-contributor',
-  ): AgentState {
-    const existing = this.agents.get(agentId);
+  registerOrGet(name: string, now: number, role: Role | null = null): PresenceState {
+    const existing = this.presences.get(name);
     if (existing) {
-      existing.agent.lastSeen = now;
+      existing.presence.lastSeen = now;
       return existing;
     }
-    const state: AgentState = {
-      agent: {
-        agentId,
+    const state: PresenceState = {
+      presence: {
+        name,
         connected: 0,
         createdAt: now,
         lastSeen: now,
         role,
-        authority,
       },
       subscribers: new Set(),
     };
-    this.agents.set(agentId, state);
+    this.presences.set(name, state);
     return state;
   }
 
-  get(agentId: string): AgentState | undefined {
-    return this.agents.get(agentId);
+  get(name: string): PresenceState | undefined {
+    return this.presences.get(name);
   }
 
-  has(agentId: string): boolean {
-    return this.agents.has(agentId);
+  has(name: string): boolean {
+    return this.presences.has(name);
   }
 
-  list(): Agent[] {
-    const out: Agent[] = [];
-    for (const state of this.agents.values()) {
+  list(): Presence[] {
+    const out: Presence[] = [];
+    for (const state of this.presences.values()) {
       out.push({
-        agentId: state.agent.agentId,
+        name: state.presence.name,
         connected: state.subscribers.size,
-        createdAt: state.agent.createdAt,
-        lastSeen: state.agent.lastSeen,
-        role: state.agent.role,
-        authority: state.agent.authority,
+        createdAt: state.presence.createdAt,
+        lastSeen: state.presence.lastSeen,
+        role: state.presence.role,
       });
     }
     return out;
   }
 
-  /** Snapshot of all live agent states (for broadcast fanout). */
-  allStates(): AgentState[] {
-    return Array.from(this.agents.values());
+  /** Snapshot of all live presence states (for broadcast fanout). */
+  allStates(): PresenceState[] {
+    return Array.from(this.presences.values());
   }
 }

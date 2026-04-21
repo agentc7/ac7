@@ -7,21 +7,12 @@
  */
 
 import { z } from 'zod';
+import { PERMISSIONS } from './types.js';
 
 export const LogLevelSchema = z.enum(['debug', 'info', 'notice', 'warning', 'error', 'critical']);
 
-export const AuthoritySchema = z.enum(['director', 'manager', 'individual-contributor']);
-
 /**
- * A role label — freeform string, 1-64 chars. No fixed enum; individual-contributors
- * define their own role names in the team config. Suggested defaults
- * (shipped by the wizard): `individual-contributor`, `implementer`, `reviewer`, `watcher`.
- */
-export const RoleNameSchema = z.string().min(1).max(64);
-
-/**
- * Names obey the same shape rules as legacy agent IDs: alphanumeric
- * plus `.`, `_`, `-`, 1-128 chars.
+ * Member names — alphanumeric plus `.`, `_`, `-`, 1-128 chars.
  */
 export const NameSchema = z
   .string()
@@ -29,34 +20,82 @@ export const NameSchema = z
   .max(128)
   .regex(/^[a-zA-Z0-9._-]+$/, 'name must be alphanumeric with . _ - allowed');
 
-/** Alias — `agentId` in wire payloads is always a name. */
-export const AgentIdSchema = NameSchema;
+/** One of the seven gated permissions. Extend `PERMISSIONS` to grow. */
+export const PermissionSchema = z.enum(PERMISSIONS);
+
+/**
+ * Team-level named permission bundles. Keys are preset names
+ * (short freeform strings), values are arrays of resolved leaf
+ * permissions. Members reference preset names; the server resolves
+ * at load time.
+ */
+export const PermissionPresetsSchema = z.record(
+  z.string().min(1).max(64),
+  z.array(PermissionSchema),
+);
+
+/**
+ * A role is a short label + prose description, per-member. Unlike
+ * the previous role model, there's no instructions template here —
+ * instructions are personal to the member.
+ */
+export const RoleSchema = z.object({
+  title: z.string().min(1).max(64),
+  description: z.string().max(512).default(''),
+});
 
 export const TeamSchema = z.object({
   name: z.string().min(1).max(128),
   directive: z.string().min(1).max(512),
   brief: z.string().max(4096).default(''),
+  permissionPresets: PermissionPresetsSchema.default({}),
 });
 
-export const RoleSchema = z.object({
-  description: z.string().max(512).default(''),
+/**
+ * Public projection of a team member — what teammates see in the
+ * roster and briefing. Omits `instructions` (private to the member).
+ */
+export const TeammateSchema = z.object({
+  name: NameSchema,
+  role: RoleSchema,
+  permissions: z.array(PermissionSchema),
+});
+
+/**
+ * Full member record — includes the private `instructions` field.
+ * Returned from self-scope briefing and admin-scope member listings.
+ */
+export const MemberSchema = TeammateSchema.extend({
   instructions: z.string().max(8192).default(''),
 });
 
-export const SlotSchema = z.object({
-  name: NameSchema,
-  role: RoleNameSchema,
-  authority: AuthoritySchema.default('individual-contributor'),
-});
+/**
+ * Filesystem path: absolute, Unix-like, enforced shape matches the
+ * server's `normalizePath` rules (alphanumerics + . _ - and single
+ * spaces, no traversal). The server re-normalizes on ingest so this
+ * schema is a first-pass filter only.
+ */
+export const FsPathSchema = z
+  .string()
+  .min(1)
+  .max(1024)
+  .regex(
+    /^\/(?:[a-zA-Z0-9._\- ]+(?:\/[a-zA-Z0-9._\- ]+)*)?$/,
+    'path must be absolute Unix-style with [a-zA-Z0-9._- ] segments',
+  )
+  .refine((p) => !p.split('/').some((s) => s === '.' || s === '..'), {
+    message: 'path may not contain . or .. segments',
+  });
 
-export const TeammateSchema = z.object({
-  name: NameSchema,
-  role: RoleNameSchema,
-  authority: AuthoritySchema,
+export const AttachmentSchema = z.object({
+  path: FsPathSchema,
+  name: z.string().min(1).max(255),
+  size: z.number().int().nonnegative(),
+  mimeType: z.string().min(1).max(255),
 });
 
 export const PushPayloadSchema = z.object({
-  agentId: AgentIdSchema.nullable().optional(),
+  to: NameSchema.nullable().optional(),
   title: z.string().max(200).nullable().optional(),
   body: z
     .string()
@@ -64,26 +103,27 @@ export const PushPayloadSchema = z.object({
     .max(64 * 1024),
   level: LogLevelSchema.default('info'),
   data: z.record(z.string(), z.unknown()).optional(),
+  attachments: z.array(AttachmentSchema).max(64).optional(),
 });
 
 export const MessageSchema = z.object({
   id: z.string(),
   ts: z.number(),
-  agentId: AgentIdSchema.nullable(),
+  to: NameSchema.nullable(),
   from: z.string().nullable(),
   title: z.string().nullable(),
   body: z.string(),
   level: LogLevelSchema,
   data: z.record(z.string(), z.unknown()),
+  attachments: z.array(AttachmentSchema).default([]),
 });
 
-export const AgentSchema = z.object({
-  agentId: AgentIdSchema,
+export const PresenceSchema = z.object({
+  name: NameSchema,
   connected: z.number().int().nonnegative(),
   createdAt: z.number(),
   lastSeen: z.number(),
-  role: RoleNameSchema.nullable(),
-  authority: AuthoritySchema,
+  role: RoleSchema.nullable(),
 });
 
 export const DeliveryReportSchema = z.object({
@@ -119,6 +159,7 @@ export const ObjectiveSchema = z.object({
   completedAt: z.number().int().nonnegative().nullable(),
   result: z.string().nullable(),
   blockReason: z.string().nullable(),
+  attachments: z.array(AttachmentSchema).default([]),
 });
 
 export const ObjectiveEventKindSchema = z.enum([
@@ -146,6 +187,7 @@ export const CreateObjectiveRequestSchema = z.object({
   body: z.string().max(4096).optional(),
   assignee: NameSchema,
   watchers: z.array(NameSchema).max(64).optional(),
+  attachments: z.array(AttachmentSchema).max(64).optional(),
 });
 
 export const UpdateWatchersRequestSchema = z
@@ -174,6 +216,7 @@ export const DiscussObjectiveRequestSchema = z.object({
     .min(1)
     .max(16 * 1024),
   title: z.string().max(200).optional(),
+  attachments: z.array(AttachmentSchema).max(64).optional(),
 });
 
 export const CompleteObjectiveRequestSchema = z.object({
@@ -206,7 +249,7 @@ export const ListObjectivesQuerySchema = z.object({
 // ───────────────────────── Trace entries ─────────────────────
 //
 // Trace entries are produced by the runner's MITM proxy as
-// captured HTTP/1.1 exchanges. They flow through the agent
+// captured HTTP/1.1 exchanges. They flow through the member
 // activity stream (below) rather than a per-objective table.
 // Schemas stay permissive because Anthropic's API shape evolves
 // and opaque HTTP records can carry anything. The server stores
@@ -328,16 +371,16 @@ const OpaqueHttpEntrySchema = z.object({
   responseBodyPreview: z.string().nullable(),
 });
 
-// ───────────────────────── Agent activity stream ──────────────
+// ───────────────────────── Activity stream ──────────────────────
 
-export const AgentActivityKindSchema = z.enum([
+export const ActivityKindSchema = z.enum([
   'objective_open',
   'objective_close',
   'llm_exchange',
   'opaque_http',
 ]);
 
-export const AgentActivityEventSchema = z.discriminatedUnion('kind', [
+export const ActivityEventSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('objective_open'),
     ts: z.number().int().nonnegative(),
@@ -363,47 +406,88 @@ export const AgentActivityEventSchema = z.discriminatedUnion('kind', [
   }),
 ]);
 
-export const AgentActivityRowSchema = z.object({
+export const ActivityRowSchema = z.object({
   id: z.number().int().nonnegative(),
-  slotName: NameSchema,
-  event: AgentActivityEventSchema,
+  memberName: NameSchema,
+  event: ActivityEventSchema,
   createdAt: z.number().int().nonnegative(),
 });
 
-export const UploadAgentActivityRequestSchema = z.object({
-  events: z.array(AgentActivityEventSchema).min(1).max(500),
+export const UploadActivityRequestSchema = z.object({
+  events: z.array(ActivityEventSchema).min(1).max(500),
 });
 
-export const UploadAgentActivityResponseSchema = z.object({
+export const UploadActivityResponseSchema = z.object({
   accepted: z.number().int().nonnegative(),
 });
 
-export const ListAgentActivityResponseSchema = z.object({
-  activity: z.array(AgentActivityRowSchema),
+export const ListActivityResponseSchema = z.object({
+  activity: z.array(ActivityRowSchema),
 });
 
-export const ListAgentActivityQuerySchema = z.object({
+export const ListActivityQuerySchema = z.object({
   from: z.number().int().nonnegative().optional(),
   to: z.number().int().nonnegative().optional(),
-  kind: z.union([AgentActivityKindSchema, z.array(AgentActivityKindSchema)]).optional(),
+  kind: z.union([ActivityKindSchema, z.array(ActivityKindSchema)]).optional(),
   limit: z.number().int().positive().max(1000).optional(),
+});
+
+// ───────────────────────── Members ────────────────────────────
+
+/**
+ * Permission list as sent over the wire — each entry is either a
+ * preset name (resolved by the server) or a leaf permission. The
+ * server validates every entry resolves.
+ */
+const PermissionRefListSchema = z.array(z.string().min(1).max(64)).max(32);
+
+export const CreateMemberRequestSchema = z.object({
+  name: NameSchema,
+  role: RoleSchema,
+  instructions: z.string().max(8192).default(''),
+  permissions: PermissionRefListSchema,
+});
+
+export const UpdateMemberRequestSchema = z
+  .object({
+    role: RoleSchema.optional(),
+    instructions: z.string().max(8192).optional(),
+    permissions: PermissionRefListSchema.optional(),
+  })
+  .refine(
+    (v) => v.role !== undefined || v.instructions !== undefined || v.permissions !== undefined,
+    { message: 'update must include at least one of: role, instructions, permissions' },
+  );
+
+export const CreateMemberResponseSchema = z.object({
+  member: TeammateSchema,
+  token: z.string(),
+});
+
+export const ListMembersResponseSchema = z.object({
+  members: z.array(MemberSchema),
+});
+
+export const RotateTokenResponseSchema = z.object({
+  token: z.string(),
+});
+
+export const EnrollTotpResponseSchema = z.object({
+  totpSecret: z.string(),
+  totpUri: z.string(),
 });
 
 // ───────────────────────── Briefing + session ─────────────────
 
-export const BriefingResponseSchema = z.object({
-  name: NameSchema,
-  role: RoleNameSchema,
-  authority: AuthoritySchema,
+export const BriefingResponseSchema = MemberSchema.extend({
   team: TeamSchema,
   teammates: z.array(TeammateSchema),
   openObjectives: z.array(ObjectiveSchema),
-  instructions: z.string(),
 });
 
 export const RosterResponseSchema = z.object({
   teammates: z.array(TeammateSchema),
-  connected: z.array(AgentSchema),
+  connected: z.array(PresenceSchema),
 });
 
 export const HistoryResponseSchema = z.object({
@@ -412,13 +496,13 @@ export const HistoryResponseSchema = z.object({
 
 export const TotpLoginRequestSchema = z.object({
   code: z.string().regex(/^\d{6}$/, 'code must be exactly 6 digits'),
-  slot: NameSchema.optional(),
+  member: NameSchema.optional(),
 });
 
 export const SessionResponseSchema = z.object({
-  slot: NameSchema,
-  role: RoleNameSchema,
-  authority: AuthoritySchema,
+  member: NameSchema,
+  role: RoleSchema,
+  permissions: z.array(PermissionSchema),
   expiresAt: z.number().int().positive(),
 });
 
@@ -439,3 +523,48 @@ export const PushSubscriptionResponseSchema = z.object({
   endpoint: z.string(),
   createdAt: z.number().int().nonnegative(),
 });
+
+// ───────────────────────── Filesystem ─────────────────────────
+
+export const FsEntryKindSchema = z.enum(['file', 'directory']);
+
+export const FsEntrySchema = z.object({
+  path: FsPathSchema,
+  name: z.string().min(1).max(255),
+  kind: FsEntryKindSchema,
+  owner: NameSchema,
+  size: z.number().int().nonnegative().nullable(),
+  mimeType: z.string().max(255).nullable(),
+  hash: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/, 'hash must be sha256 hex')
+    .nullable(),
+  createdAt: z.number().int().nonnegative(),
+  createdBy: NameSchema,
+  updatedAt: z.number().int().nonnegative(),
+});
+
+export const FsListResponseSchema = z.object({
+  entries: z.array(FsEntrySchema),
+});
+
+export const FsEntryResponseSchema = z.object({
+  entry: FsEntrySchema,
+});
+
+export const FsWriteResponseSchema = z.object({
+  entry: FsEntrySchema,
+  renamed: z.boolean(),
+});
+
+export const FsMkdirRequestSchema = z.object({
+  path: FsPathSchema,
+  recursive: z.boolean().optional(),
+});
+
+export const FsMoveRequestSchema = z.object({
+  from: FsPathSchema,
+  to: FsPathSchema,
+});
+
+export const FsWriteCollisionSchema = z.enum(['error', 'overwrite', 'suffix']);
