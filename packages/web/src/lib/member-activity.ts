@@ -1,26 +1,27 @@
 /**
- * Presence activity stream — hydration + live SSE tailing for a single
- * slot's `/members/:name/activity` timeline.
+ * Member activity stream — hydration + live WebSocket tailing for a
+ * single member's `/members/:name/activity` timeline.
  *
  * There's exactly one active subscription at a time — a new call
- * to `startMemberActivitySubscribe(name)` tears down the
- * previous EventSource before opening a new one. This matches how
- * the AgentPage component mounts/unmounts across navigation.
+ * to `startMemberActivitySubscribe(name)` tears down the previous
+ * WebSocket before opening a new one. Matches how the MemberProfile
+ * page mounts/unmounts across navigation.
  *
  * On open:
- *   1. Hydrate via `listActivity(name)` — the server
- *      returns up to 200 most-recent rows newest-first. We flip
- *      them into oldest-first order so the UI can prepend newer
- *      events naturally at the top.
- *   2. Open the EventSource at `/members/:name/activity/stream`.
- *   3. Every incoming `message` event is a JSON-encoded
- *      `ActivityRow`. Append to the head of the list
- *      (newest-first), de-duping by `id` so a backfill
- *      immediately after a reconnect doesn't double-render.
+ *   1. Hydrate via `listActivity(name)` — the server returns up to
+ *      200 most-recent rows newest-first. We keep that ordering
+ *      in the signal (render reads left-to-right as newest-first).
+ *   2. Open the WebSocket at `/members/:name/activity/stream`.
+ *   3. Every incoming message event is a JSON-encoded `ActivityRow`.
+ *      Merge into the list, de-duping by `id` so overlap with the
+ *      hydration backfill after a reconnect doesn't double-render.
  *
- * We cap the in-memory list at `MAX_ROWS` to avoid unbounded
- * growth on long-running pages — oldest rows drop when the cap is
- * exceeded. `loadOlder()` fetches older rows on demand for
+ * Reconnect: WebSocket doesn't auto-reconnect. We roll our own with
+ * exponential backoff (1s → 30s cap, reset on successful open).
+ *
+ * We cap the in-memory list at `MAX_ROWS` to avoid unbounded growth
+ * on long-running pages — oldest rows drop when the cap is exceeded.
+ * `loadOlderMemberActivity()` fetches older rows on demand for
  * pagination.
  */
 
@@ -38,7 +39,7 @@ const MAX_ROWS = 500;
  */
 export const memberActivityRows = signal<ActivityRow[]>([]);
 
-/** True while the SSE connection is live. False before open / after drop. */
+/** True while the WebSocket connection is live. False before open / after drop. */
 export const memberActivityConnected = signal(false);
 
 /** True during initial hydration + any time `loadOlder()` is in flight. */
@@ -65,21 +66,26 @@ export interface StartAgentActivityOptions {
   onError?: (err: unknown) => void;
 }
 
+const INITIAL_RETRY_MS = 1_000;
+const MAX_RETRY_MS = 30_000;
+
 /**
  * Start (or switch) the member-activity subscription to the given
- * name. Returns a teardown function that closes the SSE stream
- * and clears the signals. Idempotent.
+ * name. Returns a teardown function that closes the WebSocket and
+ * clears the signals. Idempotent.
  */
 export function startMemberActivitySubscribe(options: StartAgentActivityOptions): () => void {
   const { name, hydrationLimit = 200, onError } = options;
-  const url = `/members/${encodeURIComponent(name)}/activity/stream`;
+  const url = buildWsUrl(`/members/${encodeURIComponent(name)}/activity/stream`);
 
-  let source: EventSource | null = null;
+  let ws: WebSocket | null = null;
   let cancelled = false;
+  let retryMs = INITIAL_RETRY_MS;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Reset state for the new subscription — previous pages leave
   // their rows in the signal which would otherwise briefly flash
-  // the old agent's data.
+  // the old member's data.
   memberActivityRows.value = [];
   memberActivityConnected.value = false;
   memberActivityLoading.value = true;
@@ -108,33 +114,54 @@ export function startMemberActivitySubscribe(options: StartAgentActivityOptions)
     }
   };
 
+  const scheduleReconnect = (): void => {
+    if (cancelled) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      open();
+    }, retryMs);
+    retryMs = Math.min(retryMs * 2, MAX_RETRY_MS);
+  };
+
   const open = (): void => {
     if (cancelled) return;
-    source = new EventSource(url, { withCredentials: true });
+    try {
+      ws = new WebSocket(url);
+    } catch (err) {
+      onError?.(err);
+      scheduleReconnect();
+      return;
+    }
 
-    source.addEventListener('open', () => {
+    ws.addEventListener('open', () => {
       memberActivityConnected.value = true;
+      retryMs = INITIAL_RETRY_MS;
       // Re-hydrate on every successful connect: on initial open
       // this seeds the list, on reconnect it fills any gap the
-      // stream dropped. `mergeRows` de-dupes by id so the overlap
+      // stream dropped. `mergeRow` de-dupes by id so the overlap
       // is harmless.
       void hydrate();
     });
 
-    source.addEventListener('message', (event) => {
-      if (!event.data) return;
+    ws.addEventListener('message', (event: MessageEvent) => {
+      const raw = typeof event.data === 'string' ? event.data : '';
+      if (!raw) return;
       try {
-        const row = ActivityRowSchema.parse(JSON.parse(event.data));
+        const row = ActivityRowSchema.parse(JSON.parse(raw));
         mergeRow(row);
       } catch (err) {
         onError?.(err);
       }
     });
 
-    source.addEventListener('error', () => {
+    ws.addEventListener('error', () => {
       memberActivityConnected.value = false;
-      // EventSource auto-reconnects; we don't close and reopen
-      // manually or we'd race with its internal retry.
+    });
+
+    ws.addEventListener('close', () => {
+      memberActivityConnected.value = false;
+      ws = null;
+      scheduleReconnect();
     });
   };
 
@@ -148,11 +175,25 @@ export function startMemberActivitySubscribe(options: StartAgentActivityOptions)
     memberActivityRows.value = [];
     memberActivityError.value = null;
     memberActivityExhausted.value = false;
-    if (source !== null) {
-      source.close();
-      source = null;
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (ws !== null) {
+      try {
+        ws.close();
+      } catch {
+        /* already closed */
+      }
+      ws = null;
     }
   };
+}
+
+function buildWsUrl(path: string): string {
+  const loc = window.location;
+  const proto = loc.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${proto}//${loc.host}${path}`;
 }
 
 /**

@@ -679,7 +679,7 @@ async function handleBroadcast(
   const attachmentSummary =
     attachments.list.length > 0 ? ` attachments=${attachments.list.length}` : '';
   return textResult(
-    `broadcast delivered: sse=${result.delivery.sse} ` +
+    `broadcast delivered: live=${result.delivery.live} ` +
       `targets=${result.delivery.targets} msg=${result.message.id}${attachmentSummary}`,
   );
 }
@@ -706,7 +706,7 @@ async function handleSend(
   const attachmentSummary =
     attachments.list.length > 0 ? ` attachments=${attachments.list.length}` : '';
   return textResult(
-    `delivered to ${to}: sse=${result.delivery.sse} ` +
+    `delivered to ${to}: live=${result.delivery.live} ` +
       `targets=${result.delivery.targets} msg=${result.message.id}${attachmentSummary}`,
   );
 }

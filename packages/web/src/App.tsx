@@ -16,7 +16,7 @@ import { useEffect } from 'preact/hooks';
 import { bootstrap, session } from './lib/session.js';
 import { Boot } from './routes/Boot.js';
 import { Login } from './routes/Login.js';
-import { Shell } from './routes/Shell.js';
+import { ShellWithOverlays } from './routes/Shell.js';
 
 export function App() {
   // Bootstrap once on mount. Empty dep array is intentional — we
@@ -28,5 +28,5 @@ export function App() {
   const state = session.value;
   if (state.status === 'loading') return <Boot />;
   if (state.status === 'anonymous') return <Login />;
-  return <Shell />;
+  return <ShellWithOverlays />;
 }

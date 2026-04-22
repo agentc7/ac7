@@ -1,36 +1,68 @@
 /**
- * View signal — which thread or panel is active in the shell.
+ * View signal — which thread or panel is active.
  *
- * Signal-based rather than URL routing: single-page chat app with
- * no deep-link requirement. A router can layer on later if needed.
+ * `view` is now derived from the router's `currentRoute`. The URL is
+ * the source of truth; this computed is a translation layer that lets
+ * existing components keep reading a `View` discriminated-union
+ * without caring about URL parsing.
  *
- * `overview` is the team-overview panel: team name, directive, brief,
- * and the full roster with click-to-DM. The component is still
- * called `RosterPanel` since its dominant content is the teammate
- * list.
+ * All the legacy `select*` helpers are preserved as thin wrappers
+ * around `navigate(route)` so callers never touch the router module
+ * directly. Each also closes the mobile sidebar drawer — tapping a
+ * nav item and staring at the sidebar on top of the new view would
+ * feel broken.
  */
 
-import { signal } from '@preact/signals';
-import { dmThreadKey, PRIMARY_THREAD } from './messages.js';
+import { computed, signal } from '@preact/signals';
+import { DM_PREFIX, dmThreadKey, isDmThread, PRIMARY_THREAD } from './messages.js';
+import { currentRoute, navigate } from './router.js';
+import type { ProfileTab, Route } from './routes.js';
 
 export type View =
   | { kind: 'thread'; key: string }
   | { kind: 'overview' }
+  | { kind: 'inbox' }
+  | { kind: 'account' }
   | { kind: 'objectives-list' }
   | { kind: 'objective-detail'; id: string }
   | { kind: 'objective-create' }
-  | { kind: 'agent-detail'; name: string }
+  | { kind: 'member-profile'; name: string; tab: ProfileTab }
   | { kind: 'files'; path: string }
   | { kind: 'members' };
 
-export const view = signal<View>({ kind: 'thread', key: PRIMARY_THREAD });
+export const view = computed<View>(() => viewFromRoute(currentRoute.value));
+
+function viewFromRoute(route: Route): View {
+  switch (route.kind) {
+    case 'home':
+      return { kind: 'overview' };
+    case 'inbox':
+      return { kind: 'inbox' };
+    case 'account':
+      return { kind: 'account' };
+    case 'thread-primary':
+      return { kind: 'thread', key: PRIMARY_THREAD };
+    case 'thread-dm':
+      return { kind: 'thread', key: dmThreadKey(route.name) };
+    case 'objectives-list':
+      return { kind: 'objectives-list' };
+    case 'objective-create':
+      return { kind: 'objective-create' };
+    case 'objective-detail':
+      return { kind: 'objective-detail', id: route.id };
+    case 'members':
+      return { kind: 'members' };
+    case 'member-profile':
+      return { kind: 'member-profile', name: route.name, tab: route.tab };
+    case 'files':
+      return { kind: 'files', path: route.path };
+  }
+}
 
 /**
- * Sidebar drawer open state — only meaningful at narrow widths where
- * the sidebar is an overlay rather than a static column. At md+ the
- * Sidebar ignores this signal entirely. Kept alongside `view`
- * because every view change should also close the drawer — it'd be
- * weird to tap a thread and stay staring at the sidebar on top of it.
+ * Mobile sidebar drawer — not routing state. The desktop sidebar is
+ * always visible; on narrow viewports it becomes an overlay that
+ * opens/closes independently of the active view.
  */
 export const isSidebarOpen = signal(false);
 
@@ -43,74 +75,76 @@ export function closeSidebar(): void {
 }
 
 export function selectThread(key: string): void {
-  view.value = { kind: 'thread', key };
+  if (key === PRIMARY_THREAD) {
+    navigate({ kind: 'thread-primary' });
+  } else if (isDmThread(key)) {
+    navigate({ kind: 'thread-dm', name: key.slice(DM_PREFIX.length) });
+  }
+  // `obj:<id>` threads don't have a top-level URL — they surface
+  // inside the objective detail view. Ignore the call; callers
+  // asking for such a thread should route to the objective instead.
   isSidebarOpen.value = false;
 }
 
-/**
- * Open (or switch to) a DM thread with the given counterpart
- * name. Used by RosterPanel clicks — the one concrete "start a
- * new conversation" entry point in the SPA. If no messages have
- * been exchanged yet, Sidebar still shows the thread via its
- * view-union logic, and Transcript renders a fresh-DM empty
- * state until the first message lands.
- */
 export function selectDmWith(name: string): void {
-  view.value = { kind: 'thread', key: dmThreadKey(name) };
+  navigate({ kind: 'thread-dm', name });
   isSidebarOpen.value = false;
 }
 
 export function selectOverview(): void {
-  view.value = { kind: 'overview' };
+  navigate({ kind: 'home' });
+  isSidebarOpen.value = false;
+}
+
+export function selectInbox(): void {
+  navigate({ kind: 'inbox' });
+  isSidebarOpen.value = false;
+}
+
+export function selectAccount(): void {
+  navigate({ kind: 'account' });
   isSidebarOpen.value = false;
 }
 
 export function selectObjectivesList(): void {
-  view.value = { kind: 'objectives-list' };
+  navigate({ kind: 'objectives-list' });
   isSidebarOpen.value = false;
 }
 
 export function selectObjectiveDetail(id: string): void {
-  view.value = { kind: 'objective-detail', id };
+  navigate({ kind: 'objective-detail', id });
   isSidebarOpen.value = false;
 }
 
 export function selectObjectiveCreate(): void {
-  view.value = { kind: 'objective-create' };
+  navigate({ kind: 'objective-create' });
   isSidebarOpen.value = false;
 }
 
-/**
- * Open the agent detail page for a given name — metadata +
- * live activity timeline. Admin-gated server-side, but the UI
- * also only surfaces entry points (roster rows, objective
- * assignee fields, DM headers) when the viewer is an admin.
- * Non-admins who navigate here anyway see a permission-denied
- * inline error from the page itself.
- */
 export function selectAgentDetail(name: string): void {
-  view.value = { kind: 'agent-detail', name };
+  selectMemberProfile(name);
+}
+
+export function selectMemberProfile(name: string, tab: ProfileTab = 'overview'): void {
+  navigate({ kind: 'member-profile', name, tab });
   isSidebarOpen.value = false;
 }
 
-/**
- * Open the Files browser at an explicit path. Use `/<viewer>/` to
- * land on the caller's own home; admins can pass any user's home.
- * The panel keeps its own breadcrumb state; this action is the
- * single entry point from outside.
- */
 export function selectFiles(path: string): void {
-  view.value = { kind: 'files', path };
+  navigate({ kind: 'files', path });
   isSidebarOpen.value = false;
 }
 
-/** Open the Members admin page. Admin-only; sidebar hides it for others. */
 export function selectMembers(): void {
-  view.value = { kind: 'members' };
+  navigate({ kind: 'members' });
   isSidebarOpen.value = false;
 }
 
 export function __resetViewForTests(): void {
-  view.value = { kind: 'thread', key: PRIMARY_THREAD };
+  // Clearing the router to `/` maps to view { kind: 'overview' } via
+  // the computed above. The shell tests were originally written
+  // against a default of primary-thread; we preserve that by
+  // navigating explicitly.
+  navigate({ kind: 'thread-primary' }, { replace: true });
   isSidebarOpen.value = false;
 }

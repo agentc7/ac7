@@ -3,26 +3,26 @@ import { describe, expect, it } from 'vitest';
 import { composeBriefing } from '../src/briefing.js';
 
 const TEAM: Team = {
-  name: 'alpha-team',
+  name: 'demo-team',
   directive: 'Ship the payment service.',
   brief: 'We own the full lifecycle of the payment service.',
   permissionPresets: {},
 };
 
-const ACTUAL: Member = {
-  name: 'ACTUAL',
-  role: { title: 'commander', description: 'Leads the team, makes go/no-go calls.' },
+const DIRECTOR: Member = {
+  name: 'director-1',
+  role: { title: 'director', description: 'Leads the team, makes go/no-go calls.' },
   permissions: ['members.manage'],
   instructions: 'Lead the team and issue directives in the team channel.',
 };
 const ALPHA_1: Member = {
-  name: 'ALPHA-1',
+  name: 'engineer-1',
   role: { title: 'engineer', description: 'Writes and ships code.' },
   permissions: [],
   instructions: 'Take direction from command, ship code, report progress.',
 };
-const SIERRA: Member = {
-  name: 'SIERRA',
+const ENGINEER_2: Member = {
+  name: 'engineer-2',
   role: { title: 'engineer', description: 'Writes and ships code.' },
   permissions: [],
   instructions: '',
@@ -30,17 +30,17 @@ const SIERRA: Member = {
 
 const TEAMMATES: Teammate[] = [
   {
-    name: 'ACTUAL',
-    role: { title: 'commander', description: 'Leads the team, makes go/no-go calls.' },
+    name: 'director-1',
+    role: { title: 'director', description: 'Leads the team, makes go/no-go calls.' },
     permissions: ['members.manage'],
   },
   {
-    name: 'ALPHA-1',
+    name: 'engineer-1',
     role: { title: 'engineer', description: 'Writes and ships code.' },
     permissions: [],
   },
   {
-    name: 'SIERRA',
+    name: 'engineer-2',
     role: { title: 'engineer', description: 'Writes and ships code.' },
     permissions: [],
   },
@@ -49,13 +49,13 @@ const TEAMMATES: Teammate[] = [
 describe('composeBriefing', () => {
   it('includes name, role, permissions, team, and teammates', () => {
     const briefing = composeBriefing({
-      self: ACTUAL,
+      self: DIRECTOR,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
     });
-    expect(briefing.name).toBe('ACTUAL');
-    expect(briefing.role.title).toBe('commander');
+    expect(briefing.name).toBe('director-1');
+    expect(briefing.role.title).toBe('director');
     expect(briefing.permissions).toContain('members.manage');
     expect(briefing.team).toEqual(TEAM);
     expect(briefing.teammates).toEqual(TEAMMATES);
@@ -69,7 +69,7 @@ describe('composeBriefing', () => {
       teammates: TEAMMATES,
       openObjectives: [],
     });
-    expect(briefing.instructions).toContain('you go by ALPHA-1');
+    expect(briefing.instructions).toContain('you go by engineer-1');
     expect(briefing.instructions).toContain('Your role here: engineer');
     expect(briefing.instructions).toContain(TEAM.name);
     expect(briefing.instructions).toContain(TEAM.directive);
@@ -84,20 +84,20 @@ describe('composeBriefing', () => {
       teammates: TEAMMATES,
       openObjectives: [],
     });
-    expect(briefing.teammates.some((t) => t.name === 'ALPHA-1')).toBe(true);
+    expect(briefing.teammates.some((t) => t.name === 'engineer-1')).toBe(true);
     const linesAfterHeader = briefing.instructions
       .split('\n')
       .slice(briefing.instructions.split('\n').indexOf('Teammates on the net:'))
       .join('\n');
-    expect(linesAfterHeader).toContain('ACTUAL');
-    expect(linesAfterHeader).toContain('SIERRA');
-    expect(linesAfterHeader).not.toMatch(/^\s{2}ALPHA-1\s/m);
+    expect(linesAfterHeader).toContain('director-1');
+    expect(linesAfterHeader).toContain('engineer-2');
+    expect(linesAfterHeader).not.toMatch(/^\s{2}engineer-1\s/m);
   });
 
   it('omits the brief line when team.brief is empty', () => {
     const teamNoBrief: Team = { ...TEAM, brief: '' };
     const briefing = composeBriefing({
-      self: ACTUAL,
+      self: DIRECTOR,
       team: teamNoBrief,
       teammates: TEAMMATES,
       openObjectives: [],
@@ -108,7 +108,7 @@ describe('composeBriefing', () => {
 
   it('omits the personal-instructions block when the member has none', () => {
     const briefing = composeBriefing({
-      self: SIERRA,
+      self: ENGINEER_2,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
@@ -118,7 +118,7 @@ describe('composeBriefing', () => {
 
   it('notes that the link suppresses self-echoes on the live stream', () => {
     const briefing = composeBriefing({
-      self: SIERRA,
+      self: ENGINEER_2,
       team: TEAM,
       teammates: TEAMMATES,
       openObjectives: [],
@@ -143,8 +143,8 @@ describe('composeBriefing', () => {
           body: '',
           outcome: 'Users hitting /login while authenticated land on /dashboard.',
           status: 'active',
-          assignee: 'ALPHA-1',
-          originator: 'ACTUAL',
+          assignee: 'engineer-1',
+          originator: 'director-1',
           watchers: [],
           createdAt: 1,
           updatedAt: 1,

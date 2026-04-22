@@ -63,7 +63,7 @@ describe('<Login />', () => {
   it('renders a single 6-digit code input (no name field)', () => {
     render(<Login />);
     expect(screen.getByPlaceholderText('000000')).toBeTruthy();
-    expect(screen.queryByPlaceholderText('ACTUAL')).toBeNull();
+    expect(screen.queryByPlaceholderText('director-1')).toBeNull();
     expect(screen.getByRole('button', { name: /sign in/i })).toBeTruthy();
   });
 
@@ -111,8 +111,8 @@ describe('<Login />', () => {
       '/session/totp': () => ({
         status: 200,
         body: {
-          member: 'ACTUAL',
-          role: { title: 'commander', description: '' },
+          member: 'director-1',
+          role: { title: 'director', description: '' },
           permissions: ['members.manage'],
           expiresAt: 9_999_999_999_999,
         },
@@ -128,8 +128,8 @@ describe('<Login />', () => {
       expect(session.value.status).toBe('authenticated');
     });
     if (session.value.status === 'authenticated') {
-      expect(session.value.member).toBe('ACTUAL');
-      expect(session.value.role.title).toBe('commander');
+      expect(session.value.member).toBe('director-1');
+      expect(session.value.role.title).toBe('director');
       expect(session.value.permissions).toContain('members.manage');
     }
   });
@@ -164,8 +164,8 @@ describe('<App /> auth gate', () => {
       '/session': () => ({
         status: 200,
         body: {
-          member: 'ACTUAL',
-          role: { title: 'commander', description: '' },
+          member: 'director-1',
+          role: { title: 'director', description: '' },
           permissions: ['members.manage'],
           expiresAt: 9_999_999_999_999,
         },
@@ -175,10 +175,9 @@ describe('<App /> auth gate', () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText('ACTUAL')).toBeTruthy();
-      // Header surfaces the userType pill, not the role — admin was
-      // stamped on the session above, so the ADMIN pill renders.
-      expect(screen.getByText(/COMMANDER/)).toBeTruthy();
+      // Viewer identity renders in the NavColumn user chip.
+      expect(screen.getByText('director-1')).toBeTruthy();
+      // Sign-out lives on the user chip in the NavColumn footer.
       expect(screen.getByRole('button', { name: /sign out/i })).toBeTruthy();
     });
   });

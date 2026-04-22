@@ -9,7 +9,7 @@
  *   GET  /briefing        — dual-auth, team-context packet for the user
  *   GET  /roster          — dual-auth, full teammate list + live connection state
  *   POST /push            — dual-auth, deliver a message to one teammate or broadcast
- *   GET  /subscribe       — dual-auth, long-lived SSE stream of messages for a name
+ *   GET  /subscribe       — dual-auth, WebSocket of live messages for a name
  *   GET  /history         — dual-auth, prior messages filtered by viewer scope
  *
  * Dual-auth = either `Authorization: Bearer <token>` (machine plane,
@@ -60,9 +60,9 @@ import type {
 } from '@agentc7/sdk/types';
 import { hasPermission } from '@agentc7/sdk/types';
 import { serveStatic } from '@hono/node-server/serve-static';
+import { createNodeWebSocket } from '@hono/node-ws';
 import { type Context, Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
-import { streamSSE } from 'hono/streaming';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
 import { type FilesystemStore, FsError, type ViewerContext } from './files/index.js';
@@ -113,8 +113,8 @@ export interface AppOptions {
    */
   secureCookies?: boolean;
   /**
-   * Triggered when the server is shutting down. Open SSE streams
-   * listen for this so they can tear down cleanly and let
+   * Triggered when the server is shutting down. Open WebSocket
+   * connections listen for this so they can close cleanly and let
    * `http.Server.close()` complete.
    */
   shutdownSignal?: AbortSignal;
@@ -241,7 +241,18 @@ function isApiPath(pathname: string): boolean {
   return false;
 }
 
-export function createApp(options: AppOptions): Hono<AppBindings> {
+export interface CreatedApp {
+  /** The Hono application. Use `app.request(...)` in tests, or `app.fetch` as the server handler. */
+  app: Hono<AppBindings>;
+  /**
+   * Wire WebSocket upgrade handling into the underlying Node HTTP
+   * server so `/subscribe` and `/members/:name/activity/stream` can
+   * upgrade. Call after `serve(...)` returns the server instance.
+   */
+  injectWebSocket: ReturnType<typeof createNodeWebSocket>['injectWebSocket'];
+}
+
+export function createApp(options: AppOptions): CreatedApp {
   const {
     broker,
     members,
@@ -265,6 +276,11 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
   );
   const now = options.now ?? Date.now;
   const app = new Hono<AppBindings>();
+  // WebSocket upgrade helper, bound to this app. Used by `/subscribe`
+  // and `/members/:name/activity/stream`. The returned
+  // `injectWebSocket` gets called by the server after `serve()` so
+  // Node's HTTP server routes upgrade events to Hono.
+  const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
   const auth = createAuthMiddleware({ members, sessions, logger });
 
@@ -531,7 +547,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       from: member.name,
       targetAgent: parsed.data.to ?? '*broadcast*',
       attachments: canonicalAttachments.length,
-      sse: result.delivery.sse,
+      live: result.delivery.live,
       targets: result.delivery.targets,
     });
     // Fire-and-forget the push notification fanout. We don't await —
@@ -1143,107 +1159,112 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     });
   }
 
-  app.get(PATHS.subscribe, auth, (c) => {
-    const targetName = c.req.query('name');
-    if (!targetName) {
-      return c.json({ error: 'name query parameter is required' }, 400);
-    }
-    const member = c.get('member');
-
-    // Identity check has to happen BEFORE we hand the stream to
-    // streamSSE; otherwise the client sees 200 + an empty SSE stream
-    // when we should be returning 403. `name` MUST equal the
-    // caller's authenticated user name.
-    if (targetName !== member.name) {
-      logger.warn('subscribe rejected: identity mismatch', {
-        targetName,
-        name: member.name,
-      });
-      return c.json(
-        {
-          error:
-            `user '${member.name}' cannot subscribe to '${targetName}'; ` +
-            "the name query parameter must equal the caller's authenticated name",
-        },
-        403,
-      );
-    }
-
-    return streamSSE(c, async (stream) => {
-      // Identity was already verified above, so `broker.subscribe`
-      // cannot throw AgentIdentityError here. If the pre-stream check
-      // is ever relaxed, that's a bug — we'd serve 200 + empty-body.
-      // Keep the check above watertight and don't add a redundant
-      // post-stream catch that would hide the regression.
-      const unsubscribe = broker.subscribe(
-        targetName,
-        async (message) => {
-          try {
-            await stream.writeSSE({
-              id: message.id,
-              data: JSON.stringify(message),
-            });
-          } catch (err) {
-            logger.warn('sse write failed', {
-              targetName,
-              messageId: message.id,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        },
-        { role: member.role, name: member.name },
-      );
-
-      // Shutdown signal aborts all live streams so `http.Server.close()`
-      // can finish. Without this, an idle SSE client would pin the
-      // server open indefinitely and SIGTERM would hang.
-      const onShutdown = () => {
-        stream.abort();
-      };
-      shutdownSignal?.addEventListener('abort', onShutdown, { once: true });
-
-      stream.onAbort(() => {
-        unsubscribe();
-        shutdownSignal?.removeEventListener('abort', onShutdown);
-        logger.info('sse stream closed', { targetName, by: member.name });
-      });
-
-      logger.info('sse stream opened', { targetName, by: member.name });
-
-      // Initial comment so clients see the connection immediately, even
-      // if no push arrives for a while.
-      await stream.writeSSE({ event: 'connected', data: targetName });
-
-      // Comms check — push a message through the normal channel so
-      // the agent's first turn includes it in context. If the agent
-      // has active objectives, the runner's context watchdog will
-      // detect whether they're still in the LLM context after this
-      // exchange and re-push them if not.
-      if (objectives) {
-        const active = [
-          ...objectives.list({ assignee: member.name, status: 'active' }),
-          ...objectives.list({ assignee: member.name, status: 'blocked' }),
-        ];
-        const body =
-          active.length > 0
-            ? `${member.name} online. ${active.length} active objective(s) on your plate.`
-            : `${member.name} online. No active objectives.`;
-        void broker.push(
-          { to: member.name, body, title: 'comms check', level: 'info' },
-          { from: 'ac7' },
+  // `/subscribe` is a WebSocket endpoint — the browser / SDK open a
+  // WS for their own member, and the server pipes every broker push
+  // targeting them over `ws.send` as a JSON text frame. The pre-check
+  // middleware below runs BEFORE the upgrade so a bad `name` or
+  // identity mismatch returns a proper 400/403 HTTP response rather
+  // than a half-upgraded socket.
+  app.get(
+    PATHS.subscribe,
+    auth,
+    async (c, next) => {
+      const targetName = c.req.query('name');
+      if (!targetName) {
+        return c.json({ error: 'name query parameter is required' }, 400);
+      }
+      const member = c.get('member');
+      if (targetName !== member.name) {
+        logger.warn('subscribe rejected: identity mismatch', {
+          targetName,
+          name: member.name,
+        });
+        return c.json(
+          {
+            error:
+              `user '${member.name}' cannot subscribe to '${targetName}'; ` +
+              "the name query parameter must equal the caller's authenticated name",
+          },
+          403,
         );
       }
+      await next();
+    },
+    upgradeWebSocket((c) => {
+      // Pre-check middleware guaranteed a valid `name` and identity match.
+      const targetName = c.req.query('name') as string;
+      const member = c.get('member');
+      let unsubscribe: (() => void) | null = null;
+      let onShutdown: (() => void) | null = null;
 
-      // Keep the handler alive until the client disconnects or the
-      // server is shutting down; send a periodic keepalive so idle
-      // proxies don't drop us.
-      while (!stream.aborted && !shutdownSignal?.aborted) {
-        await stream.sleep(15_000);
-        if (stream.aborted || shutdownSignal?.aborted) break;
-        await stream.writeSSE({ event: 'keepalive', data: '' });
-      }
-    });
-  });
+      return {
+        onOpen: (_evt, ws) => {
+          unsubscribe = broker.subscribe(
+            targetName,
+            (message) => {
+              try {
+                ws.send(JSON.stringify(message));
+              } catch (err) {
+                logger.warn('ws send failed', {
+                  targetName,
+                  messageId: message.id,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            },
+            { role: member.role, name: member.name },
+          );
+
+          // Shutdown fan-out: server.close() needs every live socket
+          // to close before it returns. Without this, SIGTERM would
+          // hang indefinitely on idle connections.
+          onShutdown = () => {
+            try {
+              ws.close(1001, 'server shutting down');
+            } catch {
+              /* already closed */
+            }
+          };
+          shutdownSignal?.addEventListener('abort', onShutdown, { once: true });
+
+          logger.info('ws subscribe opened', { targetName, by: member.name });
+
+          // Comms check — push a message through the normal channel so
+          // the agent's first turn includes it in context. If the agent
+          // has active objectives, the runner's context watchdog will
+          // detect whether they're still in the LLM context after this
+          // exchange and re-push them if not.
+          if (objectives) {
+            const active = [
+              ...objectives.list({ assignee: member.name, status: 'active' }),
+              ...objectives.list({ assignee: member.name, status: 'blocked' }),
+            ];
+            const body =
+              active.length > 0
+                ? `${member.name} online. ${active.length} active objective(s) on your plate.`
+                : `${member.name} online. No active objectives.`;
+            void broker.push(
+              { to: member.name, body, title: 'comms check', level: 'info' },
+              { from: 'ac7' },
+            );
+          }
+        },
+        onClose: () => {
+          unsubscribe?.();
+          if (onShutdown) {
+            shutdownSignal?.removeEventListener('abort', onShutdown);
+          }
+          logger.info('ws subscribe closed', { targetName, by: member.name });
+        },
+        onError: (evt) => {
+          logger.warn('ws subscribe error', {
+            targetName,
+            error: evt instanceof Error ? evt.message : 'ws error',
+          });
+        },
+      };
+    }),
+  );
 
   app.get(PATHS.history, auth, async (c) => {
     const member = c.get('member');
@@ -1283,7 +1304,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
   //
   //   POST /members/:name/activity          — self upload only
   //   GET  /members/:name/activity          — self OR admin
-  //   GET  /members/:name/activity/stream   — SSE live tail, self OR admin
+  //   GET  /members/:name/activity/stream   — WebSocket live tail, self OR admin
   //
   // The POST-self gate is strict: a user can only append its OWN
   // activity, regardless of userType. Admins read via GET; they
@@ -1394,58 +1415,78 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
       return c.json({ activity });
     });
 
-    app.get('/members/:name/activity/stream', auth, (c) => {
-      const member = c.get('member');
-      const nameRaw = c.req.param('name');
-      const parsedName = NameSchema.safeParse(nameRaw);
-      if (!parsedName.success) {
-        return c.json({ error: 'invalid name' }, 400);
-      }
-      const name = parsedName.data;
-      const isSelf = name === member.name;
-      const canReadAny = hasPermission(member.permissions, 'activity.read');
-      if (!isSelf && !canReadAny) {
-        return c.json(
-          { error: 'streaming activity requires activity.read permission, or self' },
-          403,
-        );
-      }
-      return streamSSE(c, async (stream) => {
-        const unsubscribe = activityStore.subscribe(name, async (row) => {
-          try {
-            await stream.writeSSE({
-              id: String(row.id),
-              data: JSON.stringify(row),
-            });
-          } catch (err) {
-            logger.warn('agent activity sse write failed', {
-              name,
-              id: row.id,
-              error: err instanceof Error ? err.message : String(err),
-            });
-          }
-        });
-        const onShutdown = (): void => {
-          stream.abort();
-        };
-        shutdownSignal?.addEventListener('abort', onShutdown, { once: true });
-        stream.onAbort(() => {
-          unsubscribe();
-          shutdownSignal?.removeEventListener('abort', onShutdown);
-          logger.info('agent activity sse stream closed', { name, by: member.name });
-        });
-        logger.info('agent activity sse stream opened', {
-          name,
-          by: member.name,
-        });
-        await stream.writeSSE({ event: 'connected', data: name });
-        while (!stream.aborted && !shutdownSignal?.aborted) {
-          await stream.sleep(15_000);
-          if (stream.aborted || shutdownSignal?.aborted) break;
-          await stream.writeSSE({ event: 'keepalive', data: '' });
+    // Activity tail — WebSocket. Every new row appended to the per-
+    // member activity store is forwarded as a JSON text frame. The
+    // pre-check middleware validates the name and permission so
+    // rejection returns a proper HTTP error rather than a failed
+    // upgrade handshake.
+    const activity = activityStore;
+    app.get(
+      '/members/:name/activity/stream',
+      auth,
+      async (c, next) => {
+        const member = c.get('member');
+        const nameRaw = c.req.param('name');
+        const parsedName = NameSchema.safeParse(nameRaw);
+        if (!parsedName.success) {
+          return c.json({ error: 'invalid name' }, 400);
         }
-      });
-    });
+        const name = parsedName.data;
+        const isSelf = name === member.name;
+        const canReadAny = hasPermission(member.permissions, 'activity.read');
+        if (!isSelf && !canReadAny) {
+          return c.json(
+            { error: 'streaming activity requires activity.read permission, or self' },
+            403,
+          );
+        }
+        await next();
+      },
+      upgradeWebSocket((c) => {
+        const member = c.get('member');
+        const name = NameSchema.parse(c.req.param('name'));
+        let unsubscribe: (() => void) | null = null;
+        let onShutdown: (() => void) | null = null;
+
+        return {
+          onOpen: (_evt, ws) => {
+            unsubscribe = activity.subscribe(name, (row) => {
+              try {
+                ws.send(JSON.stringify(row));
+              } catch (err) {
+                logger.warn('activity ws send failed', {
+                  name,
+                  id: row.id,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+              }
+            });
+            onShutdown = () => {
+              try {
+                ws.close(1001, 'server shutting down');
+              } catch {
+                /* already closed */
+              }
+            };
+            shutdownSignal?.addEventListener('abort', onShutdown, { once: true });
+            logger.info('activity ws opened', { name, by: member.name });
+          },
+          onClose: () => {
+            unsubscribe?.();
+            if (onShutdown) {
+              shutdownSignal?.removeEventListener('abort', onShutdown);
+            }
+            logger.info('activity ws closed', { name, by: member.name });
+          },
+          onError: (evt) => {
+            logger.warn('activity ws error', {
+              name,
+              error: evt instanceof Error ? evt.message : 'ws error',
+            });
+          },
+        };
+      }),
+    );
   }
 
   // ─── User management endpoints ───────────────────────────────
@@ -1868,7 +1909,7 @@ export function createApp(options: AppOptions): Hono<AppBindings> {
     });
   }
 
-  return app;
+  return { app, injectWebSocket };
 }
 
 /**

@@ -38,7 +38,7 @@ const TEAM: Team = {
 };
 
 interface Harness {
-  app: ReturnType<typeof createApp>;
+  app: ReturnType<typeof createApp>['app'];
   persistMembers: ReturnType<typeof vi.fn>;
   broker: Broker;
 }
@@ -52,13 +52,13 @@ function makeApp(): Harness {
   const members = createMemberStore([
     {
       name: 'alice',
-      role: { title: 'commander', description: '' },
+      role: { title: 'director', description: '' },
       permissions: ['members.manage'],
       token: ADMIN_TOKEN,
     },
     {
       name: 'bob',
-      role: { title: 'operator', description: '' },
+      role: { title: 'manager', description: '' },
       permissions: ['objectives.create', 'objectives.cancel', 'objectives.reassign'],
       token: OPERATOR_TOKEN,
     },
@@ -73,7 +73,7 @@ function makeApp(): Harness {
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db);
   const persistMembers = vi.fn();
-  const app = createApp({
+  const { app } = createApp({
     broker,
     members,
     sessions,
@@ -164,7 +164,7 @@ describe('POST /members', () => {
       headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name: 'helper',
-        role: { title: 'operator', description: '' },
+        role: { title: 'manager', description: '' },
         permissions: ['operator'],
       }),
     });

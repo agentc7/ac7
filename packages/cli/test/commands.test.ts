@@ -68,7 +68,7 @@ describe('runPushCommand', () => {
       attachments: [],
     };
     const fakeResult: PushResult = {
-      delivery: { sse: 2, targets: 1 },
+      delivery: { live: 2, targets: 1 },
       message: fakeMessage,
     };
     let captured: { method?: string; path?: string; body?: string } = {};
@@ -89,7 +89,7 @@ describe('runPushCommand', () => {
     expect(captured.path).toBe('/push');
     expect(out).toContain('delivered to a1');
     expect(out).toContain('msg-x');
-    expect(out).toContain('sse: 2');
+    expect(out).toContain('live: 2');
     expect(out).toContain('targets: 1');
   });
 });
@@ -98,15 +98,15 @@ describe('runRosterCommand', () => {
   it('renders a formatted table when teammates exist', async () => {
     const teammates: Teammate[] = [
       {
-        name: 'ACTUAL',
+        name: 'director-1',
         role: { title: 'engineer', description: '' },
         permissions: ['members.manage'],
       },
-      { name: 'ALPHA-1', role: { title: 'engineer', description: '' }, permissions: [] },
+      { name: 'engineer-1', role: { title: 'engineer', description: '' }, permissions: [] },
     ];
     const connected: Presence[] = [
       {
-        name: 'ACTUAL',
+        name: 'director-1',
         connected: 1,
         createdAt: 1_700_000_000_000,
         lastSeen: 1_700_000_100_000,
@@ -120,8 +120,8 @@ describe('runRosterCommand', () => {
     });
     const out = await runRosterCommand(client);
     expect(out).toContain('name');
-    expect(out).toContain('ACTUAL');
-    expect(out).toContain('ALPHA-1');
+    expect(out).toContain('director-1');
+    expect(out).toContain('engineer-1');
     expect(out).toContain('engineer');
     expect(out).toContain('admin');
   });

@@ -16,7 +16,7 @@ One server = one team. Exposes:
 - `GET /briefing` — name, role, authority, team, teammates, open objectives, and composed instructions for the authenticated slot
 - `GET /roster` — full slot list plus runtime connection state
 - `POST /push` — deliver a message to one teammate (DM) or broadcast
-- `GET /subscribe?agentId=…` — long-lived SSE stream; the `agentId` must equal the caller's name
+- `GET /subscribe?name=…` — long-lived WebSocket stream; `name` must equal the caller's name
 - `GET /history?with=…&limit=…&before=…` — query message log scoped to the authenticated caller
 
 ### Objectives
@@ -104,7 +104,7 @@ Configured via an `https` block in the team config file:
 - `self-signed` — HTTP/2 + TLS with a persisted self-signed cert. Auto-enabled when `AC7_HOST` is non-loopback.
 - `custom` — HTTP/2 + TLS with user-supplied `certPath` + `keyPath` (for reverse-proxy uploads or your own ACME flow).
 
-The HTTPS listener always uses HTTP/2 with HTTP/1.1 ALPN fallback so SSE multiplexes over a single connection.
+The HTTPS listener uses HTTP/2 with HTTP/1.1 ALPN fallback. WebSocket upgrades ride the HTTP/1.1 path.
 
 ## TOTP login (web UI)
 
@@ -116,7 +116,7 @@ Re-enrolling: `ac7 enroll --slot <name>` regenerates the secret and prints a fre
 
 On first boot, the server auto-generates a VAPID keypair and persists it to the config file as a `webPush` block. The web UI fetches the public half via `GET /push/vapid-public-key` and subscribes the browser via `pushManager.subscribe()`. When a message is pushed:
 
-- **DMs** always notify the recipient (unless they have a live SSE tab open).
+- **DMs** always notify the recipient (unless they have a live WebSocket connection open).
 - **Broadcasts** notify only when `level >= warning` or the body contains `@<name>`.
 
 Dead subscriptions (410 Gone from the push service) are automatically removed. VAPID keys are never rotated casually — doing so invalidates every existing push subscription.

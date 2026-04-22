@@ -11,7 +11,7 @@ const OP_TOKEN = 'ac7_test_operator_secret';
 const BOT_TOKEN = 'ac7_test_bot_secret';
 
 const TEAM: Team = {
-  name: 'alpha-team',
+  name: 'demo-team',
   directive: 'Ship and operate the payment service.',
   brief: 'We own the full lifecycle.',
   permissionPresets: {},
@@ -25,8 +25,8 @@ function makeApp() {
   });
   const members = createMemberStore([
     {
-      name: 'ACTUAL',
-      role: { title: 'commander', description: '' },
+      name: 'director-1',
+      role: { title: 'director', description: '' },
       permissions: ['members.manage'],
       token: OP_TOKEN,
     },
@@ -40,7 +40,7 @@ function makeApp() {
   // Tests run with an in-memory SQLite solely for the sessions table.
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db);
-  const app = createApp({
+  const { app } = createApp({
     broker,
     members,
     sessions,
@@ -85,14 +85,14 @@ describe('app GET /briefing', () => {
     const res = await app.request('/briefing', authed(OP_TOKEN));
     expect(res.status).toBe(200);
     const body = (await res.json()) as BriefingResponse;
-    expect(body.name).toBe('ACTUAL');
-    expect(body.role.title).toBe('commander');
+    expect(body.name).toBe('director-1');
+    expect(body.role.title).toBe('director');
     expect(body.permissions).toContain('members.manage');
     expect(body.team).toEqual(TEAM);
-    expect(body.teammates.map((t) => t.name).sort()).toEqual(['ACTUAL', 'build-bot']);
+    expect(body.teammates.map((t) => t.name).sort()).toEqual(['build-bot', 'director-1']);
     expect(body.openObjectives).toEqual([]);
-    expect(body.instructions).toContain('ACTUAL');
-    expect(body.instructions).toContain('commander');
+    expect(body.instructions).toContain('director-1');
+    expect(body.instructions).toContain('director');
     expect(body.instructions).toContain(TEAM.directive);
   });
 
@@ -153,15 +153,15 @@ describe('app GET /roster', () => {
     const { app, broker } = makeApp();
     // Pre-seed both slots so they appear in connected state
     broker.seedMembers([
-      { name: 'ACTUAL', role: { title: 'commander', description: '' } },
+      { name: 'director-1', role: { title: 'director', description: '' } },
       { name: 'build-bot', role: { title: 'engineer', description: '' } },
     ]);
 
     const res = await app.request('/roster', authed(OP_TOKEN));
     expect(res.status).toBe(200);
     const body = (await res.json()) as RosterResponse;
-    expect(body.teammates.map((t) => t.name).sort()).toEqual(['ACTUAL', 'build-bot']);
-    expect(body.connected.map((a) => a.name).sort()).toEqual(['ACTUAL', 'build-bot']);
+    expect(body.teammates.map((t) => t.name).sort()).toEqual(['build-bot', 'director-1']);
+    expect(body.connected.map((a) => a.name).sort()).toEqual(['build-bot', 'director-1']);
     expect(body.connected.every((a) => a.connected === 0)).toBe(true);
   });
 });
@@ -192,24 +192,25 @@ describe('app POST /push', () => {
     const res = await app.request('/push', authed(OP_TOKEN, { to: 'build-bot', body: 'hello' }));
     expect(res.status).toBe(200);
     const body = (await res.json()) as {
-      delivery: { sse: number; targets: number };
+      delivery: { live: number; targets: number };
       message: { body: string; from: string };
     };
-    expect(body.delivery.sse).toBe(1);
+    expect(body.delivery.live).toBe(1);
     expect(body.delivery.targets).toBe(1);
+
     expect(body.message.body).toBe('hello');
-    expect(body.message.from).toBe('ACTUAL');
+    expect(body.message.from).toBe('director-1');
     expect(received).toHaveLength(1);
-    expect(received[0]?.from).toBe('ACTUAL');
+    expect(received[0]?.from).toBe('director-1');
   });
 
   it('fans out a DM to the sender if the sender is registered', async () => {
     const { app, broker } = makeApp();
     await broker.register('build-bot');
-    await broker.register('ACTUAL');
+    await broker.register('director-1');
     const opInbox: Message[] = [];
     const botInbox: Message[] = [];
-    broker.subscribe('ACTUAL', (m) => {
+    broker.subscribe('director-1', (m) => {
       opInbox.push(m);
     });
     broker.subscribe('build-bot', (m) => {
@@ -218,9 +219,9 @@ describe('app POST /push', () => {
 
     const res = await app.request('/push', authed(OP_TOKEN, { to: 'build-bot', body: 'status?' }));
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { delivery: { sse: number; targets: number } };
+    const body = (await res.json()) as { delivery: { live: number; targets: number } };
     expect(body.delivery.targets).toBe(1);
-    expect(body.delivery.sse).toBe(2);
+    expect(body.delivery.live).toBe(2);
     expect(botInbox).toHaveLength(1);
     expect(opInbox).toHaveLength(1);
   });
@@ -276,13 +277,13 @@ describe('app POST /push', () => {
 describe('app GET /history', () => {
   it('returns history filtered by the with parameter', async () => {
     const { app, broker } = makeApp();
-    await broker.register('ACTUAL');
+    await broker.register('director-1');
     await broker.register('build-bot');
 
     // Use the broker directly to push so we can set from.
-    await broker.push({ body: 'broadcast' }, { from: 'ACTUAL' });
-    await broker.push({ to: 'build-bot', body: 'dm to bot' }, { from: 'ACTUAL' });
-    await broker.push({ to: 'ACTUAL', body: 'dm from bot' }, { from: 'build-bot' });
+    await broker.push({ body: 'broadcast' }, { from: 'director-1' });
+    await broker.push({ to: 'build-bot', body: 'dm to bot' }, { from: 'director-1' });
+    await broker.push({ to: 'director-1', body: 'dm from bot' }, { from: 'build-bot' });
 
     // Full feed for 'individual-contributor': broadcast + both DMs
     const full = await app.request('/history', authed(OP_TOKEN));
@@ -313,7 +314,7 @@ describe('app GET /history', () => {
   it('clamps limit=0 to the default page size', async () => {
     const { app, broker } = makeApp();
     for (let i = 0; i < 3; i++) {
-      await broker.push({ body: `msg-${i}` }, { from: 'ACTUAL' });
+      await broker.push({ body: `msg-${i}` }, { from: 'director-1' });
     }
     const res = await app.request('/history?limit=0', authed(OP_TOKEN));
     expect(res.status).toBe(200);

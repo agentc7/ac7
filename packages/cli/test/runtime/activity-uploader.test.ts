@@ -46,7 +46,7 @@ describe('ActivityUploader', () => {
     const client = makeFakeClient();
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
-      name: 'ALPHA-1',
+      name: 'engineer-1',
       log: () => {},
       maxBatchEvents: 3,
     });
@@ -65,7 +65,7 @@ describe('ActivityUploader', () => {
     const client = makeFakeClient();
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
-      name: 'ALPHA-1',
+      name: 'engineer-1',
       log: () => {},
       maxBatchEvents: 100,
       maxBatchAgeMs: 500,
@@ -85,7 +85,7 @@ describe('ActivityUploader', () => {
       .mockResolvedValueOnce({ accepted: 1 });
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
-      name: 'ALPHA-1',
+      name: 'engineer-1',
       log: () => {},
       maxBatchEvents: 1,
     });
@@ -111,7 +111,7 @@ describe('ActivityUploader', () => {
     const client = makeFakeClient();
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
-      name: 'ALPHA-1',
+      name: 'engineer-1',
       log: () => {},
       maxBatchEvents: 100,
       maxBatchAgeMs: 60_000,
@@ -127,7 +127,7 @@ describe('ActivityUploader', () => {
     const client = makeFakeClient();
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
-      name: 'ALPHA-1',
+      name: 'engineer-1',
       log: () => {},
       maxBatchEvents: 100,
       maxBatchAgeMs: 10_000, // so it won't flush on its own
@@ -145,7 +145,7 @@ describe('ActivityUploader', () => {
     client.uploadActivity.mockRejectedValue(new Error('unreachable'));
     const u = new ActivityUploader({
       brokerClient: client as unknown as BrokerClient,
-      name: 'ALPHA-1',
+      name: 'engineer-1',
       log: () => {},
       maxBatchAgeMs: 10_000,
     });

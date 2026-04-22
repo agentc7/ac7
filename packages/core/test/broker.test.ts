@@ -48,11 +48,11 @@ describe('Broker.register', () => {
   it('allows the matching name to register idempotently', async () => {
     const { broker } = makeBroker();
     await broker.register('alice', {
-      role: { title: 'commander', description: '' },
+      role: { title: 'director', description: '' },
       name: 'alice',
     });
     await broker.register('alice', {
-      role: { title: 'commander', description: '' },
+      role: { title: 'director', description: '' },
       name: 'alice',
     });
     expect(broker.listPresences()).toHaveLength(1);
@@ -61,7 +61,7 @@ describe('Broker.register', () => {
   it('rejects register when agentId does not equal name', async () => {
     const { broker } = makeBroker();
     await expect(
-      broker.register('alice', { role: { title: 'commander', description: '' }, name: 'mallory' }),
+      broker.register('alice', { role: { title: 'director', description: '' }, name: 'mallory' }),
     ).rejects.toBeInstanceOf(PresenceIdentityError);
   });
 
@@ -75,14 +75,14 @@ describe('Broker.seedMembers', () => {
   it('pre-populates the registry with every member', () => {
     const { broker } = makeBroker();
     broker.seedMembers([
-      { name: 'ACTUAL', role: { title: 'commander', description: '' } },
-      { name: 'ALPHA-1', role: { title: 'engineer', description: '' } },
-      { name: 'SIERRA', role: { title: 'reviewer', description: '' } },
+      { name: 'director-1', role: { title: 'director', description: '' } },
+      { name: 'engineer-1', role: { title: 'engineer', description: '' } },
+      { name: 'engineer-2', role: { title: 'reviewer', description: '' } },
     ]);
     const presences = broker.listPresences();
-    expect(presences.map((p) => p.name).sort()).toEqual(['ACTUAL', 'ALPHA-1', 'SIERRA']);
-    expect(presences.find((p) => p.name === 'ACTUAL')?.role?.title).toBe('commander');
-    expect(presences.find((p) => p.name === 'SIERRA')?.role?.title).toBe('reviewer');
+    expect(presences.map((p) => p.name).sort()).toEqual(['director-1', 'engineer-1', 'engineer-2']);
+    expect(presences.find((p) => p.name === 'director-1')?.role?.title).toBe('director');
+    expect(presences.find((p) => p.name === 'engineer-2')?.role?.title).toBe('reviewer');
     expect(presences.every((p) => p.connected === 0)).toBe(true);
   });
 });
@@ -114,7 +114,7 @@ describe('Broker.push DM sender-fanout', () => {
   it("delivers a DM to the sender's own agent when both are registered", async () => {
     const { broker } = makeBroker();
     await broker.register('alice', {
-      role: { title: 'commander', description: '' },
+      role: { title: 'director', description: '' },
       name: 'alice',
     });
     await broker.register('build-bot', {
@@ -144,7 +144,7 @@ describe('Broker.push DM sender-fanout', () => {
     // Primary target is still build-bot; alice's copy is sender-fanout
     // for multi-device consistency.
     expect(result.delivery.targets).toBe(1);
-    expect(result.delivery.sse).toBe(2);
+    expect(result.delivery.live).toBe(2);
     expect(botReceived).toHaveLength(1);
     expect(aliceReceived).toHaveLength(1);
     expect(aliceReceived[0]?.to).toBe('build-bot');
@@ -154,7 +154,7 @@ describe('Broker.push DM sender-fanout', () => {
   it('does not double-deliver when the sender talks to themselves', async () => {
     const { broker } = makeBroker();
     await broker.register('alice', {
-      role: { title: 'commander', description: '' },
+      role: { title: 'director', description: '' },
       name: 'alice',
     });
     const received: Message[] = [];
@@ -169,7 +169,7 @@ describe('Broker.push DM sender-fanout', () => {
     const result = await broker.push({ to: 'alice', body: 'note-to-self' }, { from: 'alice' });
 
     expect(result.delivery.targets).toBe(1);
-    expect(result.delivery.sse).toBe(1);
+    expect(result.delivery.live).toBe(1);
     expect(received).toHaveLength(1);
   });
 
@@ -190,7 +190,7 @@ describe('Broker.push DM sender-fanout', () => {
 
     const result = await broker.push({ to: 'build-bot', body: 'hello' }, { from: 'alice' });
     expect(result.delivery.targets).toBe(1);
-    expect(result.delivery.sse).toBe(1);
+    expect(result.delivery.live).toBe(1);
     expect(received).toHaveLength(1);
   });
 });
@@ -231,7 +231,7 @@ describe('Broker.push targeted', () => {
 
     const result = await broker.push({ to: 'agent-1', body: 'hello' });
 
-    expect(result.delivery.sse).toBe(1);
+    expect(result.delivery.live).toBe(1);
     expect(result.delivery.targets).toBe(1);
     expect(received).toHaveLength(1);
     expect(received[0]?.body).toBe('hello');
@@ -242,7 +242,7 @@ describe('Broker.push targeted', () => {
   it('returns targets: 0 when the target agent is unknown', async () => {
     const { broker } = makeBroker();
     const result = await broker.push({ to: 'ghost', body: 'hi' });
-    expect(result.delivery.sse).toBe(0);
+    expect(result.delivery.live).toBe(0);
     expect(result.delivery.targets).toBe(0);
   });
 
@@ -259,7 +259,7 @@ describe('Broker.push targeted', () => {
     });
 
     const result = await broker.push({ to: 'agent-1', body: 'hi' });
-    expect(result.delivery.sse).toBe(2);
+    expect(result.delivery.live).toBe(2);
     expect(a).toHaveLength(1);
     expect(b).toHaveLength(1);
   });
@@ -284,7 +284,7 @@ describe('Broker.push targeted', () => {
 
     const result = await broker.push({ to: 'agent-1', body: 'hi' });
     expect(good).toHaveLength(1);
-    expect(result.delivery.sse).toBe(1);
+    expect(result.delivery.live).toBe(1);
     expect(warn).toHaveBeenCalledOnce();
   });
 });
@@ -305,7 +305,7 @@ describe('Broker.push broadcast', () => {
 
     const result = await broker.push({ body: 'broadcast' });
     expect(result.delivery.targets).toBe(2);
-    expect(result.delivery.sse).toBe(2);
+    expect(result.delivery.live).toBe(2);
     expect(r1).toHaveLength(1);
     expect(r2).toHaveLength(1);
   });
@@ -314,7 +314,7 @@ describe('Broker.push broadcast', () => {
     const { broker } = makeBroker();
     const result = await broker.push({ body: 'hello void' });
     expect(result.delivery.targets).toBe(0);
-    expect(result.delivery.sse).toBe(0);
+    expect(result.delivery.live).toBe(0);
   });
 });
 
@@ -357,7 +357,7 @@ describe('Broker fanout concurrency', () => {
     releaseA1();
     const result = await pushPromise;
     expect(a1Resolved).toBe(true);
-    expect(result.delivery.sse).toBe(3);
+    expect(result.delivery.live).toBe(3);
   });
 
   it('a throwing subscriber does not abort fanout to others', async () => {
@@ -375,7 +375,7 @@ describe('Broker fanout concurrency', () => {
 
     const result = await broker.push({ body: 'hi' });
     // sse count is 1 (a2) because a1's subscriber threw.
-    expect(result.delivery.sse).toBe(1);
+    expect(result.delivery.live).toBe(1);
     expect(received).toHaveLength(1);
   });
 

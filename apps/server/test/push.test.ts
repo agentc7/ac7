@@ -69,7 +69,7 @@ const OP_TOKEN = 'ac7_push_test_operator_token';
 const BOT_TOKEN = 'ac7_push_test_bot_token';
 
 const TEAM: Team = {
-  name: 'alpha-team',
+  name: 'demo-team',
   directive: 'Test push notifications.',
   brief: '',
   permissionPresets: {},
@@ -88,7 +88,7 @@ function mkMsg(overrides: Partial<Message>): Message {
     id: 'msg-1',
     ts: 1,
     to: null,
-    from: 'ACTUAL',
+    from: 'director-1',
     title: null,
     body: 'hi',
     level: 'info',
@@ -120,33 +120,33 @@ describe('PushSubscriptionStore', () => {
   it('upserts a subscription and lists it by slot', () => {
     const store = new PushSubscriptionStore(openDatabase(':memory:'));
     const row = store.upsert({
-      memberName: 'ACTUAL',
+      memberName: 'director-1',
       endpoint: 'https://fcm.example/abc',
       p256dh: 'pk-data',
       auth: 'auth-data',
       userAgent: 'test-ua',
     });
     expect(row.id).toBeGreaterThan(0);
-    expect(store.listForMember('ACTUAL')).toHaveLength(1);
+    expect(store.listForMember('director-1')).toHaveLength(1);
   });
 
   it('idempotently replaces on duplicate endpoint', () => {
     const store = new PushSubscriptionStore(openDatabase(':memory:'));
     store.upsert({
-      memberName: 'ACTUAL',
+      memberName: 'director-1',
       endpoint: 'https://fcm.example/same',
       p256dh: 'v1',
       auth: 'v1',
       userAgent: null,
     });
     store.upsert({
-      memberName: 'ACTUAL',
+      memberName: 'director-1',
       endpoint: 'https://fcm.example/same',
       p256dh: 'v2',
       auth: 'v2',
       userAgent: null,
     });
-    const subs = store.listForMember('ACTUAL');
+    const subs = store.listForMember('director-1');
     expect(subs).toHaveLength(1);
     expect(subs[0]?.p256dh).toBe('v2');
   });
@@ -154,7 +154,7 @@ describe('PushSubscriptionStore', () => {
   it('deleteForUser scopes by name', () => {
     const store = new PushSubscriptionStore(openDatabase(':memory:'));
     const row = store.upsert({
-      memberName: 'ACTUAL',
+      memberName: 'director-1',
       endpoint: 'https://fcm.example/only',
       p256dh: 'x',
       auth: 'x',
@@ -162,27 +162,27 @@ describe('PushSubscriptionStore', () => {
     });
     // Try to delete as a different slot — should not remove the row.
     store.deleteForMember(row.id, 'build-bot');
-    expect(store.listForMember('ACTUAL')).toHaveLength(1);
+    expect(store.listForMember('director-1')).toHaveLength(1);
 
-    store.deleteForMember(row.id, 'ACTUAL');
-    expect(store.listForMember('ACTUAL')).toHaveLength(0);
+    store.deleteForMember(row.id, 'director-1');
+    expect(store.listForMember('director-1')).toHaveLength(0);
   });
 
   it('markSuccess and markError update timestamps', () => {
     const store = new PushSubscriptionStore(openDatabase(':memory:'), { now: () => 1234 });
     const row = store.upsert({
-      memberName: 'ACTUAL',
+      memberName: 'director-1',
       endpoint: 'https://fcm.example/err',
       p256dh: 'x',
       auth: 'x',
       userAgent: null,
     });
     store.markSuccess(row.id);
-    const afterSuccess = store.listForMember('ACTUAL')[0];
+    const afterSuccess = store.listForMember('director-1')[0];
     expect(afterSuccess?.lastSuccessAt).toBe(1234);
 
     store.markError(row.id, 429);
-    const afterErr = store.listForMember('ACTUAL')[0];
+    const afterErr = store.listForMember('director-1')[0];
     expect(afterErr?.lastErrorCode).toBe(429);
   });
 });
@@ -191,42 +191,56 @@ describe('PushSubscriptionStore', () => {
 
 describe('shouldPush', () => {
   it('rejects self-echo', () => {
-    const msg = mkMsg({ from: 'ACTUAL', to: 'ACTUAL' });
-    expect(shouldPush({ message: msg, recipient: 'ACTUAL', recipientIsLive: false })).toBe(false);
+    const msg = mkMsg({ from: 'director-1', to: 'director-1' });
+    expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: false })).toBe(
+      false,
+    );
   });
 
   it('rejects when recipient has a live SSE tab', () => {
-    const msg = mkMsg({ from: 'build-bot', to: 'ACTUAL' });
-    expect(shouldPush({ message: msg, recipient: 'ACTUAL', recipientIsLive: true })).toBe(false);
+    const msg = mkMsg({ from: 'build-bot', to: 'director-1' });
+    expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: true })).toBe(
+      false,
+    );
   });
 
   it('accepts direct DMs when offline', () => {
-    const msg = mkMsg({ from: 'build-bot', to: 'ACTUAL' });
-    expect(shouldPush({ message: msg, recipient: 'ACTUAL', recipientIsLive: false })).toBe(true);
+    const msg = mkMsg({ from: 'build-bot', to: 'director-1' });
+    expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: false })).toBe(
+      true,
+    );
   });
 
   it('accepts high-severity broadcasts', () => {
     const msg = mkMsg({ from: 'build-bot', to: null, level: 'warning' });
-    expect(shouldPush({ message: msg, recipient: 'ACTUAL', recipientIsLive: false })).toBe(true);
+    expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: false })).toBe(
+      true,
+    );
   });
 
   it('accepts info broadcasts that mention the recipient', () => {
     const msg = mkMsg({
       from: 'build-bot',
       to: null,
-      body: 'hey @ACTUAL can you look at this',
+      body: 'hey @director-1 can you look at this',
     });
-    expect(shouldPush({ message: msg, recipient: 'ACTUAL', recipientIsLive: false })).toBe(true);
+    expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: false })).toBe(
+      true,
+    );
   });
 
   it('rejects info broadcasts with no mention', () => {
     const msg = mkMsg({ from: 'build-bot', to: null, body: 'status update' });
-    expect(shouldPush({ message: msg, recipient: 'ACTUAL', recipientIsLive: false })).toBe(false);
+    expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: false })).toBe(
+      false,
+    );
   });
 
   it('rejects DMs addressed to someone else', () => {
-    const msg = mkMsg({ from: 'ACTUAL', to: 'other-bot' });
-    expect(shouldPush({ message: msg, recipient: 'ACTUAL', recipientIsLive: false })).toBe(false);
+    const msg = mkMsg({ from: 'director-1', to: 'other-bot' });
+    expect(shouldPush({ message: msg, recipient: 'director-1', recipientIsLive: false })).toBe(
+      false,
+    );
   });
 });
 
@@ -239,8 +253,8 @@ describe('dispatchPush', () => {
     const store = new PushSubscriptionStore(db);
     const members = createMemberStore([
       {
-        name: 'ACTUAL',
-        role: { title: 'commander', description: '' },
+        name: 'director-1',
+        role: { title: 'director', description: '' },
         permissions: ['members.manage'],
         token: OP_TOKEN,
       },
@@ -252,14 +266,14 @@ describe('dispatchPush', () => {
       },
     ]);
     store.upsert({
-      memberName: 'ACTUAL',
+      memberName: 'director-1',
       endpoint: 'https://fcm.example/actual',
       p256dh: 'x',
       auth: 'x',
       userAgent: null,
     });
 
-    const msg = mkMsg({ from: 'build-bot', to: 'ACTUAL', body: 'hey' });
+    const msg = mkMsg({ from: 'build-bot', to: 'director-1', body: 'hey' });
     await dispatchPush(msg, {
       sessions: store,
       members,
@@ -268,7 +282,7 @@ describe('dispatchPush', () => {
     });
 
     expect(sendNotification).toHaveBeenCalledTimes(1);
-    const after = store.listForMember('ACTUAL');
+    const after = store.listForMember('director-1');
     expect(after[0]?.lastSuccessAt).toBeGreaterThan(0);
   });
 
@@ -279,8 +293,8 @@ describe('dispatchPush', () => {
     const store = new PushSubscriptionStore(openDatabase(':memory:'));
     const members = createMemberStore([
       {
-        name: 'ACTUAL',
-        role: { title: 'commander', description: '' },
+        name: 'director-1',
+        role: { title: 'director', description: '' },
         permissions: ['members.manage'],
         token: OP_TOKEN,
       },
@@ -292,14 +306,14 @@ describe('dispatchPush', () => {
       },
     ]);
     store.upsert({
-      memberName: 'ACTUAL',
+      memberName: 'director-1',
       endpoint: 'https://fcm.example/actual',
       p256dh: 'x',
       auth: 'x',
       userAgent: null,
     });
 
-    const msg = mkMsg({ from: 'build-bot', to: 'ACTUAL' });
+    const msg = mkMsg({ from: 'build-bot', to: 'director-1' });
     await dispatchPush(msg, {
       sessions: store,
       members,
@@ -307,7 +321,7 @@ describe('dispatchPush', () => {
       isLive: () => false,
     });
 
-    expect(store.listForMember('ACTUAL')).toHaveLength(0);
+    expect(store.listForMember('director-1')).toHaveLength(0);
   });
 
   it('marks subscription with last_error_code on non-terminal failures', async () => {
@@ -317,8 +331,8 @@ describe('dispatchPush', () => {
     const store = new PushSubscriptionStore(openDatabase(':memory:'));
     const members = createMemberStore([
       {
-        name: 'ACTUAL',
-        role: { title: 'commander', description: '' },
+        name: 'director-1',
+        role: { title: 'director', description: '' },
         permissions: ['members.manage'],
         token: OP_TOKEN,
       },
@@ -330,21 +344,21 @@ describe('dispatchPush', () => {
       },
     ]);
     store.upsert({
-      memberName: 'ACTUAL',
+      memberName: 'director-1',
       endpoint: 'https://fcm.example/actual',
       p256dh: 'x',
       auth: 'x',
       userAgent: null,
     });
 
-    await dispatchPush(mkMsg({ from: 'build-bot', to: 'ACTUAL' }), {
+    await dispatchPush(mkMsg({ from: 'build-bot', to: 'director-1' }), {
       sessions: store,
       members,
       logger: noopLogger(),
       isLive: () => false,
     });
 
-    const sub = store.listForMember('ACTUAL')[0];
+    const sub = store.listForMember('director-1')[0];
     expect(sub?.lastErrorCode).toBe(429);
   });
 
@@ -353,8 +367,8 @@ describe('dispatchPush', () => {
     const store = new PushSubscriptionStore(openDatabase(':memory:'));
     const members = createMemberStore([
       {
-        name: 'ACTUAL',
-        role: { title: 'commander', description: '' },
+        name: 'director-1',
+        role: { title: 'director', description: '' },
         permissions: ['members.manage'],
         token: OP_TOKEN,
       },
@@ -366,18 +380,18 @@ describe('dispatchPush', () => {
       },
     ]);
     store.upsert({
-      memberName: 'ACTUAL',
+      memberName: 'director-1',
       endpoint: 'https://fcm.example/actual',
       p256dh: 'x',
       auth: 'x',
       userAgent: null,
     });
 
-    await dispatchPush(mkMsg({ from: 'build-bot', to: 'ACTUAL' }), {
+    await dispatchPush(mkMsg({ from: 'build-bot', to: 'director-1' }), {
       sessions: store,
       members,
       logger: noopLogger(),
-      isLive: (cs) => cs === 'ACTUAL',
+      isLive: (cs) => cs === 'director-1',
     });
 
     expect(sendNotification).not.toHaveBeenCalled();
@@ -395,8 +409,8 @@ describe('push HTTP endpoints', () => {
     });
     const members = createMemberStore([
       {
-        name: 'ACTUAL',
-        role: { title: 'commander', description: '' },
+        name: 'director-1',
+        role: { title: 'director', description: '' },
         permissions: ['members.manage'],
         token: OP_TOKEN,
       },
@@ -410,7 +424,7 @@ describe('push HTTP endpoints', () => {
     const db = openDatabase(':memory:');
     const sessions = new SessionStore(db);
     const pushStore = new PushSubscriptionStore(db);
-    const app = createApp({
+    const { app } = createApp({
       broker,
       members,
       sessions,
@@ -455,7 +469,7 @@ describe('push HTTP endpoints', () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as { id: number; endpoint: string };
     expect(body.id).toBeGreaterThan(0);
-    expect(pushStore.listForMember('ACTUAL')).toHaveLength(1);
+    expect(pushStore.listForMember('director-1')).toHaveLength(1);
   });
 
   it('POST /push/subscriptions rejects unauthenticated callers', async () => {
@@ -487,27 +501,27 @@ describe('push HTTP endpoints', () => {
   it('DELETE /push/subscriptions/:id scoped by authed slot', async () => {
     const { app, pushStore } = makeApp(true);
     const row = pushStore.upsert({
-      memberName: 'ACTUAL',
+      memberName: 'director-1',
       endpoint: 'https://fcm.example/toDel',
       p256dh: 'x',
       auth: 'x',
       userAgent: null,
     });
 
-    // build-bot can't delete ACTUAL's subscription.
+    // build-bot can't delete director-1's subscription.
     const wrongRes = await app.request(`/push/subscriptions/${row.id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${BOT_TOKEN}` },
     });
     expect(wrongRes.status).toBe(204);
-    expect(pushStore.listForMember('ACTUAL')).toHaveLength(1);
+    expect(pushStore.listForMember('director-1')).toHaveLength(1);
 
-    // ACTUAL can.
+    // director-1 can.
     const rightRes = await app.request(`/push/subscriptions/${row.id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${OP_TOKEN}` },
     });
     expect(rightRes.status).toBe(204);
-    expect(pushStore.listForMember('ACTUAL')).toHaveLength(0);
+    expect(pushStore.listForMember('director-1')).toHaveLength(0);
   });
 });

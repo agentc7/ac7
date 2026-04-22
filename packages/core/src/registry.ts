@@ -2,7 +2,7 @@
  * Presence registry — tracks known members and their live subscribers.
  *
  * "Subscriber" here is a callback invoked when a message targets this
- * member. The Node server creates one subscriber per live SSE
+ * member. The Node server creates one subscriber per live WebSocket
  * connection; anything else that wants to observe pushes can attach
  * the same way.
  *

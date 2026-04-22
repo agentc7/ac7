@@ -1,23 +1,23 @@
 /**
- * AgentPage + AgentTimeline render tests.
+ * MemberProfile + AgentTimeline render tests.
  *
  * Covers:
- *   - Non-director sees a permission-denied banner
- *   - Director sees the full page (header, metadata, activity)
+ *   - Non-admin sees a profile (Overview/Objectives/Files) but no Activity tab
+ *   - Admin sees the full page (header, metadata, activity, manage)
  *   - AgentTimeline renders each event kind correctly
  *   - Filter bar toggles hide/show per-kind rows
  *   - Empty state shows the "no activity" placeholder
  *
- * Real-SSE behavior (connect / reconnect / dedup) is covered at
- * the lib level rather than through a rendered component; trying
- * to drive EventSource in jsdom is flaky.
+ * Real WebSocket behavior (connect / reconnect / dedup) is covered
+ * at the lib level rather than through a rendered component; driving
+ * a live WebSocket through jsdom is flaky.
  */
 
 import type { ActivityRow, BriefingResponse, Objective, RosterResponse } from '@agentc7/sdk/types';
 import { cleanup, fireEvent, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { AgentPage } from '../src/components/AgentPage.js';
 import { __resetAgentTimelineForTests, AgentTimeline } from '../src/components/AgentTimeline.js';
+import { MemberProfile } from '../src/components/MemberProfile.js';
 import { briefing } from '../src/lib/briefing.js';
 import { __resetClientForTests } from '../src/lib/client.js';
 import {
@@ -32,17 +32,17 @@ import { roster } from '../src/lib/roster.js';
 const originalFetch = globalThis.fetch;
 
 const COMMANDER_BRIEFING: BriefingResponse = {
-  name: 'ACTUAL',
-  role: { title: 'commander', description: '' },
+  name: 'director-1',
+  role: { title: 'director', description: '' },
   permissions: ['members.manage'],
-  team: { name: 'alpha-team', directive: 'Ship it', brief: '', permissionPresets: {} },
+  team: { name: 'demo-team', directive: 'Ship it', brief: '', permissionPresets: {} },
   teammates: [
     {
-      name: 'ACTUAL',
-      role: { title: 'commander', description: '' },
+      name: 'director-1',
+      role: { title: 'director', description: '' },
       permissions: ['members.manage'],
     },
-    { name: 'ALPHA-1', role: { title: 'engineer', description: '' }, permissions: [] },
+    { name: 'engineer-1', role: { title: 'engineer', description: '' }, permissions: [] },
   ],
   openObjectives: [],
   instructions: 'Lead the team.',
@@ -50,7 +50,7 @@ const COMMANDER_BRIEFING: BriefingResponse = {
 
 const OPERATOR_BRIEFING: BriefingResponse = {
   ...COMMANDER_BRIEFING,
-  name: 'ALPHA-1',
+  name: 'engineer-1',
   role: { title: 'engineer', description: '' },
   permissions: [],
 };
@@ -58,15 +58,15 @@ const OPERATOR_BRIEFING: BriefingResponse = {
 const ROSTER: RosterResponse = {
   teammates: [
     {
-      name: 'ACTUAL',
-      role: { title: 'commander', description: '' },
+      name: 'director-1',
+      role: { title: 'director', description: '' },
       permissions: ['members.manage'],
     },
-    { name: 'ALPHA-1', role: { title: 'engineer', description: '' }, permissions: [] },
+    { name: 'engineer-1', role: { title: 'engineer', description: '' }, permissions: [] },
   ],
   connected: [
     {
-      name: 'ALPHA-1',
+      name: 'engineer-1',
       connected: 1,
       createdAt: 1_700_000_000_000,
       lastSeen: 1_700_000_000_000,
@@ -81,8 +81,8 @@ const OBJECTIVE: Objective = {
   body: '',
   outcome: 'Feature shipped',
   status: 'active',
-  assignee: 'ALPHA-1',
-  originator: 'ACTUAL',
+  assignee: 'engineer-1',
+  originator: 'director-1',
   watchers: [],
   createdAt: 1_700_000_000_000,
   updatedAt: 1_700_000_000_500,
@@ -94,7 +94,7 @@ const OBJECTIVE: Objective = {
 
 const LLM_ROW: ActivityRow = {
   id: 1,
-  memberName: 'ALPHA-1',
+  memberName: 'engineer-1',
   createdAt: 1_700_000_000_500,
   event: {
     kind: 'llm_exchange',
@@ -130,7 +130,7 @@ const LLM_ROW: ActivityRow = {
 
 const OPAQUE_ROW: ActivityRow = {
   id: 2,
-  memberName: 'ALPHA-1',
+  memberName: 'engineer-1',
   createdAt: 1_700_000_001_000,
   event: {
     kind: 'opaque_http',
@@ -154,14 +154,14 @@ const OPAQUE_ROW: ActivityRow = {
 
 const OPEN_ROW: ActivityRow = {
   id: 3,
-  memberName: 'ALPHA-1',
+  memberName: 'engineer-1',
   createdAt: 1_700_000_002_000,
   event: { kind: 'objective_open', ts: 1_700_000_001_000, objectiveId: 'obj-1' },
 };
 
 const CLOSE_ROW: ActivityRow = {
   id: 4,
-  memberName: 'ALPHA-1',
+  memberName: 'engineer-1',
   createdAt: 1_700_000_003_000,
   event: {
     kind: 'objective_close',
@@ -172,30 +172,36 @@ const CLOSE_ROW: ActivityRow = {
 };
 
 /**
- * Minimal EventSource stub — jsdom doesn't ship one, and the
- * lib's `startMemberActivitySubscribe` needs to construct one.
- * The stub records all constructions so tests can verify the
- * URL, but it never fires real events.
+ * Minimal WebSocket stub — jsdom doesn't ship one, and the lib's
+ * `startMemberActivitySubscribe` needs to construct one. Records
+ * all constructions so tests can verify the URL, but never fires
+ * real open/message/close events.
  */
-class StubEventSource {
-  static instances: StubEventSource[] = [];
+class StubWebSocket {
+  static instances: StubWebSocket[] = [];
   readonly url: string;
-  readonly listeners = new Map<string, Array<(ev: MessageEvent) => void>>();
-  constructor(url: string, _init?: EventSourceInit) {
+  readonly listeners = new Map<string, Array<(ev: Event) => void>>();
+  constructor(url: string) {
     this.url = url;
-    StubEventSource.instances.push(this);
+    StubWebSocket.instances.push(this);
   }
-  addEventListener(type: string, listener: (ev: MessageEvent) => void): void {
+  addEventListener(type: string, listener: (ev: Event) => void): void {
     const arr = this.listeners.get(type) ?? [];
     arr.push(listener);
     this.listeners.set(type, arr);
   }
+  removeEventListener(): void {
+    /* no-op */
+  }
   close(): void {
+    /* no-op */
+  }
+  send(_data: string): void {
     /* no-op */
   }
 }
 
-const originalEventSource = (globalThis as { EventSource?: unknown }).EventSource;
+const originalWebSocket = (globalThis as { WebSocket?: unknown }).WebSocket;
 
 beforeEach(() => {
   __resetClientForTests();
@@ -211,9 +217,9 @@ beforeEach(() => {
         headers: { 'Content-Type': 'application/json' },
       }),
     )) as typeof fetch;
-  // Stub EventSource — jsdom doesn't have one.
-  StubEventSource.instances = [];
-  (globalThis as { EventSource?: unknown }).EventSource = StubEventSource;
+  // Stub WebSocket — jsdom doesn't have one.
+  StubWebSocket.instances = [];
+  (globalThis as { WebSocket?: unknown }).WebSocket = StubWebSocket;
   roster.value = ROSTER;
   objectivesSignal.value = [OBJECTIVE];
 });
@@ -226,39 +232,52 @@ afterEach(() => {
   __resetMemberActivityForTests();
   __resetAgentTimelineForTests();
   globalThis.fetch = originalFetch;
-  if (originalEventSource === undefined) {
-    delete (globalThis as { EventSource?: unknown }).EventSource;
+  if (originalWebSocket === undefined) {
+    delete (globalThis as { WebSocket?: unknown }).WebSocket;
   } else {
-    (globalThis as { EventSource?: unknown }).EventSource = originalEventSource;
+    (globalThis as { WebSocket?: unknown }).WebSocket = originalWebSocket;
   }
 });
 
-describe('AgentPage', () => {
-  it('shows a permission denied banner for non-admins', () => {
+describe('MemberProfile', () => {
+  it('non-admins see the profile but not the Activity or Manage tabs', () => {
     briefing.value = OPERATOR_BRIEFING;
-    render(<AgentPage name="ALPHA-1" viewer="ALPHA-1" />);
-    expect(screen.getByText(/only admins may view/i)).toBeTruthy();
+    render(<MemberProfile name="engineer-1" tab="overview" viewer="engineer-1" />);
+    expect(screen.getByRole('heading', { name: /engineer-1/ })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: /activity/i })).toBeNull();
+    expect(screen.queryByRole('tab', { name: /manage/i })).toBeNull();
+    expect(screen.getByRole('tab', { name: /overview/i })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /objectives/i })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /files/i })).toBeTruthy();
   });
 
-  it('shows the agent header and metadata for directors', () => {
+  it('shows the member header and metadata for admins', () => {
     briefing.value = COMMANDER_BRIEFING;
-    memberActivityName.value = 'ALPHA-1';
-    render(<AgentPage name="ALPHA-1" viewer="ACTUAL" />);
-    expect(screen.getByRole('heading', { name: 'ALPHA-1' })).toBeTruthy();
-    // Team name from briefing
-    expect(screen.getAllByText(/alpha-team/i).length).toBeGreaterThan(0);
-    // Role from the roster
-    expect(screen.getByText(/engineer/i)).toBeTruthy();
-    // Assigned objective appears in the metadata section
-    expect(screen.getByText(/obj-1 — Ship the feature/)).toBeTruthy();
-    // Online status dot (ALPHA-1 has 1 subscriber in the stub)
-    expect(screen.getByText(/ONLINE/i)).toBeTruthy();
+    memberActivityName.value = 'engineer-1';
+    render(<MemberProfile name="engineer-1" tab="overview" viewer="director-1" />);
+    expect(screen.getByRole('heading', { name: /engineer-1/ })).toBeTruthy();
+    expect(screen.getByText('ENGINEER')).toBeTruthy();
+    expect(screen.getByText(/ONLINE/)).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /activity/i })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /manage/i })).toBeTruthy();
   });
 
-  it('shows the "Open DM" shortcut when viewer is not the target slot', () => {
+  it('shows the "DM" shortcut when viewer is not the target member', () => {
     briefing.value = COMMANDER_BRIEFING;
-    render(<AgentPage name="ALPHA-1" viewer="ACTUAL" />);
-    expect(screen.getByText(/Open DM with ALPHA-1/)).toBeTruthy();
+    render(<MemberProfile name="engineer-1" tab="overview" viewer="director-1" />);
+    expect(screen.getByText(/DM engineer-1/)).toBeTruthy();
+  });
+
+  it('does NOT show the DM shortcut when viewing your own profile', () => {
+    briefing.value = COMMANDER_BRIEFING;
+    render(<MemberProfile name="director-1" tab="overview" viewer="director-1" />);
+    expect(screen.queryByText(/DM director-1/)).toBeNull();
+  });
+
+  it('switches to the objectives tab when that tab is active', () => {
+    briefing.value = COMMANDER_BRIEFING;
+    render(<MemberProfile name="engineer-1" tab="objectives" viewer="director-1" />);
+    expect(screen.getByText(/Ship the feature/)).toBeTruthy();
   });
 });
 

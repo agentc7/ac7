@@ -76,7 +76,7 @@ export interface Team {
  * the roster and briefing.
  */
 export interface Role {
-  /** Short freeform label ("commander", "engineer", "qa-lead"). */
+  /** Short freeform label ("director", "engineer", "qa-lead"). */
   title: string;
   /** Prose describing what this role does on the team. */
   description: string;
@@ -166,7 +166,9 @@ export interface Message {
 }
 
 export interface DeliveryReport {
-  sse: number;
+  /** Count of live WebSocket subscribers that received the message. */
+  live: number;
+  /** Count of registered recipients the message was addressed to. */
   targets: number;
 }
 

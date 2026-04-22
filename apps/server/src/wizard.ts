@@ -209,7 +209,7 @@ async function promptRequired(
 }
 
 async function promptName(io: WizardIO): Promise<string> {
-  const suggested = 'ACTUAL';
+  const suggested = 'director-1';
   while (true) {
     const raw = (await io.prompt(`admin name [${suggested}]: `)).trim();
     const candidate = raw.length === 0 ? suggested : raw;
@@ -235,7 +235,7 @@ async function promptName(io: WizardIO): Promise<string> {
  * wizard picks sensible defaults.
  */
 async function promptRole(io: WizardIO): Promise<Role> {
-  const suggestedTitle = 'commander';
+  const suggestedTitle = 'director';
   const title = await promptRequired(io, `role title [${suggestedTitle}]: `, suggestedTitle, (v) =>
     v.length > 0 && v.length <= 64 ? null : 'title must be 1-64 characters',
   );

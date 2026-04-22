@@ -36,7 +36,7 @@ const ASSIGNEE_TOKEN = 'ac7_test_assignee';
 const OTHER_TOKEN = 'ac7_test_other';
 
 const TEAM: Team = {
-  name: 'alpha-team',
+  name: 'demo-team',
   directive: 'Ship the payments service.',
   brief: 'End-to-end ownership.',
   permissionPresets: {},
@@ -50,19 +50,19 @@ function makeApp() {
   });
   const members = createMemberStore([
     {
-      name: 'ACTUAL',
-      role: { title: 'commander', description: '' },
+      name: 'director-1',
+      role: { title: 'director', description: '' },
       permissions: ['members.manage', 'activity.read'],
       token: CMD_TOKEN,
     },
     {
-      name: 'ALPHA-1',
+      name: 'engineer-1',
       role: { title: 'engineer', description: '' },
       permissions: [],
       token: ASSIGNEE_TOKEN,
     },
     {
-      name: 'BRAVO-1',
+      name: 'engineer-2',
       role: { title: 'engineer', description: '' },
       permissions: [],
       token: OTHER_TOKEN,
@@ -70,7 +70,7 @@ function makeApp() {
   ]);
   const db = openDatabase(':memory:');
   const activityStore = createSqliteActivityStore(db);
-  const app = createApp({
+  const { app } = createApp({
     broker,
     members,
     sessions: new SessionStore(db),
@@ -167,7 +167,7 @@ describe('POST /users/:name/activity', () => {
 
   it('accepts events from the slot itself and returns the count', async () => {
     const res = await app.request(
-      MEMBER_PATHS.activity('ALPHA-1'),
+      MEMBER_PATHS.activity('engineer-1'),
       post(ASSIGNEE_TOKEN, { events: [sampleEvent(1_700_000_000_000)] }),
     );
     expect(res.status).toBe(201);
@@ -177,7 +177,7 @@ describe('POST /users/:name/activity', () => {
 
   it('rejects uploads targeting another slot (even from a director)', async () => {
     const res = await app.request(
-      MEMBER_PATHS.activity('ALPHA-1'),
+      MEMBER_PATHS.activity('engineer-1'),
       post(CMD_TOKEN, { events: [sampleEvent(1_700_000_000_000)] }),
     );
     expect(res.status).toBe(403);
@@ -185,7 +185,7 @@ describe('POST /users/:name/activity', () => {
 
   it('rejects uploads from an unrelated teammate', async () => {
     const res = await app.request(
-      MEMBER_PATHS.activity('ALPHA-1'),
+      MEMBER_PATHS.activity('engineer-1'),
       post(OTHER_TOKEN, { events: [sampleEvent(1_700_000_000_000)] }),
     );
     expect(res.status).toBe(403);
@@ -193,7 +193,7 @@ describe('POST /users/:name/activity', () => {
 
   it('rejects malformed event payloads', async () => {
     const res = await app.request(
-      MEMBER_PATHS.activity('ALPHA-1'),
+      MEMBER_PATHS.activity('engineer-1'),
       post(ASSIGNEE_TOKEN, { events: [{ kind: 'bogus', ts: 1 }] }),
     );
     expect(res.status).toBe(400);
@@ -201,7 +201,7 @@ describe('POST /users/:name/activity', () => {
 
   it('rejects empty event lists (schema requires at least one)', async () => {
     const res = await app.request(
-      MEMBER_PATHS.activity('ALPHA-1'),
+      MEMBER_PATHS.activity('engineer-1'),
       post(ASSIGNEE_TOKEN, { events: [] }),
     );
     expect(res.status).toBe(400);
@@ -218,7 +218,7 @@ describe('GET /users/:name/activity', () => {
     activityStore = fixture.activityStore;
 
     // Seed three events at different timestamps + kinds.
-    activityStore.append('ALPHA-1', [
+    activityStore.append('engineer-1', [
       sampleEvent(1_000, 'llm_exchange'),
       sampleEvent(2_000, 'opaque_http'),
       sampleEvent(3_000, 'llm_exchange'),
@@ -226,27 +226,27 @@ describe('GET /users/:name/activity', () => {
   });
 
   it('returns all events for the slot itself', async () => {
-    const res = await app.request(MEMBER_PATHS.activity('ALPHA-1'), bearer(ASSIGNEE_TOKEN));
+    const res = await app.request(MEMBER_PATHS.activity('engineer-1'), bearer(ASSIGNEE_TOKEN));
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListActivityResponse;
     expect(body.activity).toHaveLength(3);
   });
 
   it('returns all events to a director reading another slot', async () => {
-    const res = await app.request(MEMBER_PATHS.activity('ALPHA-1'), bearer(CMD_TOKEN));
+    const res = await app.request(MEMBER_PATHS.activity('engineer-1'), bearer(CMD_TOKEN));
     expect(res.status).toBe(200);
     const body = (await res.json()) as ListActivityResponse;
     expect(body.activity).toHaveLength(3);
   });
 
   it('rejects a non-director reading another slot', async () => {
-    const res = await app.request(MEMBER_PATHS.activity('ALPHA-1'), bearer(OTHER_TOKEN));
+    const res = await app.request(MEMBER_PATHS.activity('engineer-1'), bearer(OTHER_TOKEN));
     expect(res.status).toBe(403);
   });
 
   it('filters by ts range', async () => {
     const res = await app.request(
-      `${MEMBER_PATHS.activity('ALPHA-1')}?from=1500&to=2500`,
+      `${MEMBER_PATHS.activity('engineer-1')}?from=1500&to=2500`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(200);
@@ -257,7 +257,7 @@ describe('GET /users/:name/activity', () => {
 
   it('filters by single kind', async () => {
     const res = await app.request(
-      `${MEMBER_PATHS.activity('ALPHA-1')}?kind=llm_exchange`,
+      `${MEMBER_PATHS.activity('engineer-1')}?kind=llm_exchange`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(200);
@@ -270,7 +270,7 @@ describe('GET /users/:name/activity', () => {
 
   it('filters by multiple kinds (?kind=llm_exchange&kind=opaque_http)', async () => {
     const res = await app.request(
-      `${MEMBER_PATHS.activity('ALPHA-1')}?kind=llm_exchange&kind=opaque_http`,
+      `${MEMBER_PATHS.activity('engineer-1')}?kind=llm_exchange&kind=opaque_http`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(200);
@@ -280,7 +280,7 @@ describe('GET /users/:name/activity', () => {
 
   it('rejects an unknown kind', async () => {
     const res = await app.request(
-      `${MEMBER_PATHS.activity('ALPHA-1')}?kind=nope`,
+      `${MEMBER_PATHS.activity('engineer-1')}?kind=nope`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(400);
@@ -288,7 +288,7 @@ describe('GET /users/:name/activity', () => {
 
   it('honors limit and returns newest-first', async () => {
     const res = await app.request(
-      `${MEMBER_PATHS.activity('ALPHA-1')}?limit=2`,
+      `${MEMBER_PATHS.activity('engineer-1')}?limit=2`,
       bearer(ASSIGNEE_TOKEN),
     );
     expect(res.status).toBe(200);
@@ -315,13 +315,13 @@ describe('agent activity store directly', () => {
     const db = openDatabase(':memory:');
     const store = createSqliteActivityStore(db);
     const received: number[] = [];
-    const unsubscribe = store.subscribe('ALPHA-1', (row) => {
+    const unsubscribe = store.subscribe('engineer-1', (row) => {
       received.push(row.event.ts);
     });
-    store.append('ALPHA-1', [sampleEvent(1_000), sampleEvent(2_000)]);
+    store.append('engineer-1', [sampleEvent(1_000), sampleEvent(2_000)]);
     expect(received).toEqual([1_000, 2_000]);
     unsubscribe();
-    store.append('ALPHA-1', [sampleEvent(3_000)]);
+    store.append('engineer-1', [sampleEvent(3_000)]);
     // No more calls after unsubscribe.
     expect(received).toEqual([1_000, 2_000]);
   });
@@ -331,10 +331,10 @@ describe('agent activity store directly', () => {
     const store = createSqliteActivityStore(db);
     const alphaRows: number[] = [];
     const bravoRows: number[] = [];
-    store.subscribe('ALPHA-1', (row) => alphaRows.push(row.event.ts));
-    store.subscribe('BRAVO-1', (row) => bravoRows.push(row.event.ts));
-    store.append('ALPHA-1', [sampleEvent(1)]);
-    store.append('BRAVO-1', [sampleEvent(2)]);
+    store.subscribe('engineer-1', (row) => alphaRows.push(row.event.ts));
+    store.subscribe('engineer-2', (row) => bravoRows.push(row.event.ts));
+    store.append('engineer-1', [sampleEvent(1)]);
+    store.append('engineer-2', [sampleEvent(2)]);
     expect(alphaRows).toEqual([1]);
     expect(bravoRows).toEqual([2]);
   });

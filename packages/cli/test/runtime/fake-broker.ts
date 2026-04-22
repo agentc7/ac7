@@ -1,14 +1,15 @@
 /**
- * Minimal HTTP broker used by the link integration tests.
+ * Minimal HTTP + WebSocket broker used by the link integration tests.
  *
- * Speaks just enough of the ac7 wire protocol to exercise the
- * link's HTTP + SSE paths without pulling in @agentc7/core or the
- * real server. Pushes are captured in an array; incoming subscribers
- * are exposed so tests can inject messages on demand.
+ * Speaks just enough of the ac7 wire protocol to exercise the link's
+ * HTTP + WebSocket paths without pulling in @agentc7/core or the real
+ * server. Pushes are captured in an array; incoming WebSocket
+ * subscribers are exposed so tests can inject messages on demand.
  */
 
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { type WebSocket, WebSocketServer } from 'ws';
 
 export interface FakeBrokerPush {
   to?: string | null;
@@ -18,7 +19,7 @@ export interface FakeBrokerPush {
   data?: Record<string, unknown>;
 }
 
-export interface SseSubscriber {
+export interface LiveSubscriber {
   name: string;
   write: (json: Record<string, unknown>) => void;
   close: () => void;
@@ -28,8 +29,8 @@ export interface FakeBroker {
   port: number;
   url: string;
   pushes: FakeBrokerPush[];
-  subscribers: SseSubscriber[];
-  waitForSubscriber: (name: string, timeoutMs?: number) => Promise<SseSubscriber>;
+  subscribers: LiveSubscriber[];
+  waitForSubscriber: (name: string, timeoutMs?: number) => Promise<LiveSubscriber>;
   close: () => Promise<void>;
 }
 
@@ -50,7 +51,7 @@ export const fakeBrokerObjectives: Array<Record<string, unknown>> = [];
 
 export async function startFakeBroker(): Promise<FakeBroker> {
   const pushes: FakeBrokerPush[] = [];
-  const subscribers: SseSubscriber[] = [];
+  const subscribers: LiveSubscriber[] = [];
 
   const httpServer = createServer((req, res) => {
     void handle(req, res).catch((err) => {
@@ -58,6 +59,44 @@ export async function startFakeBroker(): Promise<FakeBroker> {
       res.end(JSON.stringify({ error: String(err) }));
     });
   });
+
+  // WebSocket server attached to the same HTTP server, handling
+  // `/subscribe` upgrades. `noServer: true` means we own the upgrade
+  // dispatch; that lets us auth-check before handing the socket off.
+  const wss = new WebSocketServer({ noServer: true });
+  httpServer.on('upgrade', (req, socket, head) => {
+    const url = new URL(req.url ?? '/', 'http://localhost');
+    if (url.pathname !== '/subscribe') {
+      socket.destroy();
+      return;
+    }
+    if (req.headers.authorization !== `Bearer ${TOKEN}`) {
+      socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+      socket.destroy();
+      return;
+    }
+    const name = url.searchParams.get('name') ?? '';
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      attachSubscriber(ws, name);
+    });
+  });
+
+  function attachSubscriber(ws: WebSocket, name: string): void {
+    const sub: LiveSubscriber = {
+      name,
+      write: (json) => {
+        ws.send(JSON.stringify(json));
+      },
+      close: () => {
+        ws.close();
+      },
+    };
+    subscribers.push(sub);
+    ws.on('close', () => {
+      const idx = subscribers.indexOf(sub);
+      if (idx >= 0) subscribers.splice(idx, 1);
+    });
+  }
 
   async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://localhost');
@@ -174,7 +213,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
       res.writeHead(200, jsonHeaders);
       res.end(
         JSON.stringify({
-          delivery: { sse: 1, targets: 1 },
+          delivery: { live: 1, targets: 1 },
           message: {
             id: `fake-${pushes.length}`,
             ts: Date.now(),
@@ -196,30 +235,9 @@ export async function startFakeBroker(): Promise<FakeBroker> {
       return;
     }
 
-    if (url.pathname === '/subscribe' && req.method === 'GET') {
-      const to = url.searchParams.get('name') ?? '';
-      res.writeHead(200, {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-      });
-      // Initial flush so the link's SSE parser has something to work with.
-      res.write(': connected\n\n');
-      const sub: SseSubscriber = {
-        name: to,
-        write: (json) => {
-          res.write(`data: ${JSON.stringify(json)}\n\n`);
-        },
-        close: () => res.end(),
-      };
-      subscribers.push(sub);
-      req.on('close', () => {
-        const idx = subscribers.indexOf(sub);
-        if (idx >= 0) subscribers.splice(idx, 1);
-      });
-      return;
-    }
-
+    // /subscribe is served as a WebSocket upgrade (see `wss` above).
+    // Any stray GET here — unauthenticated probe, misbehaving client —
+    // falls through to 404.
     res.writeHead(404, jsonHeaders);
     res.end(JSON.stringify({ error: 'not found' }));
   }
@@ -246,6 +264,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
     close: () =>
       new Promise((resolve) => {
         for (const sub of subscribers) sub.close();
+        wss.close();
         httpServer.close(() => resolve());
       }),
   };

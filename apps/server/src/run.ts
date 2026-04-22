@@ -12,10 +12,11 @@
  *                    308 redirect listener on `bindHttp`.
  *   - custom       → HTTP/2+TLS with user-supplied cert/key paths
  *
- * HTTP/2 is the chosen transport because SSE over HTTP/1.1 is capped
- * at 6 connections per browser origin — multi-tab users would lock up
- * the 7th tab. HTTP/2 multiplexes streams over one connection.
- * `allowHTTP1: true` keeps non-HTTP/2 clients working via ALPN.
+ * HTTP/2 is the default transport because browsers cap HTTP/1.1 at
+ * 6 concurrent connections per origin — users with many tabs open
+ * would starve the 7th. HTTP/2 multiplexes requests over one
+ * connection. WebSocket upgrades currently fall back to HTTP/1.1
+ * via ALPN; `allowHTTP1: true` keeps that path working.
  */
 
 import { createServer as createHttpServer, type Server as HttpServer } from 'node:http';
@@ -331,9 +332,9 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   broker.seedMembers(options.members.members());
 
   // Shutdown fan-out: when stop() is called, abort this controller;
-  // every open SSE stream listens and tears down. Without this, idle
-  // streams pin the HTTP server open and Node's server.close() waits
-  // indefinitely.
+  // every open WebSocket handler listens and closes its socket.
+  // Without this, idle connections pin the HTTP server open and
+  // Node's server.close() waits indefinitely.
   const shutdownController = new AbortController();
 
   // Load (or generate) TLS material up front so we can fail boot
@@ -420,7 +421,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
       }
     : undefined;
 
-  const app = createApp({
+  const { app, injectWebSocket } = createApp({
     broker,
     members: options.members,
     sessions,
@@ -484,6 +485,11 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
         port: info.port,
         protocol,
       };
+      // Wire WS upgrades into the Node HTTP server once it's up.
+      // Must happen after `serve()` returns the server instance but
+      // before any client can try to upgrade — the onListen callback
+      // is the safe point.
+      injectWebSocket(server);
       if (cert !== null) listenInfo.cert = cert;
       if (redirectServer !== null) {
         listenInfo.redirectHttpPort = https.bindHttp;
@@ -495,7 +501,8 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
         protocol,
         stop: () =>
           new Promise<void>((stopResolve) => {
-            // Abort all live SSE streams first so close() can complete.
+            // Abort all live WebSocket connections first so close()
+            // can complete.
             shutdownController.abort();
             const closeRedirect = () =>
               new Promise<void>((r) => {

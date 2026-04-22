@@ -34,10 +34,11 @@ import {
   updateObjectiveWatchers,
 } from '../lib/objectives.js';
 import { roster } from '../lib/roster.js';
-import { selectAgentDetail, selectObjectivesList } from '../lib/view.js';
+import { selectObjectivesList } from '../lib/view.js';
 import { MessageAttachments } from './MessageAttachments.js';
 import { MessageLine } from './MessageLine.js';
 import { TracePanel } from './TracePanel.js';
+import { Mention } from './ui/Mention.js';
 
 export interface ObjectiveDetailProps {
   id: string;
@@ -216,13 +217,13 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
           style="gap:4px 14px;margin-top:10px;font-family:var(--f-sans);font-size:13.5px;color:var(--graphite)"
         >
           <span>
-            assignee: <NameRef name={current.assignee} isDirector={isAdmin} />
+            assignee: <Mention name={current.assignee} plain />
           </span>
           <span class="hidden sm:inline" style="color:var(--rule-strong)">
             ·
           </span>
           <span>
-            originator: <NameRef name={current.originator} isDirector={isAdmin} />
+            originator: <Mention name={current.originator} plain />
           </span>
         </div>
       </div>
@@ -533,7 +534,7 @@ function ActionsTab({
                 .filter((t) => t.name !== objective.assignee)
                 .map((t) => (
                   <option key={t.name} value={t.name}>
-                    {t.name} ({t.role})
+                    {t.name} ({t.role.title})
                   </option>
                 ))}
             </select>
@@ -874,7 +875,7 @@ function WatchersSection({
             <option value="">Add watcher…</option>
             {candidates.map((t) => (
               <option key={t.name} value={t.name}>
-                {t.name} ({t.role})
+                {t.name} ({t.role.title})
               </option>
             ))}
           </select>
@@ -897,22 +898,6 @@ function WatchersSection({
         </div>
       )}
     </section>
-  );
-}
-
-function NameRef({ name, isDirector }: { name: string; isDirector: boolean }) {
-  if (!isDirector) {
-    return <span style="color:var(--steel);font-weight:600">{name}</span>;
-  }
-  return (
-    <button
-      type="button"
-      onClick={() => selectAgentDetail(name)}
-      class="text-link-steel"
-      style="font-weight:600;padding:0"
-    >
-      {name}
-    </button>
   );
 }
 

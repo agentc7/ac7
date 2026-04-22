@@ -1,7 +1,7 @@
 {
   "name": "@agentc7/sdk",
-  "version": "0.3.1",
-  "description": "Wire contract and TypeScript SDK for ac7 \u2014 types, schemas, protocol constants, and HTTP client.",
+  "version": "0.0.0-dev",
+  "description": "Wire contract and TypeScript SDK for ac7 — types, schemas, protocol constants, and HTTP client.",
   "license": "Apache-2.0",
   "author": "Andrew Przybilla <andrewprzybilla@gmail.com>",
   "homepage": "https://github.com/agentc7/ac7#readme",
@@ -60,9 +60,11 @@
     "clean": "rm -rf dist .turbo"
   },
   "dependencies": {
+    "ws": "^8.20.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {
+    "@types/ws": "^8.18.1",
     "tsup": "^8.0.0",
     "typescript": "^6.0.3",
     "vitest": "^4.0.0"

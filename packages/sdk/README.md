@@ -20,14 +20,14 @@ const client = new Client({
 
 // Chat
 await client.push({
-  agentId: 'ALPHA-1',
+  agentId: 'engineer-1',
   body: 'ci failed on main',
   level: 'warning',
 });
 
 // Objectives
 const objective = await client.createObjective({
-  assignee: 'ALPHA-1',
+  assignee: 'engineer-1',
   title: 'Pull main and run smoke tests',
   outcome: 'Smoke tests green on latest main',
 });

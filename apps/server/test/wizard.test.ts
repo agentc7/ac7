@@ -103,10 +103,10 @@ describe('runFirstRunWizard', () => {
     expect(config.store.size()).toBe(1);
     expect(config.store.hasAdmin()).toBe(true);
 
-    const admin = config.store.findByName('ACTUAL');
+    const admin = config.store.findByName('director-1');
     expect(admin).toBeTruthy();
     expect(admin?.permissions).toContain('members.manage');
-    expect(admin?.role.title).toBe('commander');
+    expect(admin?.role.title).toBe('director');
     expect(admin?.totpSecret).toBe(FIXED_TOTP_SECRET);
     expect(admin?.totpLastCounter).toBe(0);
 
@@ -114,7 +114,7 @@ describe('runFirstRunWizard', () => {
     const reloaded = loadTeamConfigFromFile(configPath);
     expect(reloaded.store.size()).toBe(1);
     const resolved = reloaded.store.resolve('ac7_test_fixed_token');
-    expect(resolved?.name).toBe('ACTUAL');
+    expect(resolved?.name).toBe('director-1');
     expect(resolved?.permissions).toContain('members.manage');
 
     expect(io.remaining()).toBe(0);
@@ -137,7 +137,7 @@ describe('runFirstRunWizard', () => {
     const io = mockIO(happyScript(code, { roleTitle: 'chief', roleDescription: 'Runs the ship' }));
     const config = await runFirstRunWizard(wizardOpts(configPath, io));
 
-    const admin = config.store.findByName('ACTUAL');
+    const admin = config.store.findByName('director-1');
     expect(admin?.role.title).toBe('chief');
     expect(admin?.role.description).toBe('Runs the ship');
   });

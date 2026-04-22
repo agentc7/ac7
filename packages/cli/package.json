@@ -1,6 +1,6 @@
 {
   "name": "@agentc7/cli",
-  "version": "0.3.1",
+  "version": "0.0.0-dev",
   "description": "IndividualContributor CLI for ac7 — wrap agents with ac7 claude-code, push objectives, manage the team.",
   "license": "Apache-2.0",
   "author": "Andrew Przybilla <andrewprzybilla@gmail.com>",
@@ -55,10 +55,12 @@
     "@agentc7/server": "workspace:*",
     "@types/node": "^25.6.0",
     "@types/node-forge": "^1.3.11",
+    "@types/ws": "^8.18.1",
     "selfsigned": "^5.5.0",
     "tsup": "^8.0.0",
     "typescript": "^6.0.3",
-    "vitest": "^4.0.0"
+    "vitest": "^4.0.0",
+    "ws": "^8.20.0"
   },
   "publishConfig": {
     "access": "public"
