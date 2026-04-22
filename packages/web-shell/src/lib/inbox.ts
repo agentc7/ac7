@@ -13,9 +13,9 @@
 
 import type { Objective } from '@agentc7/sdk/types';
 import { computed } from '@preact/signals';
+import { identity } from './identity.js';
 import { DM_PREFIX, isDmThread, messagesByThread, PRIMARY_THREAD } from './messages.js';
 import { objectives as objectivesSignal } from './objectives.js';
-import { session } from './session.js';
 import { lastReadByThread, unreadCount } from './unread.js';
 
 export type InboxItem =
@@ -44,9 +44,9 @@ export type InboxItem =
     };
 
 export const inboxItems = computed<InboxItem[]>(() => {
-  const s = session.value;
-  if (s.status !== 'authenticated') return [];
-  const viewer = s.member;
+  const id = identity.value;
+  if (id === null) return [];
+  const viewer = id.member;
   const items: InboxItem[] = [];
 
   // Unread threads.

@@ -10,6 +10,7 @@
  * tests only exercise the signal-driven view, not the live stream.
  */
 
+import { Client } from '@agentc7/sdk/client';
 import type { Message } from '@agentc7/sdk/types';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -18,11 +19,11 @@ import { NavColumn as Sidebar } from '../src/components/shell/NavColumn.js';
 import { TeamHome } from '../src/components/TeamHome.js';
 import { Transcript } from '../src/components/Transcript.js';
 import { __resetBriefingForTests, briefing } from '../src/lib/briefing.js';
-import { __resetClientForTests } from '../src/lib/client.js';
+import { __resetClientForTests, setClient } from '../src/lib/client.js';
+import { __resetIdentityForTests, identity } from '../src/lib/identity.js';
 import { __resetLiveForTests } from '../src/lib/live.js';
 import { __resetMessagesForTests, appendMessages } from '../src/lib/messages.js';
 import { __resetRosterForTests, roster } from '../src/lib/roster.js';
-import { session } from '../src/lib/session.js';
 import {
   __resetViewForTests,
   selectDmWith,
@@ -67,8 +68,7 @@ class MockWebSocket {
 (globalThis as any).WebSocket = MockWebSocket;
 
 beforeEach(() => {
-  session.value = {
-    status: 'authenticated',
+  identity.value = {
     member: 'director-1',
     role: { title: 'director', description: '' },
     permissions: ['members.manage'],
@@ -85,6 +85,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  __resetIdentityForTests();
   globalThis.fetch = originalFetch;
 });
 
@@ -106,6 +107,9 @@ function stubFetch(
     }
     return Promise.resolve(new Response('no route', { status: 500 }));
   }) as typeof fetch;
+  // Build the SDK client AFTER the fetch stub is in place — the
+  // client captures the current `globalThis.fetch` at construction.
+  setClient(new Client({ url: 'http://localhost', useCookies: true }));
 }
 
 function mkMsg(overrides: Partial<Message>): Message {
