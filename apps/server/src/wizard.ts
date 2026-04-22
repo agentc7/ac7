@@ -170,6 +170,7 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Team
     https: defaultHttpsConfig(),
     webPush: null,
     files: null,
+    jwt: null,
     migrated: 0,
   };
 }

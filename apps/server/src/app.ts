@@ -66,6 +66,7 @@ import { deleteCookie, setCookie } from 'hono/cookie';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
 import { type FilesystemStore, FsError, type ViewerContext } from './files/index.js';
+import type { JwtVerifier } from './jwt.js';
 import type { Logger } from './logger.js';
 import type { ActivityStore } from './member-activity.js';
 import {
@@ -165,6 +166,13 @@ export interface AppOptions {
    * rather than mutating in-memory without a durable backing.
    */
   persistMembers?: () => void;
+  /**
+   * Optional JWKS-backed JWT verifier. When provided, bearer tokens
+   * that match JWT structure are verified against it; the `member`
+   * claim resolves to a LoadedMember by name. Omit for self-hosted
+   * instances that aren't federating with a SaaS or partner issuer.
+   */
+  jwt?: JwtVerifier;
   /**
    * Clock injection for tests — rate-limit book-keeping uses `now()`
    * so tests don't have to wall-clock-wait to see a lockout expire.
@@ -269,7 +277,7 @@ export function createApp(options: AppOptions): CreatedApp {
     vapidPublicKey,
     onPushed,
   } = options;
-  const { files, persistMembers } = options;
+  const { files, persistMembers, jwt } = options;
   const maxFileSize = Math.min(
     options.maxFileSize ?? DEFAULT_MAX_FILE_SIZE,
     HARD_CAP_MAX_FILE_SIZE,
@@ -282,7 +290,12 @@ export function createApp(options: AppOptions): CreatedApp {
   // Node's HTTP server routes upgrade events to Hono.
   const { injectWebSocket, upgradeWebSocket } = createNodeWebSocket({ app });
 
-  const auth = createAuthMiddleware({ members, sessions, logger });
+  const auth = createAuthMiddleware({
+    members,
+    sessions,
+    logger,
+    ...(jwt !== undefined ? { jwt } : {}),
+  });
 
   // Unified lockout map — per-user buckets keyed on name plus a
   // global "codeless" bucket keyed on a fixed sentinel. Both obey
