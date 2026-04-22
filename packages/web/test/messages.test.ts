@@ -18,7 +18,7 @@ function msg(overrides: Partial<Message>): Message {
     id: 'm1',
     ts: 1,
     to: null,
-    from: 'ACTUAL',
+    from: 'director-1',
     title: null,
     body: 'hi',
     level: 'info',
@@ -34,39 +34,45 @@ beforeEach(() => {
 
 describe('threadKeyOf', () => {
   it('maps broadcasts to primary', () => {
-    expect(threadKeyOf(msg({ to: null }), 'ACTUAL')).toBe(PRIMARY_THREAD);
+    expect(threadKeyOf(msg({ to: null }), 'director-1')).toBe(PRIMARY_THREAD);
   });
 
   it('inbound DM is keyed by the sender name', () => {
-    expect(threadKeyOf(msg({ to: 'ACTUAL', from: 'build-bot' }), 'ACTUAL')).toBe('dm:build-bot');
+    expect(threadKeyOf(msg({ to: 'director-1', from: 'build-bot' }), 'director-1')).toBe(
+      'dm:build-bot',
+    );
   });
 
   it('outbound DM is keyed by the recipient name', () => {
-    expect(threadKeyOf(msg({ to: 'build-bot', from: 'ACTUAL' }), 'ACTUAL')).toBe('dm:build-bot');
+    expect(threadKeyOf(msg({ to: 'build-bot', from: 'director-1' }), 'director-1')).toBe(
+      'dm:build-bot',
+    );
   });
 
   it('self-DM gets its own key', () => {
-    expect(threadKeyOf(msg({ to: 'ACTUAL', from: 'ACTUAL' }), 'ACTUAL')).toBe('dm:self');
+    expect(threadKeyOf(msg({ to: 'director-1', from: 'director-1' }), 'director-1')).toBe(
+      'dm:self',
+    );
   });
 });
 
 describe('appendMessages', () => {
   it('sorts by ts and dedupes by id', () => {
-    appendMessages('ACTUAL', [
+    appendMessages('director-1', [
       msg({ id: 'a', ts: 2, body: 'second' }),
       msg({ id: 'b', ts: 1, body: 'first' }),
     ]);
     // Overlapping re-append (simulates a reconnect backfill).
-    appendMessages('ACTUAL', [msg({ id: 'a', ts: 2, body: 'second' })]);
+    appendMessages('director-1', [msg({ id: 'a', ts: 2, body: 'second' })]);
     const primary = threadMessages(PRIMARY_THREAD);
     expect(primary.map((m) => m.id)).toEqual(['b', 'a']);
     expect(primary).toHaveLength(2);
   });
 
   it('routes DMs and broadcasts into separate buckets', () => {
-    appendMessages('ACTUAL', [
+    appendMessages('director-1', [
       msg({ id: 'p1', ts: 1, to: null, body: 'team' }),
-      msg({ id: 'd1', ts: 2, to: 'build-bot', from: 'ACTUAL', body: 'dm' }),
+      msg({ id: 'd1', ts: 2, to: 'build-bot', from: 'director-1', body: 'dm' }),
     ]);
     expect(threadMessages(PRIMARY_THREAD)).toHaveLength(1);
     expect(threadMessages('dm:build-bot')).toHaveLength(1);
@@ -75,9 +81,9 @@ describe('appendMessages', () => {
 
 describe('threadKeys', () => {
   it('always includes primary and sorts DMs alphabetically', () => {
-    appendMessages('ACTUAL', [
-      msg({ id: 'd1', ts: 1, to: 'zebra', from: 'ACTUAL' }),
-      msg({ id: 'd2', ts: 2, to: 'alpha', from: 'ACTUAL' }),
+    appendMessages('director-1', [
+      msg({ id: 'd1', ts: 1, to: 'zebra', from: 'director-1' }),
+      msg({ id: 'd2', ts: 2, to: 'alpha', from: 'director-1' }),
     ]);
     expect(threadKeys()).toEqual([PRIMARY_THREAD, 'dm:alpha', 'dm:zebra']);
   });

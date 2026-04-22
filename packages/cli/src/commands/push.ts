@@ -63,7 +63,7 @@ export async function runPushCommand(input: PushCommandInput, client: Client): P
   return (
     `delivered to ${target}\n` +
     `  message_id: ${result.message.id}\n` +
-    `  sse: ${result.delivery.sse}\n` +
+    `  live: ${result.delivery.live}\n` +
     `  targets: ${result.delivery.targets}`
   );
 }

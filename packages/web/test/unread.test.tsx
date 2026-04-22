@@ -18,7 +18,7 @@
 import type { Message } from '@agentc7/sdk/types';
 import { cleanup, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { Sidebar } from '../src/components/Sidebar.js';
+import { NavColumn as Sidebar } from '../src/components/shell/NavColumn.js';
 import { __resetBriefingForTests } from '../src/lib/briefing.js';
 import { __resetMessagesForTests, appendMessages, messagesByThread } from '../src/lib/messages.js';
 import { __resetRosterForTests, roster } from '../src/lib/roster.js';
@@ -29,7 +29,12 @@ import {
   markThreadRead,
   unreadCount,
 } from '../src/lib/unread.js';
-import { __resetViewForTests, view } from '../src/lib/view.js';
+import {
+  __resetViewForTests,
+  selectDmWith,
+  selectOverview,
+  selectThread,
+} from '../src/lib/view.js';
 
 function mkMsg(overrides: Partial<Message> = {}): Message {
   return {
@@ -157,7 +162,7 @@ describe('<Sidebar /> unread indicators', () => {
       teammates: [
         {
           name: 'me',
-          role: { title: 'commander', description: '' },
+          role: { title: 'director', description: '' },
           permissions: ['members.manage'],
         },
         { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
@@ -182,7 +187,7 @@ describe('<Sidebar /> unread indicators', () => {
     lastReadByThread.value = new Map([['primary', 5]]);
     // Navigate away from primary so the "active thread suppresses
     // its own badge" rule doesn't hide the pill we're testing for.
-    view.value = { kind: 'overview' };
+    selectOverview();
     render(<Sidebar viewer="me" />);
     expect(screen.getByText('1')).toBeTruthy();
   });
@@ -195,7 +200,7 @@ describe('<Sidebar /> unread indicators', () => {
     ]);
     lastReadByThread.value = new Map([['dm:build-bot', 0]]);
     // Make sure we're NOT viewing that thread (otherwise auto-active suppresses it).
-    view.value = { kind: 'thread', key: 'primary' };
+    selectThread('primary');
     render(<Sidebar viewer="me" />);
     expect(screen.getByText('2')).toBeTruthy();
   });
@@ -207,7 +212,7 @@ describe('<Sidebar /> unread indicators', () => {
     // Pretend the user is actively on the DM — the Shell's auto-read
     // effect would normally have bumped lastRead already. The
     // sidebar's "badge only when !active" branch suppresses the pill.
-    view.value = { kind: 'thread', key: 'dm:build-bot' };
+    selectDmWith('build-bot');
     render(<Sidebar viewer="me" />);
     // Badge absent even though the raw unread count would be > 0 if
     // lastRead hadn't been bumped.
@@ -218,7 +223,7 @@ describe('<Sidebar /> unread indicators', () => {
     setRoster();
     appendMessages('me', [mkMsg({ id: 'a', ts: 10, to: 'me', from: 'build-bot' })]);
     lastReadByThread.value = new Map([['dm:build-bot', 0]]);
-    view.value = { kind: 'thread', key: 'primary' };
+    selectThread('primary');
     render(<Sidebar viewer="me" />);
     const label = screen.getByText('build-bot');
     expect(label.className).toMatch(/\bfont-semibold\b/);
@@ -228,7 +233,7 @@ describe('<Sidebar /> unread indicators', () => {
     setRoster();
     appendMessages('me', [mkMsg({ id: 'a', ts: 10, to: null, from: 'me' })]);
     lastReadByThread.value = new Map([['primary', 0]]);
-    view.value = { kind: 'overview' };
+    selectOverview();
     render(<Sidebar viewer="me" />);
     expect(screen.queryByText('1')).toBeNull();
   });
@@ -245,7 +250,7 @@ describe('<Sidebar /> unread indicators', () => {
     );
     appendMessages('me', bunch);
     lastReadByThread.value = new Map([['primary', 0]]);
-    view.value = { kind: 'overview' };
+    selectOverview();
     render(<Sidebar viewer="me" />);
     expect(screen.getByText('99+')).toBeTruthy();
     expect(screen.queryByText('105')).toBeNull();

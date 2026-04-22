@@ -49,8 +49,8 @@ const objective: Objective = {
   body: '',
   outcome: 'Feature shipped',
   status: 'active',
-  assignee: 'ALPHA-1',
-  originator: 'ACTUAL',
+  assignee: 'engineer-1',
+  originator: 'director-1',
   watchers: [],
   createdAt: 1_700_000_000_000,
   updatedAt: 1_700_000_000_500,
@@ -62,7 +62,7 @@ const objective: Objective = {
 
 const llmRow: ActivityRow = {
   id: 1,
-  memberName: 'ALPHA-1',
+  memberName: 'engineer-1',
   createdAt: 1_700_000_000_500,
   event: {
     kind: 'llm_exchange',

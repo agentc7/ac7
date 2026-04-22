@@ -34,20 +34,20 @@ function tmpPath(): string {
 
 const VALID_CONFIG_JSON = JSON.stringify({
   team: {
-    name: 'alpha-team',
+    name: 'demo-team',
     directive: 'ship the payment service',
     brief: '',
     permissionPresets: {},
   },
   members: [
     {
-      name: 'ACTUAL',
-      role: { title: 'commander', description: '' },
+      name: 'director-1',
+      role: { title: 'director', description: '' },
       permissions: ['members.manage'],
       tokenHash: `sha256:${'a'.repeat(64)}`,
     },
     {
-      name: 'ALPHA-1',
+      name: 'engineer-1',
       role: { title: 'engineer', description: '' },
       permissions: [],
       tokenHash: `sha256:${'b'.repeat(64)}`,
@@ -68,9 +68,9 @@ describe('runSetupCommand', () => {
       await runSetupCommand({ configPath }, (line) => output.push(line));
     } catch (err) {
       const message = (err as Error).message;
-      expect(message).toContain('alpha-team');
-      expect(message).toContain('ACTUAL');
-      expect(message).toContain('ALPHA-1');
+      expect(message).toContain('demo-team');
+      expect(message).toContain('director-1');
+      expect(message).toContain('engineer-1');
       expect(message).toContain(`rm ${configPath}`);
     }
   });

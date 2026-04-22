@@ -20,7 +20,7 @@ const OP_TOKEN = 'ac7_auth_test_operator_token';
 const BOT_TOKEN = 'ac7_auth_test_bot_token';
 
 const TEAM: Team = {
-  name: 'alpha-team',
+  name: 'demo-team',
   directive: 'Verify the auth surface.',
   brief: '',
   permissionPresets: {},
@@ -36,8 +36,8 @@ function makeApp(options: { now?: () => number; totpSecret?: string } = {}) {
   });
   const members = createMemberStore([
     {
-      name: 'ACTUAL',
-      role: { title: 'commander', description: '' },
+      name: 'director-1',
+      role: { title: 'director', description: '' },
       permissions: ['members.manage'],
       token: OP_TOKEN,
       totpSecret: secret,
@@ -51,7 +51,7 @@ function makeApp(options: { now?: () => number; totpSecret?: string } = {}) {
   ]);
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db, { now: options.now });
-  const app = createApp({
+  const { app } = createApp({
     broker,
     members,
     sessions,
@@ -137,11 +137,11 @@ describe('SessionStore', () => {
   it('creates, looks up, touches, and deletes sessions', () => {
     const db = openDatabase(':memory:');
     const store = new SessionStore(db);
-    const created = store.create('ACTUAL', 'test-ua');
-    expect(created.memberName).toBe('ACTUAL');
+    const created = store.create('director-1', 'test-ua');
+    expect(created.memberName).toBe('director-1');
 
     const found = store.get(created.id);
-    expect(found?.memberName).toBe('ACTUAL');
+    expect(found?.memberName).toBe('director-1');
 
     store.touch(created.id);
     const touched = store.get(created.id);
@@ -156,7 +156,7 @@ describe('SessionStore', () => {
     let clock = 1_000_000;
     const db = openDatabase(':memory:');
     const store = new SessionStore(db, { now: () => clock });
-    const created = store.create('ACTUAL', null);
+    const created = store.create('director-1', null);
     // Jump past the 7d TTL.
     clock += 8 * 24 * 60 * 60 * 1000;
     expect(store.get(created.id)).toBeNull();
@@ -175,13 +175,13 @@ describe('POST /session/totp', () => {
     const res = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member: 'ACTUAL', code }),
+      body: JSON.stringify({ member: 'director-1', code }),
     });
 
     expect(res.status).toBe(200);
     const body = (await res.json()) as SessionResponse;
-    expect(body.member).toBe('ACTUAL');
-    expect(body.role.title).toBe('commander');
+    expect(body.member).toBe('director-1');
+    expect(body.role.title).toBe('director');
     expect(body.expiresAt).toBeGreaterThan(now);
 
     const cookie = cookieFrom(res);
@@ -203,14 +203,14 @@ describe('POST /session/totp', () => {
     const first = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member: 'ACTUAL', code }),
+      body: JSON.stringify({ member: 'director-1', code }),
     });
     expect(first.status).toBe(200);
 
     const second = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member: 'ACTUAL', code }),
+      body: JSON.stringify({ member: 'director-1', code }),
     });
     expect(second.status).toBe(401);
   });
@@ -243,7 +243,7 @@ describe('POST /session/totp', () => {
     const res = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member: 'ACTUAL', code: 'abc' }),
+      body: JSON.stringify({ member: 'director-1', code: 'abc' }),
     });
     expect(res.status).toBe(400);
   });
@@ -256,7 +256,7 @@ describe('POST /session/totp', () => {
       const res = await app.request('/session/totp', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ member: 'ACTUAL', code: '000000' }),
+        body: JSON.stringify({ member: 'director-1', code: '000000' }),
       });
       expect(res.status).toBe(401);
     }
@@ -265,7 +265,7 @@ describe('POST /session/totp', () => {
     const lockedRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member: 'ACTUAL', code: currentCode(secret, clock) }),
+      body: JSON.stringify({ member: 'director-1', code: currentCode(secret, clock) }),
     });
     expect(lockedRes.status).toBe(429);
 
@@ -274,7 +274,7 @@ describe('POST /session/totp', () => {
     const recoveredRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member: 'ACTUAL', code: currentCode(secret, clock) }),
+      body: JSON.stringify({ member: 'director-1', code: currentCode(secret, clock) }),
     });
     expect(recoveredRes.status).toBe(200);
   });
@@ -291,7 +291,7 @@ describe('session lifecycle', () => {
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member: 'ACTUAL', code }),
+      body: JSON.stringify({ member: 'director-1', code }),
     });
     const cookie = cookieFrom(loginRes);
     expect(cookie).toBeTruthy();
@@ -316,7 +316,7 @@ describe('session lifecycle', () => {
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member: 'ACTUAL', code: currentCode(secret, now) }),
+      body: JSON.stringify({ member: 'director-1', code: currentCode(secret, now) }),
     });
     const cookie = cookieFrom(loginRes);
     if (!cookie) return;
@@ -326,8 +326,8 @@ describe('session lifecycle', () => {
     });
     expect(sessionRes.status).toBe(200);
     const body = (await sessionRes.json()) as SessionResponse;
-    expect(body.member).toBe('ACTUAL');
-    expect(body.role.title).toBe('commander');
+    expect(body.member).toBe('director-1');
+    expect(body.role.title).toBe('director');
     expect(body.expiresAt).toBeGreaterThan(now);
   });
 });
@@ -349,7 +349,7 @@ describe('dual auth (bearer OR cookie)', () => {
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member: 'ACTUAL', code: currentCode(secret, now) }),
+      body: JSON.stringify({ member: 'director-1', code: currentCode(secret, now) }),
     });
     const cookie = cookieFrom(loginRes);
     if (!cookie) return;
@@ -373,7 +373,7 @@ describe('dual auth (bearer OR cookie)', () => {
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member: 'ACTUAL', code: currentCode(secret, now) }),
+      body: JSON.stringify({ member: 'director-1', code: currentCode(secret, now) }),
     });
     const cookie = cookieFrom(loginRes);
     if (!cookie) return;
@@ -397,7 +397,7 @@ describe('dual auth (bearer OR cookie)', () => {
     const loginRes = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ member: 'ACTUAL', code: currentCode(secret, now) }),
+      body: JSON.stringify({ member: 'director-1', code: currentCode(secret, now) }),
     });
     const cookie = cookieFrom(loginRes);
     if (!cookie) return;

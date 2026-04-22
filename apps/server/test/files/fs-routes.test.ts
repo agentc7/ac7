@@ -68,7 +68,7 @@ function makeApp() {
   for (const m of members.members()) {
     files.ensureHome(m.name);
   }
-  const app = createApp({
+  const { app } = createApp({
     broker,
     members,
     sessions,

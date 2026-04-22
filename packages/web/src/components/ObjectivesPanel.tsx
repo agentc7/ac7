@@ -15,6 +15,7 @@ import { useEffect } from 'preact/hooks';
 import { briefing } from '../lib/briefing.js';
 import { loadObjectives, objectives, objectivesLoaded } from '../lib/objectives.js';
 import { selectObjectiveCreate, selectObjectiveDetail } from '../lib/view.js';
+import { EmptyState, ErrorCallout, Loading, PageHeader } from './ui/index.js';
 
 export interface ObjectivesPanelProps {
   viewer: string;
@@ -47,75 +48,47 @@ export function ObjectivesPanel({ viewer }: ObjectivesPanelProps) {
   const canCreate = b?.permissions.includes('objectives.create') ?? false;
 
   if (!loaded && err === null) {
-    return (
-      <div
-        class="flex-1 flex items-center justify-center"
-        style="color:var(--muted);font-family:var(--f-mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase"
-      >
-        ━━ Loading objectives…
-      </div>
-    );
+    return <Loading label="Loading objectives…" />;
   }
+
+  const retry = () => {
+    panelError.value = null;
+    void loadObjectives().catch((e) => {
+      panelError.value = e instanceof Error ? e.message : String(e);
+    });
+  };
 
   return (
     <div
       class="flex-1 overflow-y-auto"
       style="padding:24px max(1rem,env(safe-area-inset-right)) 24px max(1rem,env(safe-area-inset-left))"
     >
-      <div
-        class="flex flex-wrap items-end justify-between gap-3"
-        style="margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--rule)"
-      >
-        <div class="min-w-0">
-          <div class="eyebrow">Objectives</div>
-          <h2
-            class="font-display"
-            style="font-size:30px;font-weight:700;letter-spacing:-0.02em;color:var(--ink);line-height:1.1;margin-top:6px"
-          >
-            {list.length} on the board
-          </h2>
-        </div>
-        {canCreate && (
-          <button
-            type="button"
-            onClick={selectObjectiveCreate}
-            class="btn btn-primary flex-shrink-0"
-          >
-            + New
-          </button>
-        )}
-      </div>
+      <PageHeader
+        eyebrow="Objectives"
+        title={`${list.length} on the board`}
+        actions={
+          canCreate && (
+            <button type="button" onClick={selectObjectiveCreate} class="btn btn-primary">
+              + New
+            </button>
+          )
+        }
+      />
 
       {err !== null && (
-        <div role="alert" class="callout err" style="margin-bottom:16px">
-          <div class="icon" aria-hidden="true">
-            ◆
-          </div>
-          <div class="body">
-            <div class="title">Couldn't load objectives</div>
-            <div class="msg">{err}</div>
-            <button
-              type="button"
-              class="btn btn-ghost btn-sm"
-              style="margin-top:8px"
-              onClick={() => {
-                panelError.value = null;
-                void loadObjectives().catch((e) => {
-                  panelError.value = e instanceof Error ? e.message : String(e);
-                });
-              }}
-            >
-              ↻ Retry
-            </button>
-          </div>
-        </div>
+        <ErrorCallout
+          title="Couldn't load objectives"
+          message={err}
+          onRetry={retry}
+          style="margin-bottom:16px"
+        />
       )}
 
       {list.length === 0 ? (
-        <div class="empty">
-          <h4>No objectives yet</h4>
-          <p>{canCreate ? 'Click "+ New" to assign one.' : 'Nothing on your plate right now.'}</p>
-        </div>
+        <EmptyState
+          title="No objectives yet"
+          message={canCreate ? 'Click "+ New" to assign one.' : 'Nothing on your plate right now.'}
+        />
       ) : (
         <ul style="display:flex;flex-direction:column;gap:10px;list-style:none;padding:0;margin:0">
           {list.map((o) => (

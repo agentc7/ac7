@@ -38,7 +38,7 @@ export interface BrokerOptions {
   logger?: BrokerLogger;
   /**
    * Max subscribers invoked in parallel during a single `push`. Keeps
-   * one slow SSE writer from head-of-line-blocking every other
+   * one slow WebSocket writer from head-of-line-blocking every other
    * subscriber on the same push, while still bounding fan-out
    * concurrency so a pathological 10000-subscriber broadcast doesn't
    * spawn 10000 simultaneous async tasks.
@@ -94,8 +94,8 @@ const DEFAULT_FANOUT_CONCURRENCY = 32;
  * before resolving. Exceptions from individual callbacks are passed
  * to `onError` and swallowed from the caller's perspective — fan-out
  * must be best-effort-to-each-subscriber rather than all-or-nothing,
- * because one stuck SSE writer should not prevent delivery to the
- * other 99 subscribers on the same push.
+ * because one stuck WebSocket writer should not prevent delivery to
+ * the other 99 subscribers on the same push.
  *
  * Kept as an inline helper (rather than adding `p-limit` as a core
  * dep) because `@agentc7/core` is deliberately dep-light — it
@@ -189,8 +189,8 @@ export class Broker {
    * Pre-populate the registry with every member defined in the team
    * config. Called once at server boot so the roster shows the full
    * team structure even before anyone has connected. Connection
-   * state is still tracked live via SSE subscribers; seeding only
-   * creates the zero-subscriber PresenceState entry.
+   * state is still tracked live via WebSocket subscribers; seeding
+   * only creates the zero-subscriber PresenceState entry.
    */
   seedMembers(members: Iterable<Pick<Member, 'name' | 'role'>>): void {
     const ts = this.now();
@@ -239,15 +239,15 @@ export class Broker {
     }
 
     const targetStates = [...recipients];
-    let sse = 0;
+    let live = 0;
 
     // Flatten (state, subscriber) pairs once so one bounded-concurrency
     // sweep covers every subscriber across every recipient. With the
-    // old nested serial await, one slow SSE writer on user A would
-    // head-of-line-block delivery to user B — fine at 1–3 subscribers
-    // per user in v0 tests, visibly broken at team scale under
-    // backpressure. See `fanoutConcurrency` in BrokerOptions for the
-    // tunable; default 32 stays well above real-world subscriber
+    // old nested serial await, one slow WebSocket writer on user A
+    // would head-of-line-block delivery to user B — fine at 1–3
+    // subscribers per user in v0 tests, visibly broken at team scale
+    // under backpressure. See `fanoutConcurrency` in BrokerOptions for
+    // the tunable; default 32 stays well above real-world subscriber
     // counts while bounding pathological broadcast cases.
     type FanoutTask = { state: PresenceState; sub: Subscriber };
     const tasks: FanoutTask[] = [];
@@ -268,7 +268,7 @@ export class Broker {
       this.fanoutConcurrency,
       async ({ sub }) => {
         await sub(message);
-        sse++;
+        live++;
       },
       ({ state }, err) => {
         this.logger.warn('subscriber threw during delivery', {
@@ -281,7 +281,7 @@ export class Broker {
 
     return {
       delivery: {
-        sse,
+        live,
         targets: targetName ? (this.registry.has(targetName) ? 1 : 0) : targetStates.length,
       },
       message,

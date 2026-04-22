@@ -24,25 +24,30 @@
 
 import { effect, signal } from '@preact/signals';
 import { useEffect } from 'preact/hooks';
-import { AgentPage } from '../components/AgentPage.js';
+import { AccountPanel } from '../components/AccountPanel.js';
+import { CommandPalette } from '../components/CommandPalette.js';
 import { Composer } from '../components/Composer.js';
+import { DisconnectedBanner } from '../components/DisconnectedBanner.js';
 import { FilesPanel } from '../components/FilesPanel.js';
 import { Header } from '../components/Header.js';
+import { InboxPanel } from '../components/InboxPanel.js';
+import { MemberProfile } from '../components/MemberProfile.js';
 import { MembersPanel } from '../components/MembersPanel.js';
 import { ObjectiveCreate } from '../components/ObjectiveCreate.js';
 import { ObjectiveDetail } from '../components/ObjectiveDetail.js';
 import { ObjectivesPanel } from '../components/ObjectivesPanel.js';
-import { RosterPanel } from '../components/RosterPanel.js';
-import { Sidebar } from '../components/Sidebar.js';
+import { AppShell, NavColumn } from '../components/shell/index.js';
+import { TeamHome } from '../components/TeamHome.js';
 import { Transcript } from '../components/Transcript.js';
 import { loadBriefing } from '../lib/briefing.js';
 import { getClient } from '../lib/client.js';
+import { startSubscribe, streamConnected } from '../lib/live.js';
 import { appendMessages, messagesByThread } from '../lib/messages.js';
 import { loadObjectives } from '../lib/objectives.js';
+import { closePalette, togglePalette } from '../lib/palette.js';
 import { initializePushState } from '../lib/push.js';
 import { loadRoster, startRosterPolling } from '../lib/roster.js';
 import { logout, session } from '../lib/session.js';
-import { startSubscribe, streamConnected } from '../lib/sse.js';
 import { initializeLastReadFromStore, markThreadRead } from '../lib/unread.js';
 import { type View, view } from '../lib/view.js';
 
@@ -187,44 +192,78 @@ export function Shell() {
     // actually changes (logout → login as a different slot).
   }, [s.status === 'authenticated' ? s.member : null]);
 
+  // Global ⌘K / Ctrl-K to toggle the command palette. Installed once
+  // while the shell is mounted so it's only live inside the
+  // authenticated app. Also closes the palette on Escape at the
+  // document level (the palette's own handler covers when the input
+  // has focus; this catches stray Escape presses).
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const isK = e.key === 'k' || e.key === 'K';
+      if ((e.metaKey || e.ctrlKey) && isK) {
+        e.preventDefault();
+        togglePalette();
+      } else if (e.key === 'Escape') {
+        closePalette();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   if (s.status !== 'authenticated') return null;
 
   const mountErr = mountError.value;
 
   return (
-    <>
-      <Header />
-      <main class="flex flex-col min-h-0 flex-1 overflow-hidden">
-        {mountErr !== null && (
-          <div
-            role="alert"
-            class="callout warn flex-shrink-0"
-            style="border-radius:0;overflow-y:auto"
-          >
-            <div class="icon" aria-hidden="true">
-              ◆
-            </div>
-            <div class="body">
-              <div class="title">Some panels failed to load</div>
-              <div class="msg">{mountErr}</div>
-            </div>
-            <button
-              type="button"
-              onClick={() => {
-                mountError.value = null;
-              }}
-              aria-label="Dismiss"
-              class="close"
+    <AppShell
+      header={<Header />}
+      nav={<NavColumn viewer={s.member} />}
+      banner={
+        <>
+          <DisconnectedBanner />
+          {mountErr !== null && (
+            <div
+              role="alert"
+              class="callout warn flex-shrink-0"
+              style="border-radius:0;overflow-y:auto"
             >
-              ×
-            </button>
-          </div>
-        )}
-        <div class="flex flex-1 min-h-0 overflow-hidden">
-          <Sidebar viewer={s.member} />
-          <section class="flex-1 flex flex-col min-w-0 min-h-0">{renderView(v, s.member)}</section>
-        </div>
-      </main>
+              <div class="icon" aria-hidden="true">
+                ◆
+              </div>
+              <div class="body">
+                <div class="title">Some panels failed to load</div>
+                <div class="msg">{mountErr}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  mountError.value = null;
+                }}
+                aria-label="Dismiss"
+                class="close"
+              >
+                ×
+              </button>
+            </div>
+          )}
+        </>
+      }
+      main={renderView(v, s.member)}
+    />
+  );
+}
+
+/**
+ * Shell is the outermost authenticated surface. The CommandPalette
+ * renders next to it as a sibling so its fixed-position modal isn't
+ * constrained by the AppShell flex context.
+ */
+export function ShellWithOverlays() {
+  return (
+    <>
+      <Shell />
+      <CommandPalette />
     </>
   );
 }
@@ -249,15 +288,19 @@ function renderView(v: View, viewer: string) {
         </>
       );
     case 'overview':
-      return <RosterPanel viewer={viewer} />;
+      return <TeamHome viewer={viewer} />;
+    case 'inbox':
+      return <InboxPanel />;
+    case 'account':
+      return <AccountPanel viewer={viewer} />;
     case 'objectives-list':
       return <ObjectivesPanel viewer={viewer} />;
     case 'objective-detail':
       return <ObjectiveDetail id={v.id} viewer={viewer} />;
     case 'objective-create':
       return <ObjectiveCreate />;
-    case 'agent-detail':
-      return <AgentPage name={v.name} viewer={viewer} />;
+    case 'member-profile':
+      return <MemberProfile name={v.name} tab={v.tab} viewer={viewer} />;
     case 'files':
       return <FilesPanel viewer={viewer} path={v.path} />;
     case 'members':

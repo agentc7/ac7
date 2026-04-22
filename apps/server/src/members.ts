@@ -19,7 +19,7 @@
  *   {
  *     "_comment": "...",
  *     "team": {
- *       "name": "alpha-team",
+ *       "name": "demo-team",
  *       "directive": "Ship the payment service.",
  *       "brief": "We own the full lifecycle...",
  *       "permissionPresets": {
@@ -28,11 +28,11 @@
  *       }
  *     },
  *     "members": [
- *       { "name": "ACTUAL",  "role": { "title": "commander", "description": "Leads the team." },
+ *       { "name": "director-1",  "role": { "title": "director", "description": "Leads the team." },
  *         "instructions": "Approve objectives before they go to the team.",
  *         "permissions": ["admin"],
  *         "tokenHash": "sha256:..." },
- *       { "name": "ALPHA-1", "role": { "title": "engineer", "description": "Ships code." },
+ *       { "name": "engineer-1", "role": { "title": "engineer", "description": "Ships code." },
  *         "instructions": "", "permissions": [],
  *         "token": "ac7_plaintext_for_migration" }
  *     ]
@@ -998,7 +998,7 @@ export function exampleConfig(): string {
   return `{
   "_comment": "${CONFIG_FILE_COMMENT}",
   "team": {
-    "name": "alpha-team",
+    "name": "demo-team",
     "directive": "Describe what the team is working toward.",
     "brief": "Longer narrative about scope, constraints, operating window.",
     "permissionPresets": {
@@ -1020,21 +1020,21 @@ export function exampleConfig(): string {
   },
   "members": [
     {
-      "name": "ACTUAL",
-      "role": { "title": "commander", "description": "Leads the team, approves objective scope, mediates cross-functional decisions." },
+      "name": "director-1",
+      "role": { "title": "director", "description": "Leads the team, approves objective scope, mediates cross-functional decisions." },
       "instructions": "Approve objectives before they go to the team. Escalate blockers within 2 hours.",
       "permissions": ["admin"],
       "token": "ac7_change_me_to_a_real_secret"
     },
     {
-      "name": "LT-ONE",
-      "role": { "title": "operator", "description": "Runs day-to-day operations and triages incoming work." },
+      "name": "manager-1",
+      "role": { "title": "manager", "description": "Runs day-to-day operations and triages incoming work." },
       "instructions": "",
       "permissions": ["operator"],
       "token": "ac7_change_me_to_another_real_secret"
     },
     {
-      "name": "ALPHA-1",
+      "name": "engineer-1",
       "role": { "title": "engineer", "description": "Writes and ships code changes; reports progress on assigned objectives." },
       "instructions": "",
       "permissions": [],

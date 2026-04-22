@@ -1,36 +1,32 @@
 /**
- * Header bar — identity + connection status.
+ * Header — slim top bar: brand left, search centered, profile right.
  *
- * Layout (left → right):
- *   ☰  ▲ logo  │  NAME · role · team-name   …   notif · ●ONLINE
+ *   ☰  ▲                   [⌕  Jump to…   ⌘K]                  [AV]
  *
- * Surface is paper with a subtle bottom rule, matching the canonical
- * topbar treatment from theme.css. Connection state uses canonical
- * `.badge` semantics (soft pill, color shifts by state).
+ * The search pill is the visual anchor — prominent, centered, and
+ * the same ⌘K launcher that's available globally. Clicking the
+ * avatar on the right jumps to the viewer's own profile (a quick
+ * path that doesn't require scrolling to the NavColumn footer).
+ *
+ * Connection health surfaces only via `DisconnectedBanner` when
+ * something is wrong — no persistent "ONLINE" pill in chrome.
  */
 
-import { briefing } from '../lib/briefing.js';
+import { openPalette } from '../lib/palette.js';
 import { session } from '../lib/session.js';
-import { streamBackfillError, streamConnected } from '../lib/sse.js';
-import { isSidebarOpen, openSidebar } from '../lib/view.js';
-import { NotificationToggle } from './NotificationToggle.js';
+import { isSidebarOpen, openSidebar, selectAccount } from '../lib/view.js';
 
 export function Header() {
   const s = session.value;
-  const b = briefing.value;
-  const connected = streamConnected.value;
-  const backfillErr = streamBackfillError.value;
   if (s.status !== 'authenticated') return null;
-
   const drawerOpen = isSidebarOpen.value;
 
   return (
     <header
-      class="flex items-center justify-between gap-3 flex-shrink-0 relative z-40"
-      style="background:var(--paper);border-bottom:1px solid var(--rule);padding:12px max(0.75rem,env(safe-area-inset-right)) 12px max(0.75rem,env(safe-area-inset-left));padding-top:max(0.75rem,env(safe-area-inset-top))"
+      class="flex items-center flex-shrink-0 relative z-40 gap-2"
+      style="background:var(--paper);border-bottom:1px solid var(--rule);padding:10px max(0.75rem,env(safe-area-inset-right)) 10px max(0.75rem,env(safe-area-inset-left));padding-top:max(0.5rem,env(safe-area-inset-top))"
     >
-      <div class="flex items-center gap-3 sm:gap-4 min-w-0">
-        {/* Hamburger — visible below md only. 44×44 hit area. */}
+      <div class="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
         <button
           type="button"
           onClick={openSidebar}
@@ -52,11 +48,9 @@ export function Header() {
           </svg>
         </button>
 
-        {/* Heptagon mark — steel on paper. Matches favicon.svg, logo.svg,
-            and the Classic-Mesh winner from logo-workshop-classic-mesh.html. */}
         <svg
           viewBox="0 0 120 120"
-          class="h-7 w-7 flex-shrink-0"
+          class="h-6 w-6 flex-shrink-0"
           fill="none"
           stroke="var(--steel)"
           stroke-width="3"
@@ -73,57 +67,72 @@ export function Header() {
           <circle cx="16.13" cy="70.01" r="10" fill="var(--steel)" stroke="none" />
           <circle cx="24.82" cy="31.94" r="10" fill="var(--steel)" stroke="none" />
         </svg>
-
-        {/* Vertical divider matches the topbar lockup style */}
-        <span
-          class="hidden sm:block flex-shrink-0"
-          style="width:1px;height:22px;background:var(--rule-strong)"
-          aria-hidden="true"
-        />
-
-        <span
-          class="font-display truncate"
-          style="font-weight:700;font-size:18px;letter-spacing:-0.01em;color:var(--ink);line-height:1"
-        >
-          {s.member}
-        </span>
-
-        {/* Role title pill — `.badge` from theme.css with privilege tint */}
-        <span
-          class={`badge ${s.permissions.includes('members.manage') ? 'solid' : s.permissions.includes('objectives.create') ? 'ember' : 'soft'} hidden sm:inline-flex flex-shrink-0`}
-          title={s.role.description.length > 0 ? s.role.description : undefined}
-        >
-          {s.role.title.toUpperCase()}
-        </span>
-
-        {b && (
-          <span
-            class="hidden md:inline truncate flex-shrink min-w-0"
-            style="font-family:var(--f-mono);font-size:11.5px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase"
-          >
-            · {b.team.name}
-          </span>
-        )}
       </div>
 
-      <div class="flex items-center gap-3 sm:gap-4 flex-shrink-0">
-        <NotificationToggle />
-        {/* Connection indicator — uses badge semantics so the state
-            change reads as a deliberate brand pill, not ad-hoc text. */}
-        <span
-          class={`badge ${
-            backfillErr !== null ? 'ember' : connected ? 'soft' : 'muted'
-          } flex-shrink-0`}
-          title={
-            backfillErr !== null ? `reconnected — ${backfillErr}` : connected ? 'online' : 'offline'
-          }
-        >
-          <span aria-hidden="true">{backfillErr !== null ? '◆' : connected ? '●' : '◇'}</span>
-          <span class="hidden sm:inline">
-            {backfillErr !== null ? 'BACKFILL FAIL' : connected ? 'ONLINE' : 'OFFLINE'}
-          </span>
-        </span>
+      <div class="flex justify-center flex-shrink-0" style="flex:2 1 auto;max-width:480px">
+        <SearchButton />
+      </div>
+
+      <div class="flex items-center justify-end flex-1 min-w-0">
+        <ProfileButton name={s.member} />
       </div>
     </header>
   );
+}
+
+/**
+ * Search affordance. On ≥sm renders as a mock input with the ⌘K
+ * hint; on mobile it collapses to just an icon. Clicking opens the
+ * palette — the real input lives inside the modal.
+ */
+function SearchButton() {
+  return (
+    <button
+      type="button"
+      onClick={openPalette}
+      aria-label="Open command palette"
+      title="Search and jump (⌘K)"
+      class="flex items-center gap-2 w-full"
+      style="background:var(--ice);border:1px solid var(--rule);border-radius:8px;padding:6px 12px;color:var(--muted);cursor:pointer;font-family:var(--f-sans);font-size:13px;max-width:100%"
+    >
+      <span aria-hidden="true">⌕</span>
+      <span class="hidden sm:inline flex-1" style="text-align:left">
+        Jump to member, objective, thread…
+      </span>
+      <span class="sm:hidden flex-1" style="text-align:left">
+        Search…
+      </span>
+      <span
+        class="hidden sm:inline flex-shrink-0"
+        style="font-family:var(--f-mono);font-size:10.5px;letter-spacing:.06em;color:var(--muted);background:var(--paper);border:1px solid var(--rule);border-radius:4px;padding:1px 5px"
+      >
+        ⌘K
+      </span>
+    </button>
+  );
+}
+
+function ProfileButton({ name }: { name: string }) {
+  return (
+    <button
+      type="button"
+      onClick={selectAccount}
+      aria-label={`Open account settings (${name})`}
+      title={`Account settings (@${name})`}
+      class="flex items-center justify-center flex-shrink-0"
+      style="background:transparent;border:none;padding:0;cursor:pointer"
+    >
+      <span class="avatar" aria-hidden="true" style="width:32px;height:32px;font-size:12px">
+        {initials(name)}
+      </span>
+    </button>
+  );
+}
+
+function initials(name: string): string {
+  const parts = name.split(/[\s_-]+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0]?.[0] ?? ''}${parts[1]?.[0] ?? ''}`.toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
 }

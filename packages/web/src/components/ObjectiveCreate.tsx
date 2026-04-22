@@ -227,7 +227,7 @@ export function ObjectiveCreate() {
             <option value="">Select a teammate…</option>
             {teammates.map((t) => (
               <option key={t.name} value={t.name}>
-                {t.name} ({t.role})
+                {t.name} ({t.role.title})
               </option>
             ))}
           </select>
@@ -278,7 +278,7 @@ export function ObjectiveCreate() {
               .filter((t) => !watchers.value.includes(t.name) && t.name !== assignee.value)
               .map((t) => (
                 <option key={t.name} value={t.name}>
-                  {t.name} ({t.role})
+                  {t.name} ({t.role.title})
                 </option>
               ))}
           </select>

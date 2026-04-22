@@ -127,7 +127,7 @@ export const PresenceSchema = z.object({
 });
 
 export const DeliveryReportSchema = z.object({
-  sse: z.number().int().nonnegative(),
+  live: z.number().int().nonnegative(),
   targets: z.number().int().nonnegative(),
 });
 

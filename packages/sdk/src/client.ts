@@ -4,8 +4,13 @@
  * A thin, typed wrapper over the broker HTTP API. Validates every response
  * against `@agentc7/sdk/schemas` so callers get either a validated,
  * strongly-typed result or a `ClientError`.
+ *
+ * Live streams (`subscribe`) run over WebSocket. The default client
+ * uses the Node `ws` package; tests and non-Node runtimes can inject
+ * a `WebSocket` class via `ClientOptions.WebSocket`.
  */
 
+import { WebSocket as NodeWebSocket } from 'ws';
 import {
   AUTH_HEADER,
   FS_PATHS,
@@ -110,6 +115,13 @@ export interface ClientOptions {
   useCookies?: boolean;
   /** Custom fetch implementation (for tests or polyfills). Defaults to `globalThis.fetch`. */
   fetch?: typeof fetch;
+  /**
+   * Custom WebSocket constructor (for tests or non-Node runtimes).
+   * Must match the `ws` package's `WebSocket` surface — construct
+   * with `(url, { headers? })` and expose `on('message'|'close'|'error', …)`
+   * plus `close()`. Defaults to `WebSocket` from `ws`.
+   */
+  WebSocket?: typeof NodeWebSocket;
 }
 
 export class ClientError extends Error {
@@ -129,6 +141,7 @@ export class Client {
   private readonly token: string | null;
   private readonly useCookies: boolean;
   private readonly fetchImpl: typeof fetch;
+  private readonly WebSocketImpl: typeof NodeWebSocket;
 
   constructor(options: ClientOptions) {
     // Normalize: strip trailing slash so URL composition is predictable.
@@ -146,6 +159,7 @@ export class Client {
     }
     // Bind to avoid "Illegal invocation" on some runtimes.
     this.fetchImpl = fetchRef.bind(globalThis);
+    this.WebSocketImpl = options.WebSocket ?? NodeWebSocket;
   }
 
   /** Make a request with the protocol header and credentials. */
@@ -679,87 +693,113 @@ export class Client {
   }
 
   /**
-   * Open a long-lived SSE subscription for the caller's member `name`
-   * and yield messages as they arrive. Aborts cleanly when `signal`
-   * is triggered. The server rejects `name` that doesn't match the
-   * authenticated identity with 403.
+   * Open a long-lived WebSocket subscription for the caller's member
+   * `name` and yield messages as they arrive. Aborts cleanly when
+   * `signal` is triggered. The server rejects `name` that doesn't
+   * match the authenticated identity with a pre-upgrade 403, so the
+   * handshake throws `ClientError` in that case.
    */
   async *subscribe(name: string, signal?: AbortSignal): AsyncIterable<Message> {
-    const url = new URL(PATHS.subscribe.replace(/^\//, ''), this.baseUrl);
-    url.searchParams.set('name', name);
-
-    const headers = new Headers();
-    headers.set(PROTOCOL_HEADER, String(PROTOCOL_VERSION));
-    headers.set(AUTH_HEADER, `Bearer ${this.token}`);
-    headers.set('Accept', 'text/event-stream');
-
-    const resp = await this.fetchImpl(url, { method: 'GET', headers, signal });
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => '');
-      throw new ClientError(
-        `subscribe failed: ${resp.status} ${resp.statusText}`,
-        resp.status,
-        body,
-      );
+    const url = this.buildWsUrl(PATHS.subscribe, { name });
+    const headers: Record<string, string> = {
+      [PROTOCOL_HEADER]: String(PROTOCOL_VERSION),
+    };
+    if (this.token) {
+      headers[AUTH_HEADER] = `Bearer ${this.token}`;
     }
-    if (!resp.body) {
-      throw new ClientError('subscribe: empty response body', resp.status, '');
-    }
+    const ws = new this.WebSocketImpl(url, { headers });
 
-    const reader = resp.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
+    // Async-iterator plumbing: messages arrive out-of-band via
+    // `on('message')`, so we buffer them in a queue that the
+    // generator drains. State lives on a single object so TS's flow
+    // analysis doesn't collapse the closure-written fields to `null`.
+    // `resolver` wakes the consumer when the queue is empty and a new
+    // frame (or close/error) arrives.
+    const state: { done: boolean; error: Error | null; resolver: (() => void) | null } = {
+      done: false,
+      error: null,
+      resolver: null,
+    };
+    const queue: Message[] = [];
+    const wake = (): void => {
+      const r = state.resolver;
+      state.resolver = null;
+      r?.();
+    };
+
+    ws.on('message', (data: unknown) => {
+      try {
+        const text =
+          typeof data === 'string'
+            ? data
+            : Buffer.isBuffer(data)
+              ? data.toString('utf8')
+              : data instanceof ArrayBuffer
+                ? new TextDecoder().decode(data)
+                : String(data);
+        queue.push(MessageSchema.parse(JSON.parse(text)));
+      } catch (err) {
+        state.error = err instanceof Error ? err : new Error(String(err));
+        state.done = true;
+      }
+      wake();
+    });
+    ws.on('close', () => {
+      state.done = true;
+      wake();
+    });
+    ws.on('error', (err: Error) => {
+      state.error = err;
+      state.done = true;
+      wake();
+    });
+
+    const abortHandler = (): void => {
+      try {
+        ws.close(1000, 'client abort');
+      } catch {
+        /* already closed */
+      }
+    };
+    signal?.addEventListener('abort', abortHandler);
 
     try {
       while (true) {
-        const { done, value } = await reader.read();
-        if (done) return;
-        buffer += decoder.decode(value, { stream: true });
-
-        let idx: number;
-        // biome-ignore lint/suspicious/noAssignInExpressions: standard SSE frame loop
-        while ((idx = buffer.indexOf('\n\n')) !== -1) {
-          const frame = buffer.slice(0, idx);
-          buffer = buffer.slice(idx + 2);
-          const message = parseSseFrame(frame);
-          if (message !== null) yield message;
+        if (queue.length > 0) {
+          yield queue.shift() as Message;
+          continue;
         }
+        if (state.done) {
+          if (state.error !== null) {
+            throw new ClientError(`subscribe: ${state.error.message}`, 0, '');
+          }
+          return;
+        }
+        await new Promise<void>((r) => {
+          state.resolver = r;
+        });
       }
     } finally {
+      signal?.removeEventListener('abort', abortHandler);
       try {
-        reader.releaseLock();
+        ws.close();
       } catch {
-        /* reader may already be released if cancelled */
+        /* already closed */
       }
     }
   }
-}
 
-/**
- * Parse a single SSE frame. Returns a validated `Message` or null for any
- * frame we shouldn't surface to the caller.
- *
- * Per the SSE spec, only the default `message` event carries a payload
- * we care about. Named events (`connected`, `keepalive`, …) and pure
- * comments are skipped. This is what keeps the consumer resilient to
- * connection-level traffic like hello frames and idle heartbeats.
- */
-function parseSseFrame(frame: string): Message | null {
-  const dataLines: string[] = [];
-  let eventType = 'message';
-  for (const line of frame.split('\n')) {
-    if (line.startsWith(':')) continue; // SSE comment
-    if (line.startsWith('event:')) {
-      eventType = line.slice(6).trim();
-      continue;
-    }
-    if (line.startsWith('data:')) {
-      dataLines.push(line.slice(5).replace(/^ /, ''));
-    }
+  /**
+   * Compose a `ws://` or `wss://` URL for a subscription endpoint.
+   * Upgrades the scheme from the HTTP baseUrl and URL-encodes any
+   * query params. Path is the same as the HTTP route — only the
+   * transport changes.
+   */
+  private buildWsUrl(path: string, query: Record<string, string> = {}): string {
+    const u = new URL(path.replace(/^\//, ''), this.baseUrl);
+    if (u.protocol === 'http:') u.protocol = 'ws:';
+    else if (u.protocol === 'https:') u.protocol = 'wss:';
+    for (const [k, v] of Object.entries(query)) u.searchParams.set(k, v);
+    return u.toString();
   }
-  if (eventType !== 'message') return null;
-  if (dataLines.length === 0) return null;
-  const payload = dataLines.join('\n');
-  if (payload === '') return null;
-  return MessageSchema.parse(JSON.parse(payload));
 }

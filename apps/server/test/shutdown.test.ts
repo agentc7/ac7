@@ -34,8 +34,8 @@ describe('runServer shutdown with live SSE subscriber', () => {
   beforeAll(async () => {
     const members = createMemberStore([
       {
-        name: 'ACTUAL',
-        role: { title: 'commander', description: '' },
+        name: 'director-1',
+        role: { title: 'director', description: '' },
         permissions: ['members.manage'],
         token: OP_TOKEN,
       },
@@ -67,7 +67,7 @@ describe('runServer shutdown with live SSE subscriber', () => {
     let iterationsBeforeClose = 0;
     const subPromise = (async () => {
       try {
-        for await (const _msg of client.subscribe('ACTUAL', ac.signal)) {
+        for await (const _msg of client.subscribe('director-1', ac.signal)) {
           iterationsBeforeClose++;
         }
       } catch {

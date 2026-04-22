@@ -38,20 +38,20 @@ function tmpPath(): string {
 
 const VALID_CONFIG_JSON = JSON.stringify({
   team: {
-    name: 'alpha-team',
+    name: 'demo-team',
     directive: 'ship',
     brief: '',
     permissionPresets: {},
   },
   members: [
     {
-      name: 'ACTUAL',
-      role: { title: 'commander', description: '' },
+      name: 'director-1',
+      role: { title: 'director', description: '' },
       permissions: ['members.manage'],
       tokenHash: `sha256:${'a'.repeat(64)}`,
     },
     {
-      name: 'ALPHA-1',
+      name: 'engineer-1',
       role: { title: 'engineer', description: '' },
       permissions: [],
       tokenHash: `sha256:${'b'.repeat(64)}`,
@@ -72,11 +72,11 @@ describe('runEnrollCommand', () => {
   it('errors when the config file does not exist', async () => {
     const configPath = tmpPath();
     // Don't write the file — tmpPath only mkdtemps the dir.
-    await expect(runEnrollCommand({ user: 'ACTUAL', configPath }, () => {})).rejects.toThrow(
+    await expect(runEnrollCommand({ user: 'director-1', configPath }, () => {})).rejects.toThrow(
       UsageError,
     );
     try {
-      await runEnrollCommand({ user: 'ACTUAL', configPath }, () => {});
+      await runEnrollCommand({ user: 'director-1', configPath }, () => {});
     } catch (err) {
       const msg = (err as Error).message;
       expect(msg).toContain('no config file');
@@ -93,15 +93,15 @@ describe('runEnrollCommand', () => {
       expect(err).toBeInstanceOf(UsageError);
       const msg = (err as Error).message;
       expect(msg).toContain("'ghost'");
-      expect(msg).toContain('ACTUAL');
-      expect(msg).toContain('ALPHA-1');
+      expect(msg).toContain('director-1');
+      expect(msg).toContain('engineer-1');
     }
   });
 
   it('errors when the existing config is invalid', async () => {
     const configPath = tmpPath();
     writeFileSync(configPath, '{ "nope": true }');
-    await expect(runEnrollCommand({ user: 'ACTUAL', configPath }, () => {})).rejects.toThrow(
+    await expect(runEnrollCommand({ user: 'director-1', configPath }, () => {})).rejects.toThrow(
       UsageError,
     );
   });
@@ -115,7 +115,7 @@ describe('runEnrollCommand', () => {
     writeFileSync(configPath, VALID_CONFIG_JSON);
     const output: string[] = [];
     await expect(
-      runEnrollCommand({ user: 'ACTUAL', configPath }, (line) => output.push(line)),
+      runEnrollCommand({ user: 'director-1', configPath }, (line) => output.push(line)),
     ).rejects.toThrow(/not a TTY/);
   });
 });

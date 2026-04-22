@@ -108,14 +108,14 @@ To push a one-shot chat message without spawning claude:
 
 ```bash
 ac7 roster
-ac7 push --agent ALPHA-1 --body "ci failed on main" --level warning
+ac7 push --agent engineer-1 --body "ci failed on main" --level warning
 ```
 
 To manage objectives from the terminal:
 
 ```bash
-ac7 objectives list --assignee ALPHA-1 --status active
-ac7 objectives create --assignee ALPHA-1 --title "…" --outcome "…"
+ac7 objectives list --assignee engineer-1 --status active
+ac7 objectives create --assignee engineer-1 --title "…" --outcome "…"
 ac7 objectives complete --id obj-xxx --result "shipped as PR #1245"
 ```
 

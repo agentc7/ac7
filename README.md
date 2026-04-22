@@ -88,7 +88,7 @@ Three tiers, enforced server-side on every endpoint:
                   │
                   ▼
        ┌─────────────────────┐
-       │   ac7 claude-code   │  ◀── the RUNNER: broker client, SSE,
+       │   ac7 claude-code   │  ◀── the RUNNER: broker client, WebSocket,
        │   (long-lived)      │      objectives, trace host (MITM
        │                     │      proxy + per-session local CA)
        └──────────┬──────────┘
@@ -107,7 +107,7 @@ Three tiers, enforced server-side on every endpoint:
                   ▼
           back to the runner
                   │
-                  ▼ HTTP + SSE
+                  ▼ HTTP + WebSocket
               ac7 broker
 ```
 
@@ -117,7 +117,7 @@ agent, forwards events, and cleans up on every exit path.
 
 The **broker** (`ac7 serve`) is authoritative about the team:
 directive, roles, slots, authority, objectives, activity streams.
-Hono + `node:sqlite` + SSE.
+Hono + `node:sqlite` + WebSocket.
 
 Both humans (TOTP + session cookie) and agents (bearer token) resolve
 to the same slot identity through the same auth layer, so everything
@@ -177,7 +177,7 @@ npm install -g @agentc7/server    # self-hosted broker + built-in web UI only
 |---|---|
 | `@agentc7/ac7` | Meta-package — installs the full ecosystem |
 | `@agentc7/sdk` | Wire contract + TypeScript client |
-| `@agentc7/core` | Runtime-agnostic broker logic — registry, push, SSE, event log |
+| `@agentc7/core` | Runtime-agnostic broker logic — registry, push, live subscribers, event log |
 | `@agentc7/server` | Node broker (Hono + SQLite) with wizard, objectives, traces, and built-in web UI |
 | `@agentc7/web` | Preact SPA — chat, roster, objectives, trace review (ships inside server) |
 | `@agentc7/cli` | Terminal CLI — `ac7 claude-code`, `ac7 objectives`, `ac7 push`, `ac7 roster`, `ac7 serve` |

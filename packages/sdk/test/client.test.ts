@@ -1,7 +1,37 @@
+import { EventEmitter } from 'node:events';
 import { describe, expect, it } from 'vitest';
+import type { WebSocket as WsWebSocket } from 'ws';
 import { Client, ClientError } from '../src/client.js';
 import { PROTOCOL_HEADER, PROTOCOL_VERSION } from '../src/protocol.js';
 import type { Message, PushResult } from '../src/types.js';
+
+/**
+ * Minimal stand-in for `ws.WebSocket`. Exposes `.on('message'|'close'|'error')`
+ * and `.close()`. Tests drive it by `emit`ing events directly.
+ * Constructed instances land on `FakeWebSocket.instances` so tests
+ * can grab the live socket and push frames through it.
+ */
+class FakeWebSocket extends EventEmitter {
+  static instances: FakeWebSocket[] = [];
+  readonly url: string;
+  readonly opts: { headers?: Record<string, string> } | undefined;
+  closed = false;
+  constructor(url: string, opts?: { headers?: Record<string, string> }) {
+    super();
+    this.url = url;
+    this.opts = opts;
+    FakeWebSocket.instances.push(this);
+  }
+  close(code?: number, reason?: string): void {
+    if (this.closed) return;
+    this.closed = true;
+    this.emit('close', code ?? 1000, reason ?? '');
+  }
+}
+
+function asWs(): typeof WsWebSocket {
+  return FakeWebSocket as unknown as typeof WsWebSocket;
+}
 
 function makeFakeFetch(
   handler: (url: URL, init: RequestInit) => Response | Promise<Response>,
@@ -69,7 +99,7 @@ describe('Client', () => {
       attachments: [],
     };
     const payload: PushResult = {
-      delivery: { sse: 1, targets: 1 },
+      delivery: { live: 1, targets: 1 },
       message: fakeMessage,
     };
     const client = new Client({
@@ -79,7 +109,7 @@ describe('Client', () => {
     });
     const result = await client.push({ to: 'agent-1', body: 'hello world' });
     expect(result.message.body).toBe('hello world');
-    expect(result.delivery.sse).toBe(1);
+    expect(result.delivery.live).toBe(1);
   });
 
   it('throws ClientError on non-2xx with the response body', async () => {
@@ -105,7 +135,7 @@ describe('Client', () => {
     }
   });
 
-  it('subscribe yields parsed messages from SSE frames', async () => {
+  it('subscribe yields parsed messages from WebSocket frames', async () => {
     const fakeMessage: Message = {
       id: 'msg-1',
       ts: 1_700_000_000_000,
@@ -118,67 +148,68 @@ describe('Client', () => {
       attachments: [],
     };
     const fakeMessage2: Message = { ...fakeMessage, id: 'msg-2', body: 'second' };
-    const sse =
-      `data: ${JSON.stringify(fakeMessage)}\n\n` + `data: ${JSON.stringify(fakeMessage2)}\n\n`;
 
+    FakeWebSocket.instances = [];
     const client = new Client({
       url: 'http://example.test:8717',
       token: 'x',
-      fetch: makeFakeFetch(
-        () =>
-          new Response(sse, {
-            status: 200,
-            headers: { 'Content-Type': 'text/event-stream' },
-          }),
-      ),
+      fetch: makeFakeFetch(() => jsonResponse({})),
+      WebSocket: asWs(),
     });
 
     const received: Message[] = [];
-    for await (const msg of client.subscribe('agent-1')) {
-      received.push(msg);
-    }
+    const iteration = (async () => {
+      for await (const msg of client.subscribe('agent-1')) {
+        received.push(msg);
+      }
+    })();
+
+    // Give subscribe() a tick to construct the WS and wire listeners.
+    await new Promise((r) => setTimeout(r, 0));
+    const ws = FakeWebSocket.instances[0];
+    expect(ws).toBeDefined();
+    if (!ws) return;
+    // Upgrade URL should be ws:// (not http://) and carry `name` query.
+    expect(ws.url.startsWith('ws://example.test:8717/subscribe')).toBe(true);
+    expect(ws.url).toContain('name=agent-1');
+    expect(ws.opts?.headers?.Authorization).toBe('Bearer x');
+    expect(ws.opts?.headers?.[PROTOCOL_HEADER]).toBe(String(PROTOCOL_VERSION));
+
+    ws.emit('message', JSON.stringify(fakeMessage));
+    ws.emit('message', JSON.stringify(fakeMessage2));
+    ws.close();
+    await iteration;
+
     expect(received).toHaveLength(2);
     expect(received[0]?.id).toBe('msg-1');
     expect(received[1]?.body).toBe('second');
   });
 
-  it('subscribe handles frames split across chunks', async () => {
-    const fakeMessage: Message = {
-      id: 'msg-split',
-      ts: 1_700_000_000_000,
-      to: 'agent-1',
-      from: null,
-      title: null,
-      body: 'split across chunks',
-      level: 'info',
-      data: {},
-      attachments: [],
-    };
-    const json = JSON.stringify(fakeMessage);
-    // Split the frame mid-payload to exercise the buffering path.
-    const mid = Math.floor(json.length / 2);
-    const chunk1 = `data: ${json.slice(0, mid)}`;
-    const chunk2 = `${json.slice(mid)}\n\n`;
-
-    const stream = new ReadableStream({
-      start(controller) {
-        const enc = new TextEncoder();
-        controller.enqueue(enc.encode(chunk1));
-        controller.enqueue(enc.encode(chunk2));
-        controller.close();
-      },
-    });
-
+  it('subscribe exits cleanly when the caller aborts', async () => {
+    FakeWebSocket.instances = [];
     const client = new Client({
       url: 'http://example.test:8717',
       token: 'x',
-      fetch: makeFakeFetch(() => new Response(stream, { status: 200 })),
+      fetch: makeFakeFetch(() => jsonResponse({})),
+      WebSocket: asWs(),
     });
+
+    const ac = new AbortController();
     const received: Message[] = [];
-    for await (const msg of client.subscribe('agent-1')) {
-      received.push(msg);
-    }
-    expect(received).toHaveLength(1);
-    expect(received[0]?.body).toBe('split across chunks');
+    const iteration = (async () => {
+      for await (const msg of client.subscribe('agent-1', ac.signal)) {
+        received.push(msg);
+      }
+    })();
+
+    await new Promise((r) => setTimeout(r, 0));
+    const ws = FakeWebSocket.instances[0];
+    expect(ws).toBeDefined();
+    if (!ws) return;
+    ac.abort();
+    // Abort handler calls ws.close which emits 'close'; iteration returns.
+    await iteration;
+    expect(ws.closed).toBe(true);
+    expect(received).toHaveLength(0);
   });
 });

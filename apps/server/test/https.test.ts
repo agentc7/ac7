@@ -24,7 +24,7 @@ import { SessionStore } from '../src/sessions.js';
 const OP_TOKEN = 'ac7_https_test_operator_token';
 
 const TEAM: Team = {
-  name: 'alpha-team',
+  name: 'demo-team',
   directive: 'Verify the HTTPS surface.',
   brief: '',
   permissionPresets: {},
@@ -222,8 +222,8 @@ describe('secureCookies option', () => {
   it('sets Secure on session cookies when enabled', async () => {
     const members = createMemberStore([
       {
-        name: 'ACTUAL',
-        role: { title: 'commander', description: '' },
+        name: 'director-1',
+        role: { title: 'director', description: '' },
         permissions: ['members.manage'],
         token: OP_TOKEN,
         totpSecret: 'JBSWY3DPEHPK3PXP',
@@ -242,7 +242,7 @@ describe('secureCookies option', () => {
     const now = 1_700_000_000_000;
     const code = currentCode('JBSWY3DPEHPK3PXP', now);
 
-    const app = createApp({
+    const { app } = createApp({
       broker,
       members,
       sessions,
@@ -257,7 +257,7 @@ describe('secureCookies option', () => {
     const res = await app.request('/session/totp', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slot: 'ACTUAL', code }),
+      body: JSON.stringify({ slot: 'director-1', code }),
     });
     expect(res.status).toBe(200);
     const setCookie = res.headers.get('set-cookie') ?? '';
@@ -274,8 +274,8 @@ describe('runServer with self-signed HTTPS', () => {
     const configDir = tmpDir();
     const members = createMemberStore([
       {
-        name: 'ACTUAL',
-        role: { title: 'commander', description: '' },
+        name: 'director-1',
+        role: { title: 'director', description: '' },
         permissions: ['members.manage'],
         token: OP_TOKEN,
       },
@@ -335,8 +335,8 @@ describe('runServer with self-signed HTTPS', () => {
     const r1 = await runServer({
       members: createMemberStore([
         {
-          name: 'ACTUAL',
-          role: { title: 'commander', description: '' },
+          name: 'director-1',
+          role: { title: 'director', description: '' },
           permissions: ['members.manage'],
           token: OP_TOKEN,
         },
@@ -365,8 +365,8 @@ describe('runServer with self-signed HTTPS', () => {
     const r2 = await runServer({
       members: createMemberStore([
         {
-          name: 'ACTUAL',
-          role: { title: 'commander', description: '' },
+          name: 'director-1',
+          role: { title: 'director', description: '' },
           permissions: ['members.manage'],
           token: OP_TOKEN,
         },

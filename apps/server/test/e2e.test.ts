@@ -33,7 +33,7 @@ const LINK_BINARY = resolve(
   fileURLToPath(new URL('../../../packages/link/dist/index.js', import.meta.url)),
 );
 // to === slot.name is enforced by the broker. Three
-// slots exercise: individual-contributor → agent (ACTUAL → e2e-agent), and
+// slots exercise: individual-contributor → agent (director-1 → e2e-agent), and
 // agent-as-individual-contributor (e2e-agent → e2e-peer).
 const AGENT_ID = 'e2e-agent';
 const PEER_AGENT_ID = 'e2e-peer';
@@ -64,8 +64,8 @@ describe.skip('end-to-end: individual-contributor → broker → link → channe
   beforeAll(async () => {
     const members = createMemberStore([
       {
-        name: 'ACTUAL',
-        role: { title: 'commander', description: '' },
+        name: 'director-1',
+        role: { title: 'director', description: '' },
         permissions: ['members.manage'],
         token: OP_TOKEN,
       },
@@ -193,7 +193,7 @@ describe.skip('end-to-end: individual-contributor → broker → link → channe
     expect(params.meta.run_id).toBe('e2e-1');
     expect(params.meta.kind).toBe('ci_alert');
     expect(params.meta.thread).toBe('dm');
-    expect(params.meta.from).toBe('ACTUAL');
+    expect(params.meta.from).toBe('director-1');
   });
 
   it('agent-as-individual-contributor: link send tool reaches the broker and back', async () => {

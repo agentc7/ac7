@@ -5,7 +5,7 @@
  * In the activity-stream architecture, an "objective trace" is a
  * **time-range slice** of the assignee's agent activity stream
  * rather than a separately-stored table. We query
- * `GET /users/<assignee>/activity` with:
+ * `GET /members/<assignee>/activity` with:
  *
  *   - `from = objective.createdAt`
  *   - `to   = objective.completedAt ?? now`
@@ -13,11 +13,11 @@
  *
  * and render the resulting LLM exchanges.
  *
- * UserType gate is enforced in two places:
- *   - Client: the parent `ObjectiveDetail` only mounts us when
- *     `briefing.userType === 'admin'`.
- *   - Server: `GET /users/:name/activity` returns 403 to any
- *     non-admin reading another user.
+ * Permission gate is enforced in two places:
+ *   - Client: the parent `ObjectiveDetail` only mounts us when the
+ *     viewer has the `activity.read` permission.
+ *   - Server: `GET /members/:name/activity` returns 403 to anyone
+ *     without `activity.read` reading another member.
  *
  * The trace content is already redacted at runner upload time.
  */
