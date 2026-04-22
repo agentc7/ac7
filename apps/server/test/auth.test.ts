@@ -7,11 +7,15 @@
  * file is focused on what's new.
  */
 
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import type { SessionResponse, Team } from '@agentc7/sdk/types';
-import { describe, expect, it, vi } from 'vitest';
+import { calculateJwkThumbprint, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
+import { createJwtVerifier, type JwtConfig } from '../src/jwt.js';
 import { createMemberStore } from '../src/members.js';
 import { SESSION_COOKIE_NAME, SessionStore } from '../src/sessions.js';
 import { currentCode, generateSecret, verifyCode } from '../src/totp.js';
@@ -406,5 +410,265 @@ describe('dual auth (bearer OR cookie)', () => {
       headers: { Cookie: `${SESSION_COOKIE_NAME}=${cookie}` },
     });
     expect(res.status).toBe(403);
+  });
+});
+
+// ─── Federated JWT auth (Phase 4) ───────────────────────────────────
+//
+// Hermetic: we generate an RS256 keypair in the test, serve the
+// public JWK from an ephemeral HTTP server, build a verifier against
+// that server's /.well-known/jwks.json, and mint tokens with the
+// private key. No network, no fixtures — each test round-trip runs
+// fully in-process.
+
+const ISSUER = 'http://test-issuer.local';
+const AUDIENCE = 'team:demo-team-id';
+
+type GeneratedPrivateKey = Awaited<ReturnType<typeof generateKeyPair>>['privateKey'];
+
+interface JwtFixture {
+  config: JwtConfig;
+  privateKey: GeneratedPrivateKey;
+  publicJwk: JWK;
+  kid: string;
+  jwksServer: Server;
+  close: () => Promise<void>;
+}
+
+async function bootJwksFixture(): Promise<JwtFixture> {
+  const { publicKey, privateKey } = await generateKeyPair('RS256', { extractable: true });
+  const publicJwk = await exportJWK(publicKey);
+  const kid = await calculateJwkThumbprint(publicJwk);
+  publicJwk.kid = kid;
+  publicJwk.alg = 'RS256';
+  publicJwk.use = 'sig';
+
+  // Minimal JWKS HTTP server. Listens on port 0 so parallel test runs
+  // don't fight over a fixed port.
+  const jwksServer = createServer((req, res) => {
+    if (req.url === '/.well-known/jwks.json') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ keys: [publicJwk] }));
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise<void>((resolve) => jwksServer.listen(0, '127.0.0.1', resolve));
+  const addr = jwksServer.address() as AddressInfo;
+  const jwksUrl = `http://127.0.0.1:${addr.port}/.well-known/jwks.json`;
+
+  return {
+    config: { issuer: ISSUER, audience: AUDIENCE, jwksUrl },
+    privateKey,
+    publicJwk,
+    kid,
+    jwksServer,
+    close: () => new Promise<void>((resolve) => jwksServer.close(() => resolve())),
+  };
+}
+
+interface MintOptions {
+  member?: string;
+  sub?: string;
+  issuer?: string;
+  audience?: string;
+  /** Seconds-from-now expiry. Negative = already expired. */
+  expSeconds?: number;
+}
+
+async function mintTestToken(
+  privateKey: GeneratedPrivateKey,
+  kid: string,
+  options: MintOptions = {},
+): Promise<string> {
+  const member = options.member ?? 'director-1';
+  const sub = options.sub ?? 'user_abc123';
+  const issuer = options.issuer ?? ISSUER;
+  const audience = options.audience ?? AUDIENCE;
+  const expSeconds = options.expSeconds ?? 300;
+  const nowSec = Math.floor(Date.now() / 1000);
+  return new SignJWT({ member })
+    .setProtectedHeader({ alg: 'RS256', kid, typ: 'JWT' })
+    .setIssuer(issuer)
+    .setAudience(audience)
+    .setSubject(sub)
+    .setIssuedAt(nowSec)
+    .setNotBefore(nowSec)
+    .setExpirationTime(nowSec + expSeconds)
+    .sign(privateKey);
+}
+
+function makeJwtApp(fixture: JwtFixture) {
+  const broker = new Broker({
+    eventLog: new InMemoryEventLog(),
+    now: () => 1_700_000_000_000,
+    idFactory: () => 'msg-fixed',
+  });
+  const members = createMemberStore([
+    {
+      name: 'director-1',
+      role: { title: 'director', description: '' },
+      permissions: ['members.manage'],
+      token: OP_TOKEN,
+    },
+    {
+      name: 'build-bot',
+      role: { title: 'engineer', description: '' },
+      permissions: [],
+      token: BOT_TOKEN,
+    },
+  ]);
+  const db = openDatabase(':memory:');
+  const sessions = new SessionStore(db);
+  const { app } = createApp({
+    broker,
+    members,
+    sessions,
+    team: TEAM,
+    version: '0.0.0',
+    logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    jwt: createJwtVerifier(fixture.config),
+  });
+  return { app, members };
+}
+
+describe('JWT auth (federated)', () => {
+  let fixture: JwtFixture;
+
+  beforeAll(async () => {
+    fixture = await bootJwksFixture();
+  });
+
+  afterAll(async () => {
+    await fixture.close();
+  });
+
+  it('accepts a well-formed JWT and resolves to the named member', async () => {
+    const { app } = makeJwtApp(fixture);
+    const token = await mintTestToken(fixture.privateKey, fixture.kid, {
+      member: 'director-1',
+    });
+
+    const res = await app.request('/roster', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('rejects a JWT whose `member` claim names no one on the roster', async () => {
+    const { app } = makeJwtApp(fixture);
+    const token = await mintTestToken(fixture.privateKey, fixture.kid, {
+      member: 'ghost-member',
+    });
+
+    const res = await app.request('/roster', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('unknown member');
+  });
+
+  it('rejects a JWT with a wrong issuer', async () => {
+    const { app } = makeJwtApp(fixture);
+    const token = await mintTestToken(fixture.privateKey, fixture.kid, {
+      issuer: 'http://not-the-issuer.local',
+    });
+
+    const res = await app.request('/roster', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('invalid jwt');
+  });
+
+  it('rejects a JWT with a wrong audience', async () => {
+    const { app } = makeJwtApp(fixture);
+    const token = await mintTestToken(fixture.privateKey, fixture.kid, {
+      audience: 'team:some-other-team',
+    });
+
+    const res = await app.request('/roster', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects an expired JWT', async () => {
+    const { app } = makeJwtApp(fixture);
+    const token = await mintTestToken(fixture.privateKey, fixture.kid, {
+      expSeconds: -60,
+    });
+
+    const res = await app.request('/roster', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a JWT with a tampered signature', async () => {
+    const { app } = makeJwtApp(fixture);
+    const token = await mintTestToken(fixture.privateKey, fixture.kid);
+    // Swap the first char of the signature segment — base64url's final
+    // char has "don't care" low bits for sig-length-256, so flipping
+    // the head is the safest poison. The header + payload round-trip
+    // unchanged, so the only thing `verify` can reject on is the
+    // signature itself.
+    const [header, payload, sig] = token.split('.') as [string, string, string];
+    const firstChar = sig[0] ?? 'A';
+    const swapped = firstChar === 'A' ? 'B' : 'A';
+    const tampered = `${header}.${payload}.${swapped}${sig.slice(1)}`;
+
+    const res = await app.request('/roster', {
+      headers: { Authorization: `Bearer ${tampered}` },
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('falls through to the opaque bearer path for non-JWT tokens', async () => {
+    // With JWT config active, an opaque ac7_ token still works — the
+    // structural check filters it out before verify runs.
+    const { app } = makeJwtApp(fixture);
+    const res = await app.request('/roster', {
+      headers: { Authorization: `Bearer ${OP_TOKEN}` },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('does NOT fall back to opaque lookup when a structurally-valid JWT fails verify', async () => {
+    // A forged JWT should 401, not leak into the opaque-token path.
+    // Even if an attacker's forged JWT happens to collide with a valid
+    // opaque token (pathological), it must still hard-fail here.
+    const { app } = makeJwtApp(fixture);
+    const forged = 'aaaa.bbbb.cccc'; // well-formed structure, garbage contents
+    const res = await app.request('/roster', {
+      headers: { Authorization: `Bearer ${forged}` },
+    });
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('invalid jwt');
+  });
+
+  it('rejects a JWT missing the `member` claim', async () => {
+    const { app } = makeJwtApp(fixture);
+    // Mint without the member claim by hand.
+    const nowSec = Math.floor(Date.now() / 1000);
+    const token = await new SignJWT({})
+      .setProtectedHeader({ alg: 'RS256', kid: fixture.kid, typ: 'JWT' })
+      .setIssuer(ISSUER)
+      .setAudience(AUDIENCE)
+      .setSubject('user_abc123')
+      .setIssuedAt(nowSec)
+      .setExpirationTime(nowSec + 300)
+      .sign(fixture.privateKey);
+
+    const res = await app.request('/roster', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('invalid jwt');
   });
 });

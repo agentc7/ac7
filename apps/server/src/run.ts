@@ -35,6 +35,7 @@ import {
   loadCustomCert,
   loadOrGenerateSelfSigned,
 } from './https/store.js';
+import { createJwtVerifier, type JwtConfig } from './jwt.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
 import { type ActivityStore, createSqliteActivityStore } from './member-activity.js';
 import {
@@ -56,6 +57,13 @@ import { SERVER_VERSION } from './version.js';
 export { composeBriefing } from './briefing.js';
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export { HttpsConfigError, type LoadedCert } from './https/store.js';
+export {
+  createJwtVerifier,
+  type JwtConfig,
+  type JwtVerifier,
+  looksLikeJwt,
+  type VerifiedClaims,
+} from './jwt.js';
 export {
   ENCRYPTED_FIELD_PREFIX,
   EncryptedFieldError,
@@ -131,6 +139,15 @@ export interface RunServerOptions {
    * config file. Set explicitly to skip Web Push entirely.
    */
   webPush?: WebPushConfig | null;
+  /**
+   * Federated-JWT configuration. When non-null, the auth middleware
+   * verifies bearer tokens with JWT structure against the configured
+   * issuer's JWKS. Null (or omitted) → the JWT path is dormant and
+   * only opaque bearer tokens + session cookies authenticate. The
+   * CLI entry point passes `TeamConfig.jwt` straight through; library
+   * consumers can construct this programmatically.
+   */
+  jwt?: JwtConfig | null;
   /**
    * Path to the team config file — required only when auto-generating
    * VAPID keys on first boot, since we need to know where to write
@@ -417,9 +434,16 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
           options.members,
           https,
           webPush,
+          options.jwt ?? null,
         );
       }
     : undefined;
+
+  // Federated JWT verifier. Built once per run — the underlying JWKS
+  // is cached internally by `jose` across verify calls, so key
+  // rotation on the issuer side is picked up automatically on the
+  // next unknown-kid it sees.
+  const jwtVerifier = options.jwt ? createJwtVerifier(options.jwt) : undefined;
 
   const { app, injectWebSocket } = createApp({
     broker,
@@ -443,6 +467,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
         }
       : {}),
     ...(onPushed !== undefined ? { onPushed } : {}),
+    ...(jwtVerifier !== undefined ? { jwt: jwtVerifier } : {}),
   });
 
   // Optional HTTP→HTTPS redirect listener. Only spun up when HTTPS

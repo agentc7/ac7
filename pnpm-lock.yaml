@@ -38,6 +38,9 @@ importers:
       hono:
         specifier: ^4.12.12
         version: 4.12.14
+      jose:
+        specifier: ^6.2.2
+        version: 6.2.2
       otpauth:
         specifier: ^9.5.0
         version: 9.5.0

@@ -206,6 +206,19 @@ const FilesConfigSchema = z.object({
   maxFileSize: z.number().int().positive().optional(),
 });
 
+/**
+ * Federated JWT config. When present, the auth middleware verifies
+ * bearer tokens with JWT structure against the issuer's JWKS and
+ * resolves the `member` claim to a LoadedMember by name. Absent →
+ * the JWT path stays dormant and only opaque tokens + session
+ * cookies work. See `src/jwt.ts` for the claim contract.
+ */
+const JwtConfigSchema = z.object({
+  issuer: z.string().url(),
+  jwksUrl: z.string().url(),
+  audience: z.string().min(1),
+});
+
 const TeamConfigSchema = z.object({
   _comment: z.unknown().optional(),
   team: TeamSchema,
@@ -213,11 +226,13 @@ const TeamConfigSchema = z.object({
   https: HttpsConfigSchema.optional(),
   webPush: WebPushConfigSchema.optional(),
   files: FilesConfigSchema.optional(),
+  jwt: JwtConfigSchema.optional(),
 });
 
 export type HttpsConfig = z.infer<typeof HttpsConfigSchema>;
 export type WebPushConfig = z.infer<typeof WebPushConfigSchema>;
 export type FilesConfig = z.infer<typeof FilesConfigSchema>;
+export type JwtConfig = z.infer<typeof JwtConfigSchema>;
 
 export class MemberLoadError extends Error {
   constructor(message: string) {
@@ -504,6 +519,13 @@ export interface TeamConfig {
   https: HttpsConfig;
   webPush: WebPushConfig | null;
   files: FilesConfig | null;
+  /**
+   * Federated-JWT config. Non-null iff the team's config file
+   * contained a `jwt` block; the auth middleware uses this to build
+   * a JWKS-backed verifier. Null for self-hosted ac7 instances that
+   * don't federate with any SaaS or partner issuer.
+   */
+  jwt: JwtConfig | null;
   migrated: number;
 }
 
@@ -652,14 +674,15 @@ export function loadTeamConfigFromFile(path: string): TeamConfig {
   }
 
   const files: FilesConfig | null = result.data.files ?? null;
+  const jwt: JwtConfig | null = result.data.jwt ?? null;
 
   if (migrated > 0) {
     const topComment =
       typeof result.data._comment === 'string' ? result.data._comment : CONFIG_FILE_COMMENT;
-    writeTeamConfigFile(path, topComment, team, onDisk, https, webPush);
+    writeTeamConfigFile(path, topComment, team, onDisk, https, webPush, jwt);
   }
 
-  return { team, store, https, webPush, files, migrated };
+  return { team, store, https, webPush, files, jwt, migrated };
 }
 
 /** Shape persisted to disk for a single member entry. */
@@ -715,6 +738,7 @@ export function persistMemberStore(
   store: MemberStore,
   https: HttpsConfig,
   webPush: WebPushConfig | null,
+  jwt: JwtConfig | null = null,
 ): void {
   const onDisk: MemberOnDisk[] = store.members().map((m) => {
     const tokenHash = store.tokenHashOf(m.name);
@@ -732,14 +756,23 @@ export function persistMemberStore(
     };
   });
   let topComment = CONFIG_FILE_COMMENT;
+  // If `jwt` wasn't supplied explicitly, preserve whatever was last on
+  // disk — config-file survivability matters more than ergonomic
+  // defaults here. A caller that wants to clear the block passes
+  // `jwt: null` explicitly by passing null as the 6th arg.
+  let jwtForDisk: JwtConfig | null = jwt;
   try {
     const raw = readFileSync(path, 'utf8');
-    const parsed = JSON.parse(raw) as { _comment?: unknown };
+    const parsed = JSON.parse(raw) as { _comment?: unknown; jwt?: unknown };
     if (typeof parsed._comment === 'string') topComment = parsed._comment;
+    if (jwtForDisk === null && parsed.jwt) {
+      const result = JwtConfigSchema.safeParse(parsed.jwt);
+      if (result.success) jwtForDisk = result.data;
+    }
   } catch {
     /* fresh file — keep default comment */
   }
-  writeTeamConfigFile(path, topComment, team, onDisk, https, webPush);
+  writeTeamConfigFile(path, topComment, team, onDisk, https, webPush, jwtForDisk);
 }
 
 /**
@@ -759,7 +792,15 @@ export function writeWebPushConfig(path: string, webPush: WebPushConfig): void {
     totpSecret: m.totpSecret ?? null,
     totpLastCounter: m.totpLastCounter ?? 0,
   }));
-  writeTeamConfigFile(path, topComment, parsed.team, onDisk, parsed.https, webPush);
+  writeTeamConfigFile(
+    path,
+    topComment,
+    parsed.team,
+    onDisk,
+    parsed.https,
+    webPush,
+    parsed.jwt ?? null,
+  );
 }
 
 /**
@@ -893,6 +934,7 @@ function writeTeamConfigFile(
   members: MemberOnDisk[],
   https?: HttpsConfig,
   webPush?: WebPushConfig | null,
+  jwt?: JwtConfig | null,
 ): void {
   const membersForDisk = members.map((m) => {
     const out: Record<string, unknown> = {
@@ -927,6 +969,9 @@ function writeTeamConfigFile(
         ? (encryptField(webPush.vapidPrivateKey, activeKek) ?? webPush.vapidPrivateKey)
         : webPush.vapidPrivateKey;
     payload.webPush = { ...webPush, vapidPrivateKey: vapidPrivateKeyForDisk };
+  }
+  if (jwt) {
+    payload.jwt = jwt;
   }
   const body = `${JSON.stringify(payload, null, 2)}\n`;
   atomicWriteRestricted(path, body);

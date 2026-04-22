@@ -187,6 +187,7 @@ async function main(): Promise<void> {
     team,
     https: httpsFromConfig,
     webPush,
+    jwt,
   } = await loadOrCreateTeamConfig(configPath);
 
   // Auto-flip: if the user didn't explicitly configure HTTPS in the
@@ -214,6 +215,7 @@ async function main(): Promise<void> {
     team,
     https,
     webPush,
+    jwt,
     configPath,
     configDir: dirname(configPath),
     port,
