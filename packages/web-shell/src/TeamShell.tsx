@@ -26,11 +26,11 @@
  * On unmount it disposes every subscription cleanly, so the SaaS can
  * swap teams by re-keying the shell and trust that nothing leaks.
  *
- * URL routing: the shell's router already understands an optional
- * `/t/:slug` prefix (see `lib/routes.ts`). Phase 7 will introduce a
- * `teamSlug` prop that gets injected into every navigation so the
- * SaaS's shell URLs nest under the team path; for now OSS uses the
- * slug-less form.
+ * URL routing: the shell's router understands an optional `/t/:slug`
+ * prefix (see `lib/routes.ts`). When the host passes the `teamSlug`
+ * prop, every in-shell navigation nests under `/t/<slug>/...` (the
+ * SaaS model); when omitted, URLs live at the origin root (the OSS
+ * single-team model).
  */
 
 import type { Client } from '@agentc7/sdk/client';
@@ -68,6 +68,7 @@ import { loadObjectives } from './lib/objectives.js';
 import { closePalette, togglePalette } from './lib/palette.js';
 import { initializePushState } from './lib/push.js';
 import { loadRoster, startRosterPolling } from './lib/roster.js';
+import { setRouterTeamSlug } from './lib/router.js';
 import { initializeLastReadFromStore, markThreadRead } from './lib/unread.js';
 import { type View, view } from './lib/view.js';
 
@@ -87,6 +88,15 @@ export interface TeamShellProps {
    * screen; the `notice` argument is a user-facing reason.
    */
   onUnauthorized?: UnauthorizedHandler;
+  /**
+   * Optional team slug. When set, every in-shell navigation emits
+   * URLs under `/t/<slug>/...` — e.g. the SaaS at
+   * `app.agentc7.com/t/acme-robotics/objectives`. Omit for OSS
+   * (single-team, URLs at origin root). Routes parsed from the URL
+   * already recognize the `/t/:slug` prefix; setting this prop just
+   * closes the loop so navigation emits the prefix back.
+   */
+  teamSlug?: string;
 }
 
 /**
@@ -107,6 +117,7 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
   setIdentity(props.identity);
   setSignOutHandler(props.onSignOut ?? null);
   setUnauthorizedHandler(props.onUnauthorized ?? null);
+  setRouterTeamSlug(props.teamSlug ?? null);
 
   const viewer = props.identity.member;
   const v = view.value;
