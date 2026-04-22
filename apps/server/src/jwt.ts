@@ -28,7 +28,7 @@
  * mapping layer on both sides for no user-visible win.
  */
 
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
+import { createRemoteJWKSet, type JWTPayload, jwtVerify } from 'jose';
 
 export interface JwtConfig {
   /** Expected `iss` claim — e.g., `https://app.agentc7.com`. */

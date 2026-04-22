@@ -35,9 +35,9 @@ import {
   loadCustomCert,
   loadOrGenerateSelfSigned,
 } from './https/store.js';
+import { createJwtVerifier, type JwtConfig } from './jwt.js';
 import { logger as defaultLogger, type Logger } from './logger.js';
 import { type ActivityStore, createSqliteActivityStore } from './member-activity.js';
-import { createJwtVerifier, type JwtConfig } from './jwt.js';
 import {
   defaultHttpsConfig,
   type HttpsConfig,
@@ -57,6 +57,13 @@ import { SERVER_VERSION } from './version.js';
 export { composeBriefing } from './briefing.js';
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
 export { HttpsConfigError, type LoadedCert } from './https/store.js';
+export {
+  createJwtVerifier,
+  type JwtConfig,
+  type JwtVerifier,
+  looksLikeJwt,
+  type VerifiedClaims,
+} from './jwt.js';
 export {
   ENCRYPTED_FIELD_PREFIX,
   EncryptedFieldError,
@@ -112,13 +119,6 @@ export {
   runFirstRunWizard,
   type WizardIO,
 } from './wizard.js';
-export {
-  createJwtVerifier,
-  type JwtConfig,
-  type JwtVerifier,
-  type VerifiedClaims,
-  looksLikeJwt,
-} from './jwt.js';
 export { SERVER_VERSION };
 
 export interface RunServerOptions {

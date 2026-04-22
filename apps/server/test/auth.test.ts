@@ -11,13 +11,7 @@ import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import type { SessionResponse, Team } from '@agentc7/sdk/types';
-import {
-  calculateJwkThumbprint,
-  exportJWK,
-  generateKeyPair,
-  type JWK,
-  SignJWT,
-} from 'jose';
+import { calculateJwkThumbprint, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
