@@ -12,13 +12,13 @@
  * something is wrong — no persistent "ONLINE" pill in chrome.
  */
 
+import { identity } from '../lib/identity.js';
 import { openPalette } from '../lib/palette.js';
-import { session } from '../lib/session.js';
 import { isSidebarOpen, openSidebar, selectAccount } from '../lib/view.js';
 
 export function Header() {
-  const s = session.value;
-  if (s.status !== 'authenticated') return null;
+  const id = identity.value;
+  if (id === null) return null;
   const drawerOpen = isSidebarOpen.value;
 
   return (
@@ -74,7 +74,7 @@ export function Header() {
       </div>
 
       <div class="flex items-center justify-end flex-1 min-w-0">
-        <ProfileButton name={s.member} />
+        <ProfileButton name={id.member} />
       </div>
     </header>
   );

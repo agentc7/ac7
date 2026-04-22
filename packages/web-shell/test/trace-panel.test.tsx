@@ -16,11 +16,12 @@
  * for the gate.
  */
 
+import { Client } from '@agentc7/sdk/client';
 import type { ActivityRow, ListActivityResponse, Objective } from '@agentc7/sdk/types';
 import { cleanup, render, screen, waitFor } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { TracePanel } from '../src/components/TracePanel.js';
-import { __resetClientForTests } from '../src/lib/client.js';
+import { __resetClientForTests, setClient } from '../src/lib/client.js';
 
 const originalFetch = globalThis.fetch;
 
@@ -41,6 +42,9 @@ function stubActivity(body: ListActivityResponse | Record<string, unknown>, stat
         headers: { 'Content-Type': 'application/json' },
       }),
     )) as typeof fetch;
+  // Build the SDK client AFTER the fetch stub is in place — the
+  // client captures the current `globalThis.fetch` at construction.
+  setClient(new Client({ url: 'http://localhost', useCookies: true }));
 }
 
 const objective: Objective = {

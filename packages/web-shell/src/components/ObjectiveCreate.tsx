@@ -11,9 +11,9 @@
 import type { Attachment } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { getClient } from '../lib/client.js';
+import { identity } from '../lib/identity.js';
 import { createObjective } from '../lib/objectives.js';
 import { roster } from '../lib/roster.js';
-import { session } from '../lib/session.js';
 import { selectObjectiveDetail, selectObjectivesList } from '../lib/view.js';
 
 interface PendingUpload {
@@ -97,8 +97,8 @@ function resetForm(): void {
 export function ObjectiveCreate() {
   const r = roster.value;
   const teammates = r?.teammates ?? [];
-  const sess = session.value;
-  const viewer = sess.status === 'authenticated' ? sess.member : '';
+  const id = identity.value;
+  const viewer = id?.member ?? '';
   const uploads = attachmentUploads.value;
   const anyUploading = uploads.some((u) => u.status === 'uploading');
   const readyAttachments = uploads

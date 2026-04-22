@@ -28,12 +28,12 @@ import type { Teammate } from '@agentc7/sdk/types';
 import { hasPermission } from '@agentc7/sdk/types';
 import type { ComponentChildren } from 'preact';
 import { briefing } from '../../lib/briefing.js';
+import { handleSignOut, hasSignOutHandler } from '../../lib/handlers.js';
 import { inboxCount } from '../../lib/inbox.js';
 import { dmThreadKey, messagesByThread, PRIMARY_THREAD } from '../../lib/messages.js';
 import { objectives } from '../../lib/objectives.js';
 import { privilegeTag, summarizePermissions } from '../../lib/permissions.js';
 import { roster } from '../../lib/roster.js';
-import { logout } from '../../lib/session.js';
 import { currentTeam } from '../../lib/team.js';
 import { lastReadByThread, unreadCount } from '../../lib/unread.js';
 import {
@@ -270,6 +270,9 @@ function TeamHeader() {
 }
 
 function UserChip({ viewer }: { viewer: string }) {
+  // Hide the sign-out affordance when the host didn't wire one up
+  // (e.g., the SaaS drives sign-out through its own Clerk menu).
+  const showSignOut = hasSignOutHandler.value !== null;
   return (
     <div
       class="flex items-center gap-2"
@@ -292,31 +295,33 @@ function UserChip({ viewer }: { viewer: string }) {
           {viewer}
         </span>
       </button>
-      <button
-        type="button"
-        onClick={() => {
-          void logout();
-        }}
-        aria-label="Sign out"
-        title="Sign out"
-        class="flex-shrink-0 flex items-center justify-center"
-        style="width:28px;height:28px;background:transparent;border:none;color:var(--muted);cursor:pointer;border-radius:6px"
-      >
-        <svg
-          viewBox="0 0 24 24"
-          class="h-4 w-4"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
+      {showSignOut && (
+        <button
+          type="button"
+          onClick={() => {
+            handleSignOut();
+          }}
+          aria-label="Sign out"
+          title="Sign out"
+          class="flex-shrink-0 flex items-center justify-center"
+          style="width:28px;height:28px;background:transparent;border:none;color:var(--muted);cursor:pointer;border-radius:6px"
         >
-          <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
-          <path d="M10 17l5-5-5-5" />
-          <path d="M15 12H3" />
-        </svg>
-      </button>
+          <svg
+            viewBox="0 0 24 24"
+            class="h-4 w-4"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+            <path d="M10 17l5-5-5-5" />
+            <path d="M15 12H3" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
