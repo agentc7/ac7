@@ -92,4 +92,19 @@ export default defineConfig([
     define,
     ...(isWatch ? { onSuccess: makeDevOnSuccess() } : {}),
   },
+  // Second bin: `ac7-connect-saas` — drives the OSS-side of the
+  // SaaS registration device flow. Shipped as a distinct binary so
+  // the long-running broker doesn't pull in extra code it never
+  // uses at runtime, and so admins can alias / wrap it separately.
+  {
+    name: 'connect-saas-bin',
+    entry: { 'connect-saas': 'src/connect-saas.ts' },
+    format: ['esm'],
+    dts: false,
+    sourcemap: true,
+    clean: false,
+    target: 'node22',
+    banner: { js: '#!/usr/bin/env node' },
+    define,
+  },
 ]);

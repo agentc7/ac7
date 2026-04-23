@@ -360,6 +360,105 @@ export function createApp(options: AppOptions): CreatedApp {
     return c.json({ status: 'ok' as const, version });
   });
 
+  // ─── SaaS pairing-code handshake ──────────────────────────────────
+  //
+  // Bridges an ac7 deployment into a hosted SaaS account without the
+  // SaaS ever asserting who you are. The SaaS mints a short code +
+  // shows it to the user; the user confirms on THIS server while
+  // signed in as a real member; the SaaS's status endpoint calls
+  // back to /saas-connect/lookup to retrieve the OSS-attested
+  // memberName.
+  //
+  // State is process-local: a Map of code → {memberName, expiresAt}
+  // with opportunistic sweep on access. 10-min TTL + single-use
+  // semantics on lookup keep the surface tight. No persistence —
+  // a restart mid-handshake just requires the user to restart the
+  // flow on the SaaS side, which takes seconds.
+  //
+  // `/saas-connect/bind` needs an authenticated session (the member
+  // is read from the `LoadedMember` on `c.var`). `/saas-connect/lookup`
+  // is intentionally unauthenticated: the SaaS calls it over HTTPS,
+  // the code is a one-time secret, and a successful lookup drops the
+  // binding so replays fail.
+  const SAAS_CONNECT_CODE_TTL_MS = 10 * 60 * 1000;
+  interface SaasConnectBinding {
+    memberName: string;
+    expiresAt: number;
+  }
+  const saasConnectBindings = new Map<string, SaasConnectBinding>();
+
+  function sweepSaasConnectBindings(): void {
+    const t = now();
+    for (const [code, binding] of saasConnectBindings) {
+      if (binding.expiresAt < t) saasConnectBindings.delete(code);
+    }
+  }
+
+  // Confirmation page the user lands on from the SaaS connect flow.
+  // Renders standalone HTML (no SPA dependencies) so it works even
+  // when the ac7 web bundle isn't served from the same host, and so
+  // we don't have to push another route into the shared @agentc7/
+  // web-shell package (which would leak into the SaaS-embedded shell).
+  //
+  // Flow:
+  //   1. Page loads, reads ?code from URL.
+  //   2. Client-side fetches /session to check whether the user is
+  //      signed in on this ac7. If not, renders "sign in first".
+  //   3. If signed in, shows "AgentC7 SaaS wants to bind this server
+  //      as <member>" with a big confirm button.
+  //   4. Confirm → POST /saas-connect/bind with the code; cookies
+  //      carry the session, so `auth` on the bind endpoint resolves
+  //      the member identity from the server's own roster.
+  app.get('/setup/connect-saas', (c) => {
+    const code = c.req.query('code') ?? '';
+    // `mode=iframe` switches the page into iframe-embed mode: after a
+    // successful bind, it postMessages the parent instead of trying
+    // to close its own window (which usually fails silently when the
+    // window wasn't opened via window.open). `parentOrigin` is the
+    // only origin the page will postMessage to — required in iframe
+    // mode so a malicious embedding page can't intercept the message.
+    const mode = c.req.query('mode') === 'iframe' ? 'iframe' : 'tab';
+    const parentOrigin = c.req.query('parentOrigin') ?? '';
+    return c.html(renderConnectSaasPage(code, { mode, parentOrigin }));
+  });
+
+  app.post('/saas-connect/bind', auth, async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const code =
+      typeof body === 'object' &&
+      body !== null &&
+      typeof (body as { code?: unknown }).code === 'string'
+        ? (body as { code: string }).code
+        : null;
+    if (code === null || code.length === 0 || code.length > 32) {
+      return c.json({ error: 'missing or invalid code' }, 400);
+    }
+    const member = c.get('member');
+    sweepSaasConnectBindings();
+    saasConnectBindings.set(code, {
+      memberName: member.name,
+      expiresAt: now() + SAAS_CONNECT_CODE_TTL_MS,
+    });
+    logger.info('saas-connect: bind', { code, memberName: member.name });
+    return c.json({ ok: true, memberName: member.name });
+  });
+
+  app.get('/saas-connect/lookup', (c) => {
+    const code = c.req.query('code');
+    if (!code || code.length === 0) {
+      return c.json({ error: 'missing code query param' }, 400);
+    }
+    sweepSaasConnectBindings();
+    const binding = saasConnectBindings.get(code);
+    if (!binding) {
+      return c.json({ error: 'unknown or expired code' }, 404);
+    }
+    // Single-use: consume on read so a replay (or a stale SaaS retry
+    // after it already completed the handshake) can't re-bind.
+    saasConnectBindings.delete(code);
+    return c.json({ memberName: binding.memberName });
+  });
+
   // ─── Session endpoints ────────────────────────────────────────────
 
   app.post(PATHS.sessionTotp, async (c) => {
@@ -2252,4 +2351,229 @@ function systemMessageForEvent(
       return [header, `title:   ${objective.title}`, `watcher: ${cs}`].join('\n');
     }
   }
+}
+
+/**
+ * Minimal self-contained HTML for the `/setup/connect-saas`
+ * confirmation page. No framework, no bundler — the page runs a
+ * 5-line script that probes `/session`, then either shows the
+ * confirm button or a "sign in first" fallback.
+ *
+ * Styled inline to match the ac7 theme tokens approximately; the
+ * page is ephemeral (post-confirm, user closes the tab) so we don't
+ * need a pixel-perfect match.
+ */
+function renderConnectSaasPage(
+  code: string,
+  opts: { mode: 'iframe' | 'tab'; parentOrigin: string } = { mode: 'tab', parentOrigin: '' },
+): string {
+  // Escape the code for HTML attribute context. Codes are generated
+  // from a Crockford base32 alphabet on the SaaS side so there's
+  // nothing dangerous to escape in practice, but doing it anyway
+  // means future code-format changes don't open an XSS hole.
+  const escapeHtml = (s: string): string =>
+    s.replace(/[&<>"']/g, (ch) => {
+      switch (ch) {
+        case '&':
+          return '&amp;';
+        case '<':
+          return '&lt;';
+        case '>':
+          return '&gt;';
+        case '"':
+          return '&quot;';
+        case "'":
+          return '&#39;';
+        default:
+          return ch;
+      }
+    });
+  const safeCode = escapeHtml(code);
+  // Validate parentOrigin at render time so a malformed value doesn't
+  // reach the client-side postMessage call. An invalid URL yields an
+  // empty string, which disables postMessage entirely (falls back to
+  // tab-mode behavior) rather than using a risky wildcard target.
+  let parentOrigin = '';
+  if (opts.mode === 'iframe' && opts.parentOrigin) {
+    try {
+      const parsed = new URL(opts.parentOrigin);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        parentOrigin = parsed.origin;
+      }
+    } catch {
+      // Leave as empty; iframe mode without a trusted parent origin
+      // renders but won't postMessage.
+    }
+  }
+  const modeLiteral = opts.mode === 'iframe' && parentOrigin ? 'iframe' : 'tab';
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Connect to AgentC7 SaaS</title>
+  <style>
+    :root {
+      --ink: #0e1c2b;
+      --paper: #f6f3ec;
+      --rule: rgba(14, 28, 43, 0.14);
+      --muted: #4b5560;
+      --err: #b04a34;
+    }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      background: var(--paper);
+      color: var(--ink);
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      max-width: 440px;
+      width: 100%;
+      background: white;
+      border: 1px solid var(--rule);
+      border-radius: 12px;
+      padding: 28px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    h1 { margin: 0 0 8px; font-size: 20px; font-weight: 600; }
+    p { margin: 0 0 12px; color: var(--muted); line-height: 1.5; }
+    code { font-family: ui-monospace, "SF Mono", monospace; font-size: 14px; background: #eee; padding: 2px 6px; border-radius: 4px; }
+    .row { margin-top: 20px; display: flex; gap: 8px; }
+    button, a.btn {
+      display: inline-block;
+      font: inherit;
+      padding: 10px 16px;
+      border-radius: 8px;
+      border: 1px solid var(--rule);
+      background: var(--paper);
+      color: var(--ink);
+      cursor: pointer;
+      text-decoration: none;
+    }
+    button.primary {
+      background: var(--ink);
+      color: var(--paper);
+      border-color: var(--ink);
+    }
+    button:disabled { opacity: 0.5; cursor: default; }
+    .err { color: var(--err); margin-top: 12px; font-size: 14px; }
+    .muted { color: var(--muted); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <main class="card" id="root">
+    <h1>Loading…</h1>
+    <p class="muted">Checking your session on this server.</p>
+  </main>
+  <script>
+    (function () {
+      var code = ${JSON.stringify(safeCode)};
+      var mode = ${JSON.stringify(modeLiteral)};
+      var parentOrigin = ${JSON.stringify(parentOrigin)};
+      var root = document.getElementById('root');
+
+      if (!code) {
+        renderError("Missing code in the URL. Restart the connect flow from AgentC7 SaaS.");
+        return;
+      }
+
+      fetch('/session', { credentials: 'same-origin' }).then(function (res) {
+        if (res.status === 200) {
+          return res.json().then(function (body) { renderConfirm(body); });
+        }
+        renderSignedOut();
+      }).catch(function () {
+        renderSignedOut();
+      });
+
+      function renderConfirm(session) {
+        var member = session && session.member && session.member.name ? session.member.name : '(unknown)';
+        root.innerHTML =
+          '<h1>Authorize AgentC7 SaaS</h1>' +
+          '<p>AgentC7 SaaS wants to bind this server to member <code>' + escapeHtml(member) + '</code>.</p>' +
+          '<p class="muted">Confirming links this server to your SaaS account. The SaaS will never mint tokens for any other member on this server.</p>' +
+          '<div class="row">' +
+          '<button id="confirm" class="primary">Authorize</button>' +
+          '<button id="cancel">Cancel</button>' +
+          '</div>' +
+          '<div id="err" class="err" hidden></div>';
+
+        document.getElementById('confirm').addEventListener('click', function () {
+          var btn = this;
+          var err = document.getElementById('err');
+          btn.disabled = true;
+          btn.textContent = 'Working…';
+          err.hidden = true;
+          fetch('/saas-connect/bind', {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code: code })
+          }).then(function (res) {
+            if (!res.ok) {
+              return res.text().then(function (body) { throw new Error(body || ('HTTP ' + res.status)); });
+            }
+            // When embedded in the SaaS via iframe, we postMessage
+            // the parent so the SaaS flow can advance without a tab
+            // switch. The explicit parentOrigin was validated
+            // server-side and rejects to empty string on any parse
+            // issue; in that case we silently stay in "close the
+            // tab" mode.
+            if (mode === 'iframe' && parentOrigin) {
+              try {
+                window.parent.postMessage(
+                  { type: 'saas-connect-bound', code: code, memberName: member },
+                  parentOrigin,
+                );
+              } catch (_) {
+                // Parent may have navigated away; the SaaS tab can
+                // still complete the handshake on its next poll.
+              }
+            }
+            root.innerHTML =
+              '<h1>Done.</h1>' +
+              '<p>AgentC7 SaaS has been authorized as <code>' + escapeHtml(member) + '</code>.</p>' +
+              (mode === 'iframe'
+                ? '<p class="muted">Your AgentC7 tab will continue automatically.</p>'
+                : '<p class="muted">You can close this tab and return to the SaaS.</p>');
+          }).catch(function (e) {
+            btn.disabled = false;
+            btn.textContent = 'Authorize';
+            err.hidden = false;
+            err.textContent = e && e.message ? e.message : 'Request failed. Try again.';
+          });
+        });
+
+        document.getElementById('cancel').addEventListener('click', function () {
+          window.close();
+          root.innerHTML = '<h1>Cancelled.</h1><p class="muted">Nothing was changed. Close this tab.</p>';
+        });
+      }
+
+      function renderSignedOut() {
+        root.innerHTML =
+          '<h1>Sign in first</h1>' +
+          '<p>Sign into this ac7 server as the member you want to bind to the SaaS.</p>' +
+          '<p class="muted">After signing in, return to this page to confirm the binding. The code is already pinned to this tab.</p>' +
+          '<div class="row"><a class="btn" href="/">Go to sign-in →</a></div>';
+      }
+
+      function renderError(msg) {
+        root.innerHTML = '<h1>Cannot continue</h1><p class="err">' + escapeHtml(msg) + '</p>';
+      }
+
+      function escapeHtml(s) {
+        return String(s).replace(/[&<>"']/g, function (ch) {
+          return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch];
+        });
+      }
+    })();
+  </script>
+</body>
+</html>`;
 }

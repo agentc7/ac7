@@ -36,7 +36,8 @@
     }
   },
   "bin": {
-    "ac7-server": "./dist/index.js"
+    "ac7-server": "./dist/index.js",
+    "ac7-connect-saas": "./dist/connect-saas.js"
   },
   "files": [
     "dist",

@@ -674,16 +674,94 @@ export function loadTeamConfigFromFile(path: string): TeamConfig {
   }
 
   const files: FilesConfig | null = result.data.files ?? null;
-  const jwt: JwtConfig | null = result.data.jwt ?? null;
+  const fileJwt: JwtConfig | null = result.data.jwt ?? null;
+
+  // Check for a SaaS-managed overlay sibling (`<path>.saas.json` for
+  // `<path>` ending in `.json`, else `<path>.saas`). The overlay is
+  // what `ac7 connect-saas` writes to — it carries ONLY the jwt
+  // block, and takes precedence over whatever the user has in the
+  // primary config. Keeping it separate means the user's config.json
+  // stays untouched by the CLI and the overlay can be deleted to
+  // disable SaaS connection cleanly.
+  const overlayJwt = loadSaasOverlay(path);
+  const jwt: JwtConfig | null = overlayJwt ?? fileJwt;
 
   if (migrated > 0) {
     const topComment =
       typeof result.data._comment === 'string' ? result.data._comment : CONFIG_FILE_COMMENT;
-    writeTeamConfigFile(path, topComment, team, onDisk, https, webPush, jwt);
+    // Writing back uses only the primary-file jwt — we never write
+    // overlay values into config.json, even when re-persisting for
+    // migrations.
+    writeTeamConfigFile(path, topComment, team, onDisk, https, webPush, fileJwt);
   }
 
   return { team, store, https, webPush, files, jwt, migrated };
 }
+
+/**
+ * Resolve the SaaS overlay path sibling to the primary config.
+ *
+ *   /etc/ac7/config.json   → /etc/ac7/config.saas.json
+ *   /etc/ac7/team.json     → /etc/ac7/team.saas.json
+ *   /etc/ac7/ac7           → /etc/ac7/ac7.saas.json
+ */
+export function saasOverlayPathFor(configPath: string): string {
+  const dotJson = /\.json$/i;
+  if (dotJson.test(configPath)) {
+    return configPath.replace(dotJson, '.saas.json');
+  }
+  return `${configPath}.saas.json`;
+}
+
+/**
+ * Read the SaaS overlay if present and validate its shape. Returns
+ * null when the file is missing (common path — most deployments
+ * don't use the SaaS). A malformed overlay is a hard error so a
+ * bad write from `ac7 connect-saas` fails loud instead of the
+ * server silently running with stale JWT config.
+ */
+function loadSaasOverlay(primaryConfigPath: string): JwtConfig | null {
+  const overlayPath = saasOverlayPathFor(primaryConfigPath);
+  let raw: string;
+  try {
+    raw = readFileSync(overlayPath, 'utf8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') return null;
+    throw new MemberLoadError(
+      `failed to read SaaS overlay at ${overlayPath}: ${(err as Error).message}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    throw new MemberLoadError(
+      `SaaS overlay at ${overlayPath} is not valid JSON: ${(err as Error).message}`,
+    );
+  }
+  const result = SaasOverlaySchema.safeParse(parsed);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map(
+        (issue: { path: PropertyKey[]; message: string }) =>
+          `  - ${issue.path.join('.') || '(root)'}: ${issue.message}`,
+      )
+      .join('\n');
+    throw new MemberLoadError(`SaaS overlay at ${overlayPath} is invalid:\n${issues}`);
+  }
+  return result.data.jwt;
+}
+
+/**
+ * Overlay schema is deliberately narrow — only the jwt block.
+ * Future SaaS-managed settings (e.g. quota reporting, telemetry
+ * opt-in) would add fields here; leaving the door open but not
+ * opening it unnecessarily.
+ */
+const SaasOverlaySchema = z.object({
+  jwt: JwtConfigSchema,
+});
 
 /** Shape persisted to disk for a single member entry. */
 interface MemberOnDisk {
