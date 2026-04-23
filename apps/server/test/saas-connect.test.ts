@@ -216,6 +216,48 @@ describe('GET /setup/connect-saas', () => {
   });
 });
 
+describe('GET /setup/connect-saas — iframe mode', () => {
+  it('injects mode=iframe + parentOrigin when valid query params are present', async () => {
+    const { app } = makeApp();
+    const parent = 'https://app.agentc7.com';
+    const res = await app.request(
+      `/setup/connect-saas?code=ABCD1234&mode=iframe&parentOrigin=${encodeURIComponent(parent)}`,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('"iframe"');
+    expect(body).toContain(parent);
+    // The postMessage branch only fires on mode==='iframe' AND a
+    // validated parentOrigin, so both must be present in the
+    // rendered script to enable the hand-off path.
+    expect(body).toContain('saas-connect-bound');
+    expect(body).toContain('window.parent.postMessage');
+  });
+
+  it('falls back to tab mode when parentOrigin is missing', async () => {
+    const { app } = makeApp();
+    const res = await app.request('/setup/connect-saas?code=ABCD1234&mode=iframe');
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    // `modeLiteral` collapses to 'tab' when parentOrigin is unset,
+    // so the close-this-tab copy renders instead of the iframe copy.
+    expect(body).toContain('"tab"');
+  });
+
+  it('rejects garbage parentOrigin values (no wildcard postMessage)', async () => {
+    const { app } = makeApp();
+    const res = await app.request(
+      `/setup/connect-saas?code=ABCD1234&mode=iframe&parentOrigin=${encodeURIComponent('not a url')}`,
+    );
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    // parentOrigin failed validation → empty string → no postMessage.
+    expect(body).not.toContain('not a url');
+    // modeLiteral drops back to 'tab' per renderConnectSaasPage.
+    expect(body).toContain('"tab"');
+  });
+});
+
 // Reset any shared state between files. Each test uses a fresh app
 // so the Map is scoped to its call, but keeping this here means a
 // future global-state leak fails fast.

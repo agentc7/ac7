@@ -411,7 +411,15 @@ export function createApp(options: AppOptions): CreatedApp {
   //      the member identity from the server's own roster.
   app.get('/setup/connect-saas', (c) => {
     const code = c.req.query('code') ?? '';
-    return c.html(renderConnectSaasPage(code));
+    // `mode=iframe` switches the page into iframe-embed mode: after a
+    // successful bind, it postMessages the parent instead of trying
+    // to close its own window (which usually fails silently when the
+    // window wasn't opened via window.open). `parentOrigin` is the
+    // only origin the page will postMessage to — required in iframe
+    // mode so a malicious embedding page can't intercept the message.
+    const mode = c.req.query('mode') === 'iframe' ? 'iframe' : 'tab';
+    const parentOrigin = c.req.query('parentOrigin') ?? '';
+    return c.html(renderConnectSaasPage(code, { mode, parentOrigin }));
   });
 
   app.post('/saas-connect/bind', auth, async (c) => {
@@ -2353,21 +2361,43 @@ function systemMessageForEvent(
  * page is ephemeral (post-confirm, user closes the tab) so we don't
  * need a pixel-perfect match.
  */
-function renderConnectSaasPage(code: string): string {
+function renderConnectSaasPage(
+  code: string,
+  opts: { mode: 'iframe' | 'tab'; parentOrigin: string } = { mode: 'tab', parentOrigin: '' },
+): string {
   // Escape the code for HTML attribute context. Codes are generated
   // from a Crockford base32 alphabet on the SaaS side so there's
   // nothing dangerous to escape in practice, but doing it anyway
   // means future code-format changes don't open an XSS hole.
-  const safeCode = code.replace(/[&<>"']/g, (ch) => {
-    switch (ch) {
-      case '&': return '&amp;';
-      case '<': return '&lt;';
-      case '>': return '&gt;';
-      case '"': return '&quot;';
-      case "'": return '&#39;';
-      default: return ch;
+  const escape = (s: string): string =>
+    s.replace(/[&<>"']/g, (ch) => {
+      switch (ch) {
+        case '&': return '&amp;';
+        case '<': return '&lt;';
+        case '>': return '&gt;';
+        case '"': return '&quot;';
+        case "'": return '&#39;';
+        default: return ch;
+      }
+    });
+  const safeCode = escape(code);
+  // Validate parentOrigin at render time so a malformed value doesn't
+  // reach the client-side postMessage call. An invalid URL yields an
+  // empty string, which disables postMessage entirely (falls back to
+  // tab-mode behavior) rather than using a risky wildcard target.
+  let parentOrigin = '';
+  if (opts.mode === 'iframe' && opts.parentOrigin) {
+    try {
+      const parsed = new URL(opts.parentOrigin);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        parentOrigin = parsed.origin;
+      }
+    } catch {
+      // Leave as empty; iframe mode without a trusted parent origin
+      // renders but won't postMessage.
     }
-  });
+  }
+  const modeLiteral = opts.mode === 'iframe' && parentOrigin ? 'iframe' : 'tab';
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -2435,6 +2465,8 @@ function renderConnectSaasPage(code: string): string {
   <script>
     (function () {
       var code = ${JSON.stringify(safeCode)};
+      var mode = ${JSON.stringify(modeLiteral)};
+      var parentOrigin = ${JSON.stringify(parentOrigin)};
       var root = document.getElementById('root');
 
       if (!code) {
@@ -2478,10 +2510,29 @@ function renderConnectSaasPage(code: string): string {
             if (!res.ok) {
               return res.text().then(function (body) { throw new Error(body || ('HTTP ' + res.status)); });
             }
+            // When embedded in the SaaS via iframe, we postMessage
+            // the parent so the SaaS flow can advance without a tab
+            // switch. The explicit parentOrigin was validated
+            // server-side and rejects to empty string on any parse
+            // issue; in that case we silently stay in "close the
+            // tab" mode.
+            if (mode === 'iframe' && parentOrigin) {
+              try {
+                window.parent.postMessage(
+                  { type: 'saas-connect-bound', code: code, memberName: member },
+                  parentOrigin,
+                );
+              } catch (_) {
+                // Parent may have navigated away; the SaaS tab can
+                // still complete the handshake on its next poll.
+              }
+            }
             root.innerHTML =
               '<h1>Done.</h1>' +
               '<p>AgentC7 SaaS has been authorized as <code>' + escapeHtml(member) + '</code>.</p>' +
-              '<p class="muted">You can close this tab and return to the SaaS.</p>';
+              (mode === 'iframe'
+                ? '<p class="muted">Your AgentC7 tab will continue automatically.</p>'
+                : '<p class="muted">You can close this tab and return to the SaaS.</p>');
           }).catch(function (e) {
             btn.disabled = false;
             btn.textContent = 'Authorize';

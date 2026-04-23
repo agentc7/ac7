@@ -1,6 +1,6 @@
 ---
 title: Connect a self-hosted ac7
-description: Bridge an ac7 server you run yourself into your SaaS account. Member identity is determined by your server — the SaaS never asserts who you are.
+description: Bridge an ac7 server you run yourself into an AgentC7 SaaS account. The SaaS is an identity broker; your server stays authoritative for team state and member identity.
 section: Guides
 order: 40
 ---
@@ -8,119 +8,105 @@ order: 40
 # Connect a self-hosted ac7
 
 The SaaS at app.agentc7.com can sit in front of any ac7 server you
-already run on your own infrastructure. After a one-time handshake
-and a small `config.json` edit, the SaaS mints short-lived JWTs for
-every request and your server verifies them against our public JWKS.
-Nothing about your team state moves — your roster, your messages,
-your files, all stay on your box.
+already run on your own infrastructure. You enable the connection
+from your server, and teammates join through the SaaS's invite flow.
+Nothing about your team state moves — roster, messages, files, all
+stay on your box.
 
 ## The trust model
 
-Identity is **determined by your ac7 server**, not asserted by the
-SaaS. To bind a SaaS account to a specific member on your server,
-you have to sign in to your server as that member and confirm the
-binding. A SaaS user can't impersonate one of your members just by
-knowing their name — that's the whole point of the pairing-code
-handshake below.
+Two separable concerns, handled by two different actors:
 
-## When you'd want this
+1. **Server registration** — one-time, done by the server admin.
+   The ac7 CLI (`ac7-connect-saas`) talks to the SaaS, receives
+   a JWT config block, and writes it into a sidecar overlay file.
+   No manual JSON paste; no config edits by other users.
 
-- You're already running ac7 behind your own domain and don't want
-  to migrate data into our managed hosting.
-- You need to keep team data inside a specific cloud tenant or
-  network boundary for compliance reasons.
-- You want sign-in-once access to multiple servers without letting
-  us host any of them.
+2. **Member binding** — per-user, per-team. Whenever a SaaS account
+   wants to access a member on this server, the user signs into
+   the ac7 (via TOTP or whatever the server's auth is configured
+   for) and confirms the binding. The OSS server tells the SaaS
+   which member just authenticated; the SaaS never asserts a
+   member identity on its own.
 
-If none of those apply, **Create managed** is the simpler path — we
-provision the per-team state for you and you never touch ac7 config
-files.
+The net effect: a SaaS account holder can't impersonate any member
+they don't have real credentials for on your server.
 
 ## Prerequisites
 
-- An ac7 server with the Phase-10 release (has the `/saas-connect/*`
-  endpoints) reachable from the public internet at an `https://`
-  URL.
-- The ability to sign into that server as the member you want bound.
-  The SaaS never writes to your roster.
-- Access to edit `config.json` on the server.
+- An ac7 server built from the Phase-10+ release (has the
+  `/saas-connect/*` endpoints and the `ac7-connect-saas` binary).
+- The server is publicly reachable over HTTPS. The SaaS won't
+  proxy to private-range or loopback origins in production.
+- A member entry already in your `config.json` for the admin
+  running the registration.
 
-## Step 1 — Start the handshake on the SaaS
+## Step 1 — Register your ac7 with AgentC7
 
-Click **Add a team** in the SaaS, then flip to the **Connect existing**
-tab. Fill in:
+On the server, run:
 
-| Field | What goes here |
-|---|---|
-| Team name | Whatever you want the SaaS rail to show. |
-| Slug | URL segment. The SaaS renders the team at `/t/<slug>`. |
-| Hosted URL | Your ac7 server's base URL. We probe `/healthz` to verify reachability. |
-
-Notably: **no member name field**. Which member the SaaS binds to
-is determined on your server in the next step.
-
-On submit, the SaaS validates the URL (SSRF-safe — no loopback, no
-cloud-metadata, no private IPs), probes `/healthz`, and issues a
-short pairing code. You'll see something like:
-
-```
-Open the confirmation URL below on your ac7 server, sign in as the
-member you want bound to this SaaS account, and click Authorize.
-
-https://ac7.example.com/setup/connect-saas?code=ABCD1234
+```sh
+ac7-connect-saas \
+  --url https://ac7.acme.com \
+  --member-name alice
 ```
 
-The code expires in 10 minutes.
+The CLI prints a verification URL and an 8-character code:
 
-## Step 2 — Confirm on your ac7
+```
+→ Open this URL while signed in to AgentC7:
+    https://app.agentc7.com/authorize-server?code=ABCD-EFGH
 
-Click the URL (or paste it into a new tab). Your ac7 serves a minimal
-confirmation page at `/setup/connect-saas`:
+  Then verify the code:
+    ABCD-EFGH
 
-- If you're not signed in: the page says "Sign in first", with a
-  link back to your ac7's root. Sign in with your normal auth
-  (TOTP, bearer, whatever your config allows), then return to the
-  URL — the code is preserved.
-- If you are signed in: the page shows "AgentC7 SaaS wants to bind
-  this server to member `<your-name>`. Authorize?" Click Authorize.
-
-Your ac7 stores the `(code → memberName)` binding in memory and
-returns a confirmation. The SaaS tab (which has been polling every
-couple of seconds) picks up the binding on its next poll, creates
-the team, and shows you the config snippet.
-
-**Mallory-proof by construction:** if you don't have a real session
-on the ac7 server, you can't complete this step. The SaaS doesn't
-need to know whether you "own" the server — your server's own auth
-is the trust root.
-
-## Step 3 — Paste the config snippet
-
-The SaaS shows a JSON block like this:
-
-```json
-{
-  "jwt": {
-    "issuer": "https://app.agentc7.com",
-    "jwksUrl": "https://app.agentc7.com/.well-known/jwks.json",
-    "audience": "team:9e8a154a-2919-4205-a140-63683504badc"
-  }
-}
+  (Code expires in 10 minutes. Waiting for your confirmation…)
 ```
 
-Merge that block into your ac7 `config.json` under the root `jwt`
-key. The three fields pin:
+In a browser, open the URL (signing into AgentC7 if needed). The
+SaaS's `/authorize-server` page shows:
 
-- **`issuer`** — who's allowed to mint tokens for this server.
-- **`jwksUrl`** — where to fetch the public keys that verify the
-  signature. Your ac7 caches the JWKS and re-fetches automatically
-  if it ever sees a `kid` it doesn't recognize (that's the
-  key-rotation story — see below).
-- **`audience`** — pinned to this specific team id, so a token
-  minted for another team that also trusts our JWKS can't be
-  replayed against you.
+- The URL of the server that's trying to register (cross-check
+  against what you typed into the CLI).
+- The pairing code (cross-check against the terminal).
+- A team name (defaults to your server's hostname).
+- Your member name (read from `--member-name`; you can override).
 
-Restart (or live-reload) your ac7 so it picks up the new config.
+Click **Authorize**. The SaaS creates a team with
+`tier: 'self-hosted'` owned by your AgentC7 account, then the CLI's
+poll loop picks up the new config and writes it to
+`<config-path>.saas.json` (e.g. `./ac7.saas.json`).
+
+```
+✓ Registered. Wrote ./ac7.saas.json.
+  Team id:  2eebcdaf-8aaa-4417-b0b2-010c56324ea5
+  Audience: team:2eebcdaf-8aaa-4417-b0b2-010c56324ea5
+  Issuer:   https://app.agentc7.com
+
+  Restart ac7-server to pick up the new config.
+  Open the team in AgentC7:
+    https://app.agentc7.com/t/2eebcdaf-8aaa-4417-b0b2-010c56324ea5
+```
+
+Restart the server. Your `config.json` stays untouched — the JWT
+config lives in the sidecar file that the loader merges at startup.
+
+## Step 2 — Teammates join via invite
+
+Owners mint invites in the SaaS (no change from the managed-team
+flow) and share the invite link.
+
+When an invitee clicks the link, the SaaS detects their team is
+self-hosted and renders an embedded iframe pointing at your
+server's `/setup/connect-saas` page. The invitee signs in on the
+ac7 (through the iframe — your ac7's auth, your ac7's session
+cookie) and clicks Authorize. The ac7 attests the member identity
+back to the SaaS via a cross-origin `postMessage`; the SaaS creates
+the membership row with the attested name.
+
+The invitee never sees a "type your member name" form, and there's
+no way for them to claim a member they can't actually authenticate
+as on your server.
 
 ## What happens on the next request
 
@@ -136,67 +122,69 @@ Your ac7 then:
 
 1. Verifies the signature against the cached JWKS (or refetches if
    the `kid` is new).
-2. Confirms `iss` + `aud` match its `config.json` values.
+2. Confirms `iss` + `aud` match its `config.saas.json` overlay.
 3. Resolves the `member` claim against its local roster and handles
-   the request exactly like any other JWT hit.
+   the request.
 
-WebSocket upgrades ride through the same path — Cloudflare Workers'
-`fetch()` with an `Upgrade: websocket` header handles the
-bidirectional pipe natively.
+WebSocket upgrades ride through the same path transparently.
 
-## Inviting teammates
+## Disabling the connection
 
-Pending — v1 of the pairing handshake only supports the owner
-binding. Adding the same confirmation flow for invite redemption
-(so invitees sign in on the ac7 side too) is queued for a
-follow-up.
+Two options:
 
-## Disconnect
+- **SaaS side:** on the team's settings page, **Disconnect team**
+  removes the SaaS rows (memberships, invites, the team registry
+  entry). Your ac7 keeps running untouched.
+- **Server side:** delete the sidecar overlay:
+  ```sh
+  rm ./ac7.saas.json
+  systemctl restart ac7-server   # or however you run it
+  ```
+  Your ac7 falls back to bearer-token + TOTP auth — the JWT path is
+  config-gated and deactivates when no `jwt` block is loaded.
 
-On the team's settings page, **Disconnect team** removes every
-SaaS-side row — memberships, invites, the team registry row. **Your
-ac7 server keeps running.** If you want to stop the SaaS from
-minting tokens for it after disconnect, either rotate your server's
-`jwt.audience` (which invalidates any still-in-flight SaaS tokens
-pinned to the old audience) or remove the `jwt` block entirely to
-fall back to the per-member auth you had before.
+The two are independent. Disconnect on the SaaS doesn't remove the
+overlay; remove the overlay to fully disable the connection on your
+server side.
 
 ## Key rotation
 
 The SaaS may rotate its signing keypair periodically. Your ac7
 handles this transparently: the JWT's `kid` header identifies which
 key signed it; if your cached JWKS doesn't contain that `kid`,
-`jose` transparently refetches. During a rotation we publish both
-old and new public keys on the JWKS endpoint for the overlap
-window, so no request mid-flight fails verification.
-
-Nothing to configure.
+`jose` refetches the JWKS. During a rotation we publish both old
+and new public keys for the overlap window so no request mid-flight
+fails verification. Nothing to configure.
 
 ## Residual risk — DNS TOCTOU
 
-URL validation at connect time is string-based: we reject literals
-in private ranges, metadata hostnames, and forbidden ports. What we
-**don't** do is resolve DNS at validation time — a hostname that
-resolves to a public IP at connect time but flips to `10.0.0.1`
+URL validation at registration is string-based: we reject literals
+in private ranges, metadata hostnames, and forbidden ports. We
+**don't** resolve DNS at validation time — a hostname that
+resolves to a public IP at registration but flips to `10.0.0.1`
 later can't be caught by this layer. Cloudflare's edge routing
 doesn't carry RFC1918 destinations by default, which narrows the
 real exposure considerably, but true DNS-rebinding defence would
-need a locked egress proxy. Worth flagging; not resolvable in the
-current architecture.
+need a locked egress proxy.
 
 ## Troubleshooting
 
-- **`could not reach hosted origin` on start** — your server isn't
-  responding on `/healthz` within 3s. Check `curl https://<your-url>/healthz`
-  from outside your network.
-- **Pairing code expires without the SaaS completing** — you didn't
-  reach Step 2 in time, or your browser's tab was closed. Restart
-  from Step 1; codes are cheap.
-- **`401 invalid jwt` on every request after the config paste** —
-  usually a config typo. Your ac7's debug log shows
-  `jwt verify failed` with `receivedIss` / `receivedAud` /
-  `receivedMember`; compare those values against the snippet.
-- **`jwt names unknown member` in your ac7 logs** — this means the
-  member name you authorized with on the ac7 side no longer exists
-  in `config.json` (you may have removed it after connecting).
-  Re-add the member and restart.
+- **CLI says `server already registered`.** Another AgentC7 account
+  has already registered this server. One server = one SaaS team.
+  Ask the current owner for an invite.
+- **CLI polls until it expires.** You never opened the
+  verification URL, or the code was rejected. Re-run
+  `ac7-connect-saas`; codes are cheap.
+- **SaaS tab says `unknown or expired code`.** The pairing code
+  expired (10-min lifetime) or was already consumed from a
+  different tab. Re-run the CLI.
+- **After Authorize, the server still sees `jwt verify failed`
+  with `unexpected aud claim value`.** You didn't restart ac7 after
+  the overlay was written. The overlay loads at startup; send
+  SIGHUP to the server or restart it.
+- **Invitees' iframe shows `Sign in first` but your ac7 is
+  accessible in other tabs.** The iframe is on your ac7's origin,
+  cookies are scoped there — but some browsers apply tighter rules
+  to third-party iframes. Ask the invitee to open the confirm URL
+  directly in a new tab instead (shown in the SaaS fallback
+  message).
