@@ -1,0 +1,166 @@
+---
+title: Connect a self-hosted ac7
+description: Bridge an ac7 server you run yourself into your SaaS account. The SaaS becomes your identity plane; your server stays authoritative for team state.
+section: Guides
+order: 40
+---
+
+# Connect a self-hosted ac7
+
+The SaaS at app.agentc7.com can sit in front of any ac7 server you
+already run on your own infrastructure. After a one-time config
+change on your server, the SaaS mints short-lived JWTs for every
+request and your server verifies them against our public JWKS.
+Nothing about your team state moves — your roster, your messages,
+your files, all stay on your box.
+
+## When you'd want this
+
+- You're already running ac7 behind your own domain and don't want
+  to migrate data into our managed hosting.
+- You need to keep team data inside a specific cloud tenant or
+  network boundary for compliance reasons.
+- You want SSO-adjacent identity (sign-in once via the SaaS, get
+  access to multiple servers) without letting us host the servers.
+
+If none of those apply, **Create managed** is the simpler path —
+we provision the per-team state for you and you never touch ac7
+config files.
+
+## Prerequisites
+
+- An ac7 server (Phase 4+ — has the JWT middleware) reachable from
+  the public internet at an `https://` URL.
+- Owner access to a `config.json` on that server.
+- A member name already present in that `config.json` — the SaaS
+  never writes to your roster; you pre-add yourself, then connect.
+
+## Step 1 — Connect
+
+Click **Add a team** in the SaaS, then flip to the **Connect existing**
+tab. Fill in:
+
+| Field | What goes here |
+|---|---|
+| Team name | Whatever you want the SaaS rail to show. |
+| Slug | URL segment. The SaaS will render the team at `/t/<slug>`. |
+| Hosted URL | Your ac7 server's base URL. We probe `/healthz` to verify reachability. |
+| Your member name | The `Member.name` in your `config.json` that this account authenticates as. |
+
+On submit, the SaaS:
+
+1. Runs SSRF-safe URL validation (no loopback, no cloud-metadata,
+   no RFC1918, no well-known non-HTTP ports).
+2. Probes `GET <hostedAt>/healthz` with a 3-second timeout.
+3. Creates the SaaS-side `teams` + `memberships` rows with
+   `tier: 'self-hosted'`.
+
+## Step 2 — Paste the config snippet
+
+After a successful connect, the SaaS shows a JSON block like this:
+
+```json
+{
+  "jwt": {
+    "issuer": "https://app.agentc7.com",
+    "jwksUrl": "https://app.agentc7.com/.well-known/jwks.json",
+    "audience": "team:9e8a154a-2919-4205-a140-63683504badc"
+  }
+}
+```
+
+Merge that block into your ac7 `config.json` under the root `jwt`
+key. The three fields pin:
+
+- **`issuer`** — who's allowed to mint tokens for this server.
+- **`jwksUrl`** — where to fetch the public keys that verify the
+  signature. Your ac7 caches the JWKS and re-fetches automatically
+  if it ever sees a `kid` it doesn't recognize (that's the key-
+  rotation story — see below).
+- **`audience`** — pinned to this specific team id, so a token
+  minted for another team that also trusts our JWKS can't be
+  replayed against you.
+
+Restart (or live-reload) your ac7 so it picks up the new config.
+
+## What happens on the next request
+
+Browser → SaaS Worker:
+
+1. SaaS verifies the Clerk session cookie.
+2. Looks up the team in D1: `tier=self-hosted`, `hosted_at=<your URL>`.
+3. Mints a fresh RS256 JWT with `aud: team:<id>`, `member: <your name>`,
+   `role`, and `tier: self-hosted`. Default lifetime: 60 seconds.
+4. `fetch(<your URL>/<path>)` with the JWT on `Authorization: Bearer …`.
+
+Your ac7 then:
+
+1. Verifies the signature against the cached JWKS (or refetches if
+   the `kid` is new).
+2. Confirms `iss` + `aud` match its `config.json` values.
+3. Resolves the `member` claim against its local roster and handles
+   the request exactly like any other JWT hit.
+
+WebSocket upgrades ride through the same path — Cloudflare Workers'
+`fetch()` with an `Upgrade: websocket` header handles the
+bidirectional pipe natively.
+
+## Inviting teammates
+
+Same invite flow as managed teams: mint a code, share the URL.
+**Difference:** the redeemer's chosen member name must already exist
+in your `config.json`. The SaaS can't call into your server to add
+members, so the pairing is:
+
+1. You (the owner) add a new `Member` entry to `config.json` and
+   restart your server.
+2. You mint an invite in the SaaS for that team.
+3. The invitee redeems the invite, entering the same member name.
+
+## Disconnect
+
+On the team's settings page, **Disconnect team** removes every
+SaaS-side row — memberships, invites, the team registry row.
+**Your ac7 server keeps running.** If you want to stop the SaaS
+from minting tokens for it after disconnect, either rotate your
+server's `jwt.audience` (which invalidates any still-in-flight
+SaaS tokens pinned to the old audience) or remove the `jwt` block
+entirely to fall back to bearer-token auth.
+
+## Key rotation
+
+The SaaS may rotate its signing keypair periodically (secret
+rotation, compromise response). Your ac7 handles this transparently:
+
+- The JWT's `kid` header identifies which key signed it.
+- If your cached JWKS doesn't contain that `kid`, `jose`
+  transparently refetches the JWKS from the SaaS.
+- During a rotation we publish both the old and new public keys on
+  the JWKS endpoint for the overlap window, so no request mid-flight
+  fails verification.
+
+Nothing to configure.
+
+## Residual risk — SSRF
+
+URL validation at connect time is string-based: we reject literals
+in private ranges, metadata hostnames, and forbidden ports. What
+we **don't** do is resolve DNS at validation time — a hostname that
+resolves to a public IP at connect time but flips to `10.0.0.1`
+later can't be caught by this layer. Cloudflare's edge routing
+doesn't carry RFC1918 destinations by default, which narrows the
+real exposure considerably, but true DNS-rebinding defence would
+need a locked egress proxy. Worth flagging; not resolvable in the
+current architecture.
+
+## Troubleshooting
+
+- **`could not reach hosted origin`** on connect — your server isn't
+  responding on `/healthz` within 3s. Check `curl https://<your-url>/healthz`
+  from outside your network.
+- **401 on every request after connect** — usually a config
+  mismatch. Verify all three `jwt` fields are exactly as shown in
+  the SaaS snippet (copy-paste rather than retype).
+- **`jwt names unknown member`** in your ac7 logs — the SaaS member
+  name doesn't match any entry in your `config.json` roster. Add
+  the member locally and restart.
