@@ -91,11 +91,9 @@ function parseCliArgs(argv: string[]): CliArgs {
     process.stderr.write(`ac7-connect-saas: --member-name is required\n\n${USAGE}`);
     process.exit(2);
   }
-  const saasOrigin =
-    (typeof values.saas === 'string' && values.saas.length > 0
-      ? values.saas
-      : DEFAULT_SAAS_ORIGIN
-    ).replace(/\/+$/, '');
+  const saasOrigin = (
+    typeof values.saas === 'string' && values.saas.length > 0 ? values.saas : DEFAULT_SAAS_ORIGIN
+  ).replace(/\/+$/, '');
   const configPath =
     typeof values['config-path'] === 'string' && values['config-path'].length > 0
       ? values['config-path']
@@ -126,7 +124,10 @@ type StatusResponse =
       jwt: { issuer: string; jwksUrl: string; audience: string };
     };
 
-async function postJson<T>(url: string, body: unknown): Promise<{ status: number; body: T | null }> {
+async function postJson<T>(
+  url: string,
+  body: unknown,
+): Promise<{ status: number; body: T | null }> {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -169,7 +170,12 @@ async function start(args: CliArgs): Promise<StartResponse> {
   return res.body;
 }
 
-async function poll(args: CliArgs, deviceCode: string, intervalSec: number, expiresAt: number): Promise<StatusResponse> {
+async function poll(
+  args: CliArgs,
+  deviceCode: string,
+  intervalSec: number,
+  expiresAt: number,
+): Promise<StatusResponse> {
   const intervalMs = Math.max(1000, intervalSec * 1000);
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -234,12 +240,7 @@ async function main(): Promise<void> {
       `  (Code expires in 10 minutes. Waiting for your confirmation…)\n\n`,
   );
 
-  const outcome = await poll(
-    args,
-    started.deviceCode,
-    started.pollIntervalSec,
-    started.expiresAt,
-  );
+  const outcome = await poll(args, started.deviceCode, started.pollIntervalSec, started.expiresAt);
   if (outcome.status !== 'authorized') {
     process.stderr.write(
       `\nRegistration expired before you confirmed. Re-run ac7-connect-saas to try again.\n`,

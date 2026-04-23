@@ -425,7 +425,9 @@ export function createApp(options: AppOptions): CreatedApp {
   app.post('/saas-connect/bind', auth, async (c) => {
     const body = await c.req.json().catch(() => null);
     const code =
-      typeof body === 'object' && body !== null && typeof (body as { code?: unknown }).code === 'string'
+      typeof body === 'object' &&
+      body !== null &&
+      typeof (body as { code?: unknown }).code === 'string'
         ? (body as { code: string }).code
         : null;
     if (code === null || code.length === 0 || code.length > 32) {
@@ -2369,18 +2371,24 @@ function renderConnectSaasPage(
   // from a Crockford base32 alphabet on the SaaS side so there's
   // nothing dangerous to escape in practice, but doing it anyway
   // means future code-format changes don't open an XSS hole.
-  const escape = (s: string): string =>
+  const escapeHtml = (s: string): string =>
     s.replace(/[&<>"']/g, (ch) => {
       switch (ch) {
-        case '&': return '&amp;';
-        case '<': return '&lt;';
-        case '>': return '&gt;';
-        case '"': return '&quot;';
-        case "'": return '&#39;';
-        default: return ch;
+        case '&':
+          return '&amp;';
+        case '<':
+          return '&lt;';
+        case '>':
+          return '&gt;';
+        case '"':
+          return '&quot;';
+        case "'":
+          return '&#39;';
+        default:
+          return ch;
       }
     });
-  const safeCode = escape(code);
+  const safeCode = escapeHtml(code);
   // Validate parentOrigin at render time so a malformed value doesn't
   // reach the client-side postMessage call. An invalid URL yields an
   // empty string, which disables postMessage entirely (falls back to
