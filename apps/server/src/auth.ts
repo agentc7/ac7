@@ -100,8 +100,17 @@ export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<
           await next();
           return;
         } catch (err) {
+          // Decode (without verifying) to surface the actual claims
+          // so log readers can compare against the configured
+          // issuer/audience when a mismatch bites. The token already
+          // failed verification by this point — we're only reading
+          // bytes we already rejected.
+          const actual = peekJwtClaims(raw);
           logger.debug('jwt verify failed', {
             error: err instanceof Error ? err.message : String(err),
+            receivedIss: actual?.iss ?? null,
+            receivedAud: actual?.aud ?? null,
+            receivedMember: actual?.member ?? null,
           });
           return c.json({ error: 'invalid jwt' }, 401);
         }
@@ -147,4 +156,33 @@ export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<
 
     return c.json({ error: 'missing credentials' }, 401);
   };
+}
+
+/**
+ * Decode a JWT's payload *without* verifying the signature. Used only
+ * to surface `iss` / `aud` / `member` values in the debug log when a
+ * verify failure fires — the token has already been rejected by the
+ * verifier, so we're never trusting these bytes. Returns null on any
+ * structural issue so the caller just logs "unknown".
+ */
+function peekJwtClaims(token: string): {
+  iss?: unknown;
+  aud?: unknown;
+  member?: unknown;
+} | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || !parts[1]) return null;
+  try {
+    const raw = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = raw + '='.repeat((4 - (raw.length % 4)) % 4);
+    const json = atob(padded);
+    const payload = JSON.parse(json) as Record<string, unknown>;
+    return {
+      iss: payload.iss,
+      aud: payload.aud,
+      member: payload.member,
+    };
+  } catch {
+    return null;
+  }
 }
