@@ -24,5 +24,6 @@ export {
   type ToastKind,
   type ToastOptions,
   toast,
+  toasts,
 } from './lib/toast.js';
 export { TeamShell, type TeamShellProps } from './TeamShell.js';
