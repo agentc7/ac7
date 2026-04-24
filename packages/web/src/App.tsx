@@ -11,7 +11,7 @@
  *   - `authenticated`  → TeamShell, with OSS callbacks wired in
  */
 
-import { TeamShell } from '@agentc7/web-shell';
+import { TeamShell, ToastContainer } from '@agentc7/web-shell';
 import { useEffect } from 'preact/hooks';
 import { getClient } from './lib/client.js';
 import { bootstrap, logout, session } from './lib/session.js';
@@ -29,16 +29,19 @@ export function App() {
   if (state.status === 'loading') return <Boot />;
   if (state.status === 'anonymous') return <Login />;
   return (
-    <TeamShell
-      client={getClient()}
-      identity={{
-        member: state.member,
-        role: state.role,
-        permissions: state.permissions,
-        expiresAt: state.expiresAt,
-      }}
-      onSignOut={() => logout()}
-      onUnauthorized={(notice) => logout(notice)}
-    />
+    <>
+      <TeamShell
+        client={getClient()}
+        identity={{
+          member: state.member,
+          role: state.role,
+          permissions: state.permissions,
+          expiresAt: state.expiresAt,
+        }}
+        onSignOut={() => logout()}
+        onUnauthorized={(notice) => logout(notice)}
+      />
+      <ToastContainer />
+    </>
   );
 }

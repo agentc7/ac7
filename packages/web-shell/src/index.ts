@@ -13,6 +13,16 @@
  * paths are not a stable surface and may move without notice.
  */
 
+export { ToastContainer } from './components/ui/ToastContainer.js';
 export type { SignOutHandler, UnauthorizedHandler } from './lib/handlers.js';
 export type { Identity } from './lib/identity.js';
+export {
+  clearAllToasts,
+  dismissToast,
+  type Toast,
+  type ToastAction,
+  type ToastKind,
+  type ToastOptions,
+  toast,
+} from './lib/toast.js';
 export { TeamShell, type TeamShellProps } from './TeamShell.js';
