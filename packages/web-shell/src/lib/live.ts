@@ -24,6 +24,7 @@ import { MessageSchema } from '@agentc7/sdk/schemas';
 import { signal } from '@preact/signals';
 import { getClient } from './client.js';
 import { appendMessages } from './messages.js';
+import { notifyNewMessage } from './notify.js';
 import { loadObjectives } from './objectives.js';
 
 export const streamConnected = signal(false);
@@ -102,6 +103,10 @@ export function startSubscribe(options: StartSubscribeOptions): () => void {
       try {
         const msg = MessageSchema.parse(JSON.parse(raw));
         appendMessages(name, [msg]);
+        // Foreground in-app toast — gated inside `notifyNewMessage`
+        // so backfill paths (which call appendMessages directly) stay
+        // silent. Only live WS frames reach here.
+        notifyNewMessage(msg);
         // If this frame carried an objective event, refresh the
         // objectives signal so the sidebar count + panel stay in
         // sync with the server's authoritative state.
