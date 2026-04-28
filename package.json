@@ -24,10 +24,10 @@
     "ac7": "node packages/cli/dist/index.js"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.0.0",
+    "@biomejs/biome": "^2.4.13",
     "turbo": "^2.0.0",
     "typescript": "^6.0.3",
-    "vite": "^8.0.9"
+    "vite": "^8.0.10"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
