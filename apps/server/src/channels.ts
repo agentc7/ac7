@@ -254,12 +254,7 @@ class SqliteChannelStore implements ChannelStore {
   private ensureGeneral(): void {
     const existing = this.selectByIdStmt.get(GENERAL_CHANNEL_ID) as ChannelRow | undefined;
     if (existing) return;
-    this.insertChannelStmt.run(
-      GENERAL_CHANNEL_ID,
-      GENERAL_CHANNEL_SLUG,
-      SYSTEM_ACTOR,
-      Date.now(),
-    );
+    this.insertChannelStmt.run(GENERAL_CHANNEL_ID, GENERAL_CHANNEL_SLUG, SYSTEM_ACTOR, Date.now());
   }
 
   listAll(): Channel[] {
@@ -282,7 +277,15 @@ class SqliteChannelStore implements ChannelStore {
     return row ? rowToChannel(row) : null;
   }
 
-  create({ slug, creator, now = Date.now() }: { slug: string; creator: string; now?: number }): Channel {
+  create({
+    slug,
+    creator,
+    now = Date.now(),
+  }: {
+    slug: string;
+    creator: string;
+    now?: number;
+  }): Channel {
     validateSlug(slug);
     if (slug === GENERAL_CHANNEL_SLUG) {
       throw new ChannelsError('reserved', `slug "${slug}" is reserved`);

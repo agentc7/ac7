@@ -47,7 +47,7 @@ export function RouteModal({ onClose, ariaLabel, size = 'lg', children }: RouteM
   }, [onClose]);
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: the close button + Escape key + role="dialog" cover the keyboard path; the click-outside is a convenience
+    // biome-ignore lint/a11y/useKeyWithClickEvents: keyboard dismissal is the global Escape handler bound in useEffect — onClick here is the click-outside convenience only
     <div
       class="fixed inset-0 z-50 flex items-center justify-center p-4"
       style="background:rgba(0,0,0,0.55);backdrop-filter:blur(2px)"

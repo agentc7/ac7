@@ -175,9 +175,11 @@ describe('<App /> auth gate', () => {
     render(<App />);
 
     await waitFor(() => {
-      // Viewer identity renders in the NavColumn user chip.
-      expect(screen.getByText('director-1')).toBeTruthy();
-      // Sign-out lives on the user chip in the NavColumn footer.
+      // Identity affordance after login is the gear-iconed Account
+      // button in the NavColumn footer (the legacy avatar+name chip
+      // was retired when account settings became a modal). Sign-out
+      // is the small icon next to it.
+      expect(screen.getByRole('button', { name: /account settings/i })).toBeTruthy();
       expect(screen.getByRole('button', { name: /sign out/i })).toBeTruthy();
     });
   });

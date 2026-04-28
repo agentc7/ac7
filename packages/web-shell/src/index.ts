@@ -23,7 +23,6 @@ export {
   openInspector,
   toggleInspector,
 } from './lib/inspector.js';
-export { closeSidebar, isSidebarOpen, openSidebar } from './lib/view.js';
 export {
   clearAllToasts,
   dismissToast,
@@ -34,4 +33,5 @@ export {
   toast,
   toasts,
 } from './lib/toast.js';
+export { closeSidebar, isSidebarOpen, openSidebar } from './lib/view.js';
 export { TeamShell, type TeamShellProps } from './TeamShell.js';

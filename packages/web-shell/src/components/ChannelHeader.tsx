@@ -89,9 +89,7 @@ export function ChannelHeader({ channel, viewer }: ChannelHeaderProps) {
           </button>
         )}
       </div>
-      {open && (
-        <ChannelSettings channel={channel} viewer={viewer} onClose={closeChannelSettings} />
-      )}
+      {open && <ChannelSettings channel={channel} viewer={viewer} onClose={closeChannelSettings} />}
     </>
   );
 }

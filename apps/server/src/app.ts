@@ -69,6 +69,7 @@ import { type Context, Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
+import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
 import { type FilesystemStore, FsError, type ViewerContext } from './files/index.js';
 import type { JwtVerifier } from './jwt.js';
 import type { Logger } from './logger.js';
@@ -82,7 +83,6 @@ import {
   teammatesFromMembers,
   type UpdateMemberPatch,
 } from './members.js';
-import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
 import { ObjectivesError, type ObjectivesStore } from './objectives.js';
 import type { PushSubscriptionStore } from './push/store.js';
 import { SESSION_COOKIE_NAME, SESSION_TTL_MS, type SessionStore } from './sessions.js';
@@ -749,10 +749,7 @@ export function createApp(options: AppOptions): CreatedApp {
                       : 400;
         return ctx.json({ error: err.message, code: err.code }, status);
       }
-      return ctx.json(
-        { error: err instanceof Error ? err.message : String(err) },
-        500,
-      );
+      return ctx.json({ error: err instanceof Error ? err.message : String(err) }, 500);
     };
     // Use validateSlug at module-eval time so a startup typo in the
     // import doesn't slip past — it's the same validator the create

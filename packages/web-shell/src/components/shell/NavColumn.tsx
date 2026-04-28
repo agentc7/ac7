@@ -46,13 +46,13 @@ import { currentTeam } from '../../lib/team.js';
 import { lastReadByThread, unreadCount } from '../../lib/unread.js';
 import {
   isSidebarOpen,
+  selectAccount,
   selectChannel,
   selectChannelCreate,
   selectChannelsBrowse,
   selectDmWith,
   selectFiles,
   selectInbox,
-  selectAccount,
   selectMembers,
   selectObjectivesList,
   selectOverview,
@@ -98,176 +98,164 @@ export function NavColumn({ viewer }: NavColumnProps) {
   // longer renders its own backdrop button — that was a duplicate
   // surface that conflicted with the shared layer.
   return (
-    <>
-      <nav
-        class={`nav-drawer flex-shrink-0 flex-col
+    <nav
+      class={`nav-drawer flex-shrink-0 flex-col
           md:static md:flex md:w-56 md:translate-x-0 md:shadow-none md:z-0
           fixed top-0 left-0 z-50 w-[85vw] max-w-72 transition-transform duration-200
           ${drawerOpen ? 'is-open translate-x-0 flex shadow-2xl' : '-translate-x-full hidden md:flex md:-translate-x-0'}`}
-        style="background:var(--paper);border-right:1px solid var(--rule);padding-left:env(safe-area-inset-left);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);bottom:0"
+      style="background:var(--paper);border-right:1px solid var(--rule);padding-left:env(safe-area-inset-left);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);bottom:0"
+    >
+      <TeamHeader />
+
+      {/* ── Work section ─────────────────────────────────────────── */}
+      <div style="padding:8px 0;border-bottom:1px solid var(--rule)">
+        <NavItem
+          label="Home"
+          glyph="⌂"
+          active={homeActive}
+          onClick={selectOverview}
+          ariaLabel="Open team home"
+        />
+        <NavItem
+          label="Inbox"
+          glyph="✎"
+          active={inboxActive}
+          onClick={selectInbox}
+          ariaLabel={inbox > 0 ? `Open inbox (${inbox} items)` : 'Open inbox'}
+          trailing={inbox > 0 && !inboxActive ? <UnreadBadge count={inbox} /> : undefined}
+        />
+        <NavItem
+          label="Objectives"
+          glyph="◇"
+          active={objectivesActive}
+          onClick={selectObjectivesList}
+          ariaLabel={
+            activeObjectiveCount > 0
+              ? `Open objectives panel (${activeObjectiveCount} on your plate)`
+              : 'Open objectives panel'
+          }
+          trailing={
+            activeObjectiveCount > 0 && !objectivesActive ? (
+              <UnreadBadge count={activeObjectiveCount} />
+            ) : undefined
+          }
+        />
+        <NavItem
+          label="Files"
+          glyph="▤"
+          active={filesActive}
+          onClick={() => selectFiles(`/${viewer}`)}
+          ariaLabel="Browse files"
+        />
+        {isAdmin && (
+          <NavItem
+            label="Members"
+            glyph="⊕"
+            active={membersActive}
+            onClick={selectMembers}
+            ariaLabel="Manage members"
+          />
+        )}
+      </div>
+
+      {/* ── Channels + Direct sections ───────────────────────────── */}
+      <ul
+        class="flex-1 overflow-y-auto"
+        style="padding:12px 0 8px;list-style:none;margin:0;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation"
       >
-        <TeamHeader />
-
-        {/* ── Work section ─────────────────────────────────────────── */}
-        <div style="padding:8px 0;border-bottom:1px solid var(--rule)">
-          <NavItem
-            label="Home"
-            glyph="⌂"
-            active={homeActive}
-            onClick={selectOverview}
-            ariaLabel="Open team home"
-          />
-          <NavItem
-            label="Inbox"
-            glyph="✎"
-            active={inboxActive}
-            onClick={selectInbox}
-            ariaLabel={inbox > 0 ? `Open inbox (${inbox} items)` : 'Open inbox'}
-            trailing={inbox > 0 && !inboxActive ? <UnreadBadge count={inbox} /> : undefined}
-          />
-          <NavItem
-            label="Objectives"
-            glyph="◇"
-            active={objectivesActive}
-            onClick={selectObjectivesList}
-            ariaLabel={
-              activeObjectiveCount > 0
-                ? `Open objectives panel (${activeObjectiveCount} on your plate)`
-                : 'Open objectives panel'
-            }
-            trailing={
-              activeObjectiveCount > 0 && !objectivesActive ? (
-                <UnreadBadge count={activeObjectiveCount} />
-              ) : undefined
-            }
-          />
-          <NavItem
-            label="Files"
-            glyph="▤"
-            active={filesActive}
-            onClick={() => selectFiles(`/${viewer}`)}
-            ariaLabel="Browse files"
-          />
-          {isAdmin && (
-            <NavItem
-              label="Members"
-              glyph="⊕"
-              active={membersActive}
-              onClick={selectMembers}
-              ariaLabel="Manage members"
-            />
-          )}
-        </div>
-
-        {/* ── Channels + Direct sections ───────────────────────────── */}
-        <ul
-          class="flex-1 overflow-y-auto"
-          style="padding:12px 0 8px;list-style:none;margin:0;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation"
-        >
-          <li
-            class="flex items-center justify-between"
-            style="padding:0 12px 6px"
+        <li class="flex items-center justify-between" style="padding:0 12px 6px">
+          <button
+            type="button"
+            onClick={selectChannelsBrowse}
+            aria-label="Browse all channels"
+            class="eyebrow"
+            style={`margin:0;background:transparent;border:0;padding:0;cursor:pointer;letter-spacing:.16em;text-transform:uppercase;color:${browseActive ? 'var(--ink)' : 'var(--muted)'}`}
           >
-            <button
-              type="button"
-              onClick={selectChannelsBrowse}
-              aria-label="Browse all channels"
-              class="eyebrow"
-              style={`margin:0;background:transparent;border:0;padding:0;cursor:pointer;letter-spacing:.16em;text-transform:uppercase;color:${browseActive ? 'var(--ink)' : 'var(--muted)'}`}
-            >
-              Channels
-            </button>
-            <button
-              type="button"
-              onClick={selectChannelCreate}
-              aria-label="Create a channel"
-              title="Create a channel"
-              style="background:transparent;border:none;color:var(--muted);font-family:var(--f-mono);font-size:14px;line-height:1;cursor:pointer;padding:2px 4px;border-radius:var(--r-xs)"
-            >
-              +
-            </button>
+            Channels
+          </button>
+          <button
+            type="button"
+            onClick={selectChannelCreate}
+            aria-label="Create a channel"
+            title="Create a channel"
+            style="background:transparent;border:none;color:var(--muted);font-family:var(--f-mono);font-size:14px;line-height:1;cursor:pointer;padding:2px 4px;border-radius:var(--r-xs)"
+          >
+            +
+          </button>
+        </li>
+        {!channelsLoaded && (
+          <li class="eyebrow" style="padding:4px 12px;font-style:italic;color:var(--muted)">
+            loading…
           </li>
-          {!channelsLoaded && (
-            <li
-              class="eyebrow"
-              style="padding:4px 12px;font-style:italic;color:var(--muted)"
-            >
-              loading…
-            </li>
-          )}
-          {channelList.map((c) => (
-            <li key={c.id}>
-              <ChannelRow
-                channel={c}
-                active={isChannelActive(v, c)}
-                viewer={viewer}
-                lastRead={lastRead}
-                msgMap={msgMap}
-              />
-            </li>
-          ))}
-          {createActive && (
-            <li
-              class="eyebrow"
-              style="padding:4px 12px;color:var(--steel)"
-              aria-hidden="true"
-            >
-              + new channel
-            </li>
-          )}
+        )}
+        {channelList.map((c) => (
+          <li key={c.id}>
+            <ChannelRow
+              channel={c}
+              active={isChannelActive(v, c)}
+              viewer={viewer}
+              lastRead={lastRead}
+              msgMap={msgMap}
+            />
+          </li>
+        ))}
+        {createActive && (
+          <li class="eyebrow" style="padding:4px 12px;color:var(--steel)" aria-hidden="true">
+            + new channel
+          </li>
+        )}
 
-          <li>
-            <p class="eyebrow" style="padding:14px 12px 6px">
-              Direct
-            </p>
-          </li>
-          {teammates.map((t) => {
-            const connected = onlineByName.get(t.name) ?? 0;
-            const online = connected > 0;
-            const active = v.kind === 'thread' && v.key === dmThreadKey(t.name);
-            const unread = unreadCount(dmThreadKey(t.name), viewer, lastRead, msgMap);
-            const auth = privilegeTag(
-              summarizePermissions(t.permissions, b?.team.permissionPresets ?? {}),
-            );
-            return (
-              <li key={t.name}>
-                <button
-                  type="button"
-                  onClick={() => selectDmWith(t.name)}
-                  aria-label={
-                    unread > 0
-                      ? `Message ${t.name} (${online ? 'online' : 'offline'}, ${unread} unread)`
-                      : `Message ${t.name} (${online ? 'online' : 'offline'})`
-                  }
-                  title={`${t.name} · ${online ? 'online' : 'offline'} · ${t.role.title}`}
-                  class={`navitem w-full${active ? ' active' : ''}`}
-                  style={`text-align:left;font-weight:${active ? 700 : 500}`}
+        <li>
+          <p class="eyebrow" style="padding:14px 12px 6px">
+            Direct
+          </p>
+        </li>
+        {teammates.map((t) => {
+          const connected = onlineByName.get(t.name) ?? 0;
+          const online = connected > 0;
+          const active = v.kind === 'thread' && v.key === dmThreadKey(t.name);
+          const unread = unreadCount(dmThreadKey(t.name), viewer, lastRead, msgMap);
+          const auth = privilegeTag(
+            summarizePermissions(t.permissions, b?.team.permissionPresets ?? {}),
+          );
+          return (
+            <li key={t.name}>
+              <button
+                type="button"
+                onClick={() => selectDmWith(t.name)}
+                aria-label={
+                  unread > 0
+                    ? `Message ${t.name} (${online ? 'online' : 'offline'}, ${unread} unread)`
+                    : `Message ${t.name} (${online ? 'online' : 'offline'})`
+                }
+                title={`${t.name} · ${online ? 'online' : 'offline'} · ${t.role.title}`}
+                class={`navitem w-full${active ? ' active' : ''}`}
+                style={`text-align:left;font-weight:${active ? 700 : 500}`}
+              >
+                <span class={`dot${online ? ' ok' : ' muted'}`} aria-hidden="true" />
+                <span
+                  class={`truncate flex-1${unread > 0 && !active ? ' font-semibold' : ''}`}
+                  style={unread > 0 && !active ? 'font-weight:700' : ''}
                 >
-                  <span class={`dot${online ? ' ok' : ' muted'}`} aria-hidden="true" />
+                  {t.name}
+                </span>
+                {auth !== null && (
                   <span
-                    class={`truncate flex-1${unread > 0 && !active ? ' font-semibold' : ''}`}
-                    style={unread > 0 && !active ? 'font-weight:700' : ''}
+                    style={`font-family:var(--f-mono);font-size:9.5px;letter-spacing:.08em;color:${active ? 'var(--steel)' : 'var(--muted)'};font-weight:600`}
+                    aria-hidden="true"
                   >
-                    {t.name}
+                    {auth}
                   </span>
-                  {auth !== null && (
-                    <span
-                      style={`font-family:var(--f-mono);font-size:9.5px;letter-spacing:.08em;color:${active ? 'var(--steel)' : 'var(--muted)'};font-weight:600`}
-                      aria-hidden="true"
-                    >
-                      {auth}
-                    </span>
-                  )}
-                  {unread > 0 && !active && <UnreadBadge count={unread} />}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+                )}
+                {unread > 0 && !active && <UnreadBadge count={unread} />}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
 
-        {embeddedShell.value ? <TeamSettingsButton /> : <AccountSettingsButton />}
-      </nav>
-    </>
+      {embeddedShell.value ? <TeamSettingsButton /> : <AccountSettingsButton />}
+    </nav>
   );
 }
 
@@ -275,9 +263,7 @@ function TeamSettingsButton() {
   const handler = teamSettingsHandler.value;
   if (handler === null) return null;
   return (
-    <div
-      style="padding:10px 12px;border-top:1px solid var(--rule);flex-shrink:0"
-    >
+    <div style="padding:10px 12px;border-top:1px solid var(--rule);flex-shrink:0">
       <button
         type="button"
         onClick={handler}
@@ -501,9 +487,7 @@ function ChannelRow({
     <button
       type="button"
       onClick={() => selectChannel(channel.slug)}
-      aria-label={
-        unread > 0 ? `Open #${channel.slug} (${unread} unread)` : `Open #${channel.slug}`
-      }
+      aria-label={unread > 0 ? `Open #${channel.slug} (${unread} unread)` : `Open #${channel.slug}`}
       title={`#${channel.slug}`}
       class={`navitem w-full${active ? ' active' : ''}`}
       style={`text-align:left;font-weight:${active ? 700 : 500}`}

@@ -28,10 +28,7 @@
 
 import { useEffect } from 'preact/hooks';
 import { closeInspector, isInspectorOpen } from '../lib/inspector.js';
-import {
-  memberActivityConnected,
-  startMemberActivitySubscribe,
-} from '../lib/member-activity.js';
+import { memberActivityConnected, startMemberActivitySubscribe } from '../lib/member-activity.js';
 import { TimelineBody } from './AgentTimeline.js';
 
 interface ActivityInspectorProps {
@@ -54,13 +51,9 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
       data-inspector-open={open ? 'true' : 'false'}
       style="height:100%;background:var(--paper);border-left:1px solid var(--rule)"
     >
-      <header
-        style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid var(--rule);flex-shrink:0"
-      >
+      <header style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 14px;border-bottom:1px solid var(--rule);flex-shrink:0">
         <div style="min-width:0">
-          <div
-            style="font-family:var(--f-mono);font-weight:600;font-size:13px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
-          >
+          <div style="font-family:var(--f-mono);font-weight:600;font-size:13px;color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
             {agentName}
           </div>
           <div style="font-family:var(--f-sans);font-size:11px;color:var(--muted)">
@@ -96,9 +89,7 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
         </button>
       </header>
 
-      <div
-        style="flex:1;min-height:0;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px"
-      >
+      <div style="flex:1;min-height:0;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px">
         <TimelineBody />
       </div>
     </aside>

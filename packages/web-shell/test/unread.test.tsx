@@ -20,10 +20,7 @@ import { cleanup, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NavColumn as Sidebar } from '../src/components/shell/NavColumn.js';
 import { __resetBriefingForTests } from '../src/lib/briefing.js';
-import {
-  __resetChannelsForTests,
-  channels as channelsSignal,
-} from '../src/lib/channels.js';
+import { __resetChannelsForTests, channels as channelsSignal } from '../src/lib/channels.js';
 import { __resetMessagesForTests, appendMessages, messagesByThread } from '../src/lib/messages.js';
 import { __resetRosterForTests, roster } from '../src/lib/roster.js';
 import {

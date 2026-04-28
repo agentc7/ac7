@@ -19,10 +19,7 @@ import { NavColumn as Sidebar } from '../src/components/shell/NavColumn.js';
 import { TeamHome } from '../src/components/TeamHome.js';
 import { Transcript } from '../src/components/Transcript.js';
 import { __resetBriefingForTests, briefing } from '../src/lib/briefing.js';
-import {
-  __resetChannelsForTests,
-  channels as channelsSignal,
-} from '../src/lib/channels.js';
+import { __resetChannelsForTests, channels as channelsSignal } from '../src/lib/channels.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
 import { __resetIdentityForTests, identity } from '../src/lib/identity.js';
 import { __resetLiveForTests } from '../src/lib/live.js';

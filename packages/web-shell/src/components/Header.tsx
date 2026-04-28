@@ -117,16 +117,8 @@ function BrandMark({ embedded }: { embedded: boolean }) {
   // outer rail beneath it. Below 700 the rail collapses into a drawer
   // and the column has nothing to align to — `.brand-column` CSS
   // unsets the fixed width at that breakpoint so the mark falls back
-  // to inline placement. (See `theme.css` `.brand-column` rules.)
-  return (
-    <div
-      class="brand-column flex items-center justify-center flex-shrink-0"
-      style="width:64px"
-      aria-hidden="false"
-    >
-      {mark}
-    </div>
-  );
+  // to inline placement.
+  return <div class="brand-column flex items-center justify-center flex-shrink-0">{mark}</div>;
 }
 
 /**
@@ -163,4 +155,3 @@ function SearchButton() {
     </button>
   );
 }
-

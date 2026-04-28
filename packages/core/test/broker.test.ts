@@ -162,10 +162,7 @@ describe('Broker.push channel-scoped fanout', () => {
       },
       { name: 'alice' },
     );
-    const result = await broker.push(
-      { body: 'lone message' },
-      { from: 'alice', recipients: [] },
-    );
+    const result = await broker.push({ body: 'lone message' }, { from: 'alice', recipients: [] });
     // No explicit recipients but the sender still sees their own
     // message via sender-fanout. Targets is 0 because the recipient
     // list is empty.

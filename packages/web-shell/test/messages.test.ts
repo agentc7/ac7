@@ -56,15 +56,15 @@ describe('threadKeyOf', () => {
   });
 
   it('channel-tagged broadcasts route by channel id', () => {
-    expect(
-      threadKeyOf(msg({ to: null, data: { thread: 'chan:abc-123' } }), 'director-1'),
-    ).toBe('chan:abc-123');
+    expect(threadKeyOf(msg({ to: null, data: { thread: 'chan:abc-123' } }), 'director-1')).toBe(
+      'chan:abc-123',
+    );
   });
 
   it('chan:general collapses to the legacy primary key', () => {
-    expect(
-      threadKeyOf(msg({ to: null, data: { thread: 'chan:general' } }), 'director-1'),
-    ).toBe(PRIMARY_THREAD);
+    expect(threadKeyOf(msg({ to: null, data: { thread: 'chan:general' } }), 'director-1')).toBe(
+      PRIMARY_THREAD,
+    );
   });
 
   it('untagged broadcasts still map to primary (legacy general)', () => {

@@ -58,6 +58,7 @@ import { AppShell, NavColumn } from './components/shell/index.js';
 import { TeamHome } from './components/TeamHome.js';
 import { Transcript } from './components/Transcript.js';
 import { loadBriefing } from './lib/briefing.js';
+import { channelBySlug, loadChannels } from './lib/channels.js';
 import { setClient } from './lib/client.js';
 import { setEmbeddedShell, setTeamSettingsHandler } from './lib/embedded.js';
 import {
@@ -68,16 +69,15 @@ import {
   type UnauthorizedHandler,
 } from './lib/handlers.js';
 import { type Identity, setIdentity } from './lib/identity.js';
+import { closeInspector } from './lib/inspector.js';
 import { startSubscribe, streamConnected } from './lib/live.js';
 import { appendMessages, dmOther, messagesByThread } from './lib/messages.js';
-import { channelBySlug, loadChannels } from './lib/channels.js';
 import { loadObjectives } from './lib/objectives.js';
 import { closePalette, togglePalette } from './lib/palette.js';
 import { initializePushState } from './lib/push.js';
 import { loadRoster, startRosterPolling } from './lib/roster.js';
 import { setRouterTeamSlug } from './lib/router.js';
 import { initializeLastReadFromStore, markThreadRead } from './lib/unread.js';
-import { closeInspector } from './lib/inspector.js';
 import {
   closeModalView,
   closeSidebar,

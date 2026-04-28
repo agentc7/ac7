@@ -43,10 +43,7 @@ export function ChannelBrowse() {
   return (
     <div class="flex-1 overflow-y-auto" style="padding:32px">
       <div class="max-w-2xl mx-auto" style="display:flex;flex-direction:column;gap:16px">
-        <header
-          class="flex items-end justify-between"
-          style="gap:12px"
-        >
+        <header class="flex items-end justify-between" style="gap:12px">
           <div>
             <h1
               class="font-display"
@@ -54,11 +51,8 @@ export function ChannelBrowse() {
             >
               Channels
             </h1>
-            <p
-              style="font-family:var(--f-sans);font-size:13.5px;color:var(--muted);margin:6px 0 0;line-height:1.5"
-            >
-              Every active channel on the team. Open one you're in, or join one
-              you aren't.
+            <p style="font-family:var(--f-sans);font-size:13.5px;color:var(--muted);margin:6px 0 0;line-height:1.5">
+              Every active channel on the team. Open one you're in, or join one you aren't.
             </p>
           </div>
           <button type="button" onClick={selectChannelCreate} class="btn btn-secondary">
@@ -120,9 +114,7 @@ export function ChannelBrowse() {
                     >
                       {c.slug}
                     </div>
-                    <div
-                      style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);margin-top:2px"
-                    >
+                    <div style="font-family:var(--f-sans);font-size:11.5px;color:var(--muted);margin-top:2px">
                       {c.id === 'general'
                         ? 'team channel · everyone'
                         : `${c.memberCount} member${c.memberCount === 1 ? '' : 's'}`}

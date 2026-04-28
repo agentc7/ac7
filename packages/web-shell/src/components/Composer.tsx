@@ -91,7 +91,10 @@ function composerPlaceholder(threadKey: string, currentView: ReturnType<typeof v
     return 'Reply to #general · @ to mention · / for commands';
   }
   if (isChannelThread(threadKey)) {
-    const slug = currentView.kind === 'thread' ? (currentView.channelSlug ?? threadKey.slice(CHAN_PREFIX.length)) : threadKey.slice(CHAN_PREFIX.length);
+    const slug =
+      currentView.kind === 'thread'
+        ? (currentView.channelSlug ?? threadKey.slice(CHAN_PREFIX.length))
+        : threadKey.slice(CHAN_PREFIX.length);
     return `Reply to #${slug} · @ to mention · / for commands`;
   }
   return `Reply to @${threadKey.slice(3)} · @ to mention · / for commands`;
@@ -210,9 +213,7 @@ export function Composer({ viewer }: ComposerProps) {
     // channel thread). General + DMs need no tag — they fall through
     // to the legacy broadcast / addressed paths.
     const channelTag = channelTagForThread(threadKey);
-    const outboundData: Record<string, unknown> = channelTag
-      ? { thread: channelTag }
-      : {};
+    const outboundData: Record<string, unknown> = channelTag ? { thread: channelTag } : {};
     appendMessages(viewer, [
       {
         id: optimisticId,
@@ -508,12 +509,7 @@ export function Composer({ viewer }: ComposerProps) {
           </svg>
         </button>
         <span class="composer-hint">⌘ + ↵ send · / for commands · @ to mention</span>
-        <button
-          type="button"
-          onClick={() => void send()}
-          disabled={!canSend}
-          class="composer-send"
-        >
+        <button type="button" onClick={() => void send()} disabled={!canSend} class="composer-send">
           {sendLabel}
           {!sending.value && !anyUploading && (
             <svg

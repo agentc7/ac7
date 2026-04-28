@@ -60,7 +60,8 @@ export const paletteSource = computed<PaletteItem[]>(() => {
       id: `thread:chan:${c.slug}`,
       slug: c.slug,
       label: `#${c.slug}`,
-      sub: c.id === 'general' ? 'team channel · everyone' : `team channel · ${c.memberCount} members`,
+      sub:
+        c.id === 'general' ? 'team channel · everyone' : `team channel · ${c.memberCount} members`,
     });
   }
   for (const t of teammates) {

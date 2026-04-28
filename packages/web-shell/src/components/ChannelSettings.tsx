@@ -246,20 +246,14 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
         )}
         <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:4px">
           {members.map((m) => (
-            <li
-              key={m.memberName}
-              class="flex items-center"
-              style="gap:8px;padding:4px 0"
-            >
+            <li key={m.memberName} class="flex items-center" style="gap:8px;padding:4px 0">
               <span
                 class="font-display flex-1 truncate"
                 style="font-size:13.5px;font-weight:600;color:var(--ink)"
               >
                 {m.memberName}
               </span>
-              <span
-                style="font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase"
-              >
+              <span style="font-family:var(--f-mono);font-size:10px;letter-spacing:.06em;color:var(--muted);text-transform:uppercase">
                 {m.role}
               </span>
               {(isAdmin || m.memberName === viewer) && (
@@ -268,9 +262,7 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
                   onClick={() => void onRemoveMember(m.memberName)}
                   disabled={memberBusy.value === `remove:${m.memberName}`}
                   class="btn btn-ghost btn-sm"
-                  aria-label={
-                    m.memberName === viewer ? 'Leave channel' : `Remove ${m.memberName}`
-                  }
+                  aria-label={m.memberName === viewer ? 'Leave channel' : `Remove ${m.memberName}`}
                   style="padding:2px 8px;font-size:11.5px"
                 >
                   {memberBusy.value === `remove:${m.memberName}`
@@ -310,7 +302,10 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
         )}
       </div>
 
-      <div class="flex items-center" style="gap:8px;border-top:1px solid var(--rule);padding-top:12px">
+      <div
+        class="flex items-center"
+        style="gap:8px;border-top:1px solid var(--rule);padding-top:12px"
+      >
         {channel.joined && channel.id !== 'general' && (
           <button
             type="button"

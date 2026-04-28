@@ -14,7 +14,7 @@
  *
  * Run once after brand changes, commit the resulting PNGs:
  *
- *   node packages/web/scripts/generate-icons.mjs
+ *   node apps/web/scripts/generate-icons.mjs
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';

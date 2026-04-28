@@ -114,9 +114,8 @@ describe('POST /channels', () => {
     expect(res.status).toBe(201);
     const ch = (await res.json()) as Channel;
     expect(ch.slug).toBe('eng');
-    const detail = await app
-      .request(`/channels/${ch.slug}`, authed(ALICE))
-      .then((r) => r.json() as Promise<GetChannelResponse>);
+    const detailRes = await app.request(`/channels/${ch.slug}`, authed(ALICE));
+    const detail = (await detailRes.json()) as GetChannelResponse;
     expect(detail.channel.myRole).toBe('admin');
     expect(detail.members.find((m) => m.memberName === 'alice')?.role).toBe('admin');
   });
@@ -166,9 +165,8 @@ describe('DELETE /channels/:slug (archive)', () => {
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     const res = await app.request('/channels/ops', authed(ALICE, undefined, 'DELETE'));
     expect(res.status).toBe(200);
-    const list = (await app
-      .request('/channels', authed(ALICE))
-      .then((r) => r.json())) as { channels: ChannelSummary[] };
+    const listRes = await app.request('/channels', authed(ALICE));
+    const list = (await listRes.json()) as { channels: ChannelSummary[] };
     expect(list.channels.find((c) => c.slug === 'ops')).toBeUndefined();
   });
 
@@ -192,10 +190,7 @@ describe('POST /channels/:slug/members (self-join + admin-add)', () => {
   it('admin can add a different member', async () => {
     const { app } = makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
-    const res = await app.request(
-      '/channels/ops/members',
-      authed(ALICE, { member: 'bob' }),
-    );
+    const res = await app.request('/channels/ops/members', authed(ALICE, { member: 'bob' }));
     expect(res.status).toBe(200);
   });
 
@@ -203,20 +198,14 @@ describe('POST /channels/:slug/members (self-join + admin-add)', () => {
     const { app } = makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     await app.request('/channels/ops/members', authed(BOB, undefined, 'POST')); // bob joins as member
-    const res = await app.request(
-      '/channels/ops/members',
-      authed(BOB, { member: 'carol' }),
-    );
+    const res = await app.request('/channels/ops/members', authed(BOB, { member: 'carol' }));
     expect(res.status).toBe(403);
   });
 
   it('returns 404 for an unknown team member', async () => {
     const { app } = makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
-    const res = await app.request(
-      '/channels/ops/members',
-      authed(ALICE, { member: 'ghost' }),
-    );
+    const res = await app.request('/channels/ops/members', authed(ALICE, { member: 'ghost' }));
     expect(res.status).toBe(404);
   });
 });
@@ -226,10 +215,7 @@ describe('DELETE /channels/:slug/members/:name (leave / remove)', () => {
     const { app } = makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     await app.request('/channels/ops/members', authed(BOB, undefined, 'POST'));
-    const res = await app.request(
-      '/channels/ops/members/bob',
-      authed(BOB, undefined, 'DELETE'),
-    );
+    const res = await app.request('/channels/ops/members/bob', authed(BOB, undefined, 'DELETE'));
     expect(res.status).toBe(200);
   });
 
@@ -238,10 +224,7 @@ describe('DELETE /channels/:slug/members/:name (leave / remove)', () => {
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
     await app.request('/channels/ops/members', authed(BOB, undefined, 'POST'));
     await app.request('/channels/ops/members', authed(CAROL, undefined, 'POST'));
-    const res = await app.request(
-      '/channels/ops/members/carol',
-      authed(BOB, undefined, 'DELETE'),
-    );
+    const res = await app.request('/channels/ops/members/carol', authed(BOB, undefined, 'DELETE'));
     expect(res.status).toBe(403);
   });
 
@@ -262,9 +245,8 @@ describe('GET /history?channel=...', () => {
   it('filters to channel-tagged messages for members', async () => {
     const { app } = makeApp();
     await app.request('/channels', authed(ALICE, { slug: 'ops' }));
-    const list = (await app
-      .request('/channels', authed(ALICE))
-      .then((r) => r.json())) as { channels: ChannelSummary[] };
+    const listRes = await app.request('/channels', authed(ALICE));
+    const list = (await listRes.json()) as { channels: ChannelSummary[] };
     const ops = list.channels.find((c) => c.slug === 'ops');
     expect(ops).toBeDefined();
     // Tag a push for the ops channel.

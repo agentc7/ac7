@@ -74,15 +74,14 @@ export function AppShell({ header, nav, main, drawer, leftRail, banner }: AppShe
       {header}
       <main class="flex flex-col min-h-0 flex-1 overflow-hidden">
         {banner}
-        <div
-          class="flex flex-1 min-h-0 overflow-hidden relative"
-          style={`--rail-w:${railWidth}`}
-        >
+        <div class="flex flex-1 min-h-0 overflow-hidden relative" style={`--rail-w:${railWidth}`}>
           {leftRail}
           {nav}
           <section class="flex-1 flex flex-col min-w-0 min-h-0">{main}</section>
           {drawer}
-          {/* biome-ignore lint/a11y/noStaticElementInteractions: backdrop is decorative; Escape + close buttons cover keyboard */}
+          {/* Backdrop is `aria-hidden` and decorative — keyboard users
+              dismiss via Escape (see TeamShell global handler) or the
+              individual close buttons inside each drawer. */}
           <div
             class={`drawer-backdrop${anyDrawerOpen ? ' is-active' : ''}`}
             onClick={dismissAll}

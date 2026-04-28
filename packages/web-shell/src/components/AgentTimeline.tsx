@@ -501,6 +501,7 @@ function roleBorder(role: string): string {
 function ExchangeMarker({ item }: { item: Extract<ThreadItem, { variant: 'exchange' }> }) {
   return (
     <details style="margin:4px 0;padding:4px 0;border-top:1px dashed var(--rule);border-bottom:1px dashed var(--rule)">
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: <summary> is natively interactive (Enter/Space toggles its parent <details>); Biome's static-element check doesn't recognize that affordance */}
       <summary
         class="flex items-center gap-3 flex-wrap"
         style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer;padding:2px 0"

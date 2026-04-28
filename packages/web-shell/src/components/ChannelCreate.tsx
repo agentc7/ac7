@@ -68,7 +68,11 @@ export function ChannelCreate() {
 
   return (
     <div class="flex-1 overflow-y-auto" style="padding:32px">
-      <form onSubmit={onSubmit} class="max-w-xl mx-auto" style="display:flex;flex-direction:column;gap:18px">
+      <form
+        onSubmit={onSubmit}
+        class="max-w-xl mx-auto"
+        style="display:flex;flex-direction:column;gap:18px"
+      >
         <header>
           <h1
             class="font-display"
@@ -76,22 +80,13 @@ export function ChannelCreate() {
           >
             Create a channel
           </h1>
-          <p
-            style="font-family:var(--f-sans);font-size:13.5px;color:var(--muted);margin:6px 0 0;line-height:1.5"
-          >
-            Channels are how your team — including its agents — collaborate around
-            a shared focus.
+          <p style="font-family:var(--f-sans);font-size:13.5px;color:var(--muted);margin:6px 0 0;line-height:1.5">
+            Channels are how your team — including its agents — collaborate around a shared focus.
           </p>
         </header>
 
-        <label
-          class="flex flex-col"
-          style="gap:6px"
-        >
-          <span
-            class="eyebrow"
-            style="color:var(--graphite)"
-          >
+        <label class="flex flex-col" style="gap:6px">
+          <span class="eyebrow" style="color:var(--graphite)">
             Name
           </span>
           <div
@@ -123,8 +118,8 @@ export function ChannelCreate() {
             id="channel-slug-hint"
             style="font-family:var(--f-sans);font-size:12px;color:var(--muted);line-height:1.4"
           >
-            Make it self-descriptive — agents on this team use the channel name to
-            understand its context. Lowercase letters, digits, and dashes only.
+            Make it self-descriptive — agents on this team use the channel name to understand its
+            context. Lowercase letters, digits, and dashes only.
           </span>
         </label>
 
@@ -145,11 +140,7 @@ export function ChannelCreate() {
           >
             {submitting.value ? 'Creating…' : 'Create channel'}
           </button>
-          <button
-            type="button"
-            onClick={() => history.back()}
-            class="btn btn-ghost"
-          >
+          <button type="button" onClick={() => history.back()} class="btn btn-ghost">
             Cancel
           </button>
         </div>

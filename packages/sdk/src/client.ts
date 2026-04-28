@@ -632,7 +632,10 @@ export class Client {
    * caller; admin-add otherwise. Returns the refreshed channel
    * detail so callers can re-render the member list.
    */
-  async addChannelMember(slug: string, input: AddChannelMemberRequest): Promise<GetChannelResponse> {
+  async addChannelMember(
+    slug: string,
+    input: AddChannelMemberRequest,
+  ): Promise<GetChannelResponse> {
     const validated = AddChannelMemberRequestSchema.parse(input);
     const resp = await this.request(CHANNEL_PATHS.members(slug), {
       method: 'POST',

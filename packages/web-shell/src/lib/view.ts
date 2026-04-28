@@ -17,8 +17,8 @@ import { computed, effect, signal } from '@preact/signals';
 import { channelBySlug } from './channels.js';
 import { closeInspector } from './inspector.js';
 import {
-  channelThreadKey,
   CHAN_PREFIX,
+  channelThreadKey,
   DM_PREFIX,
   dmThreadKey,
   GENERAL_CHANNEL_ID,
@@ -93,9 +93,7 @@ if (typeof window !== 'undefined') {
   });
 }
 
-export const lastNonModalView = computed<View>(() =>
-  viewFromRoute(lastNonModalRouteSignal.value),
-);
+export const lastNonModalView = computed<View>(() => viewFromRoute(lastNonModalRouteSignal.value));
 
 export function isModalView(v: View): boolean {
   return v.kind === 'account';

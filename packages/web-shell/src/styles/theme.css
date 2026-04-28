@@ -638,7 +638,9 @@ body::before {
   border-radius: var(--r-sm);
   background: var(--ice);
   padding: 10px 12px;
-  transition: border-color 0.15s var(--ease), background 0.15s var(--ease),
+  transition:
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease),
     box-shadow 0.15s var(--ease);
 }
 .composer-box:focus-within {
@@ -687,7 +689,9 @@ body::before {
   color: var(--muted);
   cursor: pointer;
   opacity: 0.55;
-  transition: background 0.15s var(--ease), color 0.15s var(--ease),
+  transition:
+    background 0.15s var(--ease),
+    color 0.15s var(--ease),
     opacity 0.15s var(--ease);
 }
 .composer-box:hover .composer-expand,
@@ -718,7 +722,9 @@ body::before {
   border: 0;
   border-radius: var(--r-xs);
   cursor: pointer;
-  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+  transition:
+    background 0.15s var(--ease),
+    color 0.15s var(--ease);
 }
 .composer-toolbar .iconbtn:hover {
   background: var(--ice);
@@ -748,7 +754,9 @@ body::before {
   border: 0;
   border-radius: var(--r-xs);
   cursor: pointer;
-  transition: background 0.15s var(--ease), opacity 0.15s var(--ease);
+  transition:
+    background 0.15s var(--ease),
+    opacity 0.15s var(--ease);
 }
 .composer-send:hover:not(:disabled) {
   background: var(--glacier);
@@ -1909,12 +1917,14 @@ body::before {
     bottom: 0;
     width: 380px;
     transform: translateX(100%);
-    transition: transform 0.25s var(--ease), box-shadow 0.25s var(--ease);
+    transition:
+      transform 0.25s var(--ease),
+      box-shadow 0.25s var(--ease);
     z-index: 50;
     border-left-color: var(--rule-strong);
     box-shadow: none;
   }
-  .activity-inspector[data-inspector-open='true'] {
+  .activity-inspector[data-inspector-open="true"] {
     transform: translateX(0);
     box-shadow: -8px 0 40px -12px rgba(11, 20, 32, 0.45);
   }
@@ -2039,7 +2049,8 @@ body::before {
 .topbar {
   background: var(--paper);
   border-bottom: 1px solid var(--rule);
-  padding: 10px max(0.75rem, env(safe-area-inset-right)) 10px max(0.75rem, env(safe-area-inset-left));
+  padding: 10px max(0.75rem, env(safe-area-inset-right)) 10px
+    max(0.75rem, env(safe-area-inset-left));
   padding-top: max(10px, env(safe-area-inset-top));
 }
 
@@ -2053,6 +2064,16 @@ body::before {
 }
 
 /*
+ * Brand column: fixed 64px in embedded mode so it lines up directly
+ * above the outer team-switcher rail. The width is owned here (not
+ * inline on the element) so the narrow-width media query below can
+ * unset it without `!important` gymnastics.
+ */
+.brand-column {
+  width: 64px;
+}
+
+/*
  * Below 700, the rail collapses into a drawer — there's no column
  * left to align to. Restore normal left padding so the brand mark
  * isn't flush against the viewport edge, and unset the brand
@@ -2063,7 +2084,7 @@ body::before {
     padding-left: max(0.75rem, env(safe-area-inset-left));
   }
   .brand-column {
-    width: auto !important;
+    width: auto;
   }
 }
 
