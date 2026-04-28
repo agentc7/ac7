@@ -39,8 +39,8 @@ describe('router', () => {
 
   it('popstate updates the signal from the URL', () => {
     navigate({ kind: 'objectives-list' });
-    navigate({ kind: 'thread-primary' });
-    expect(currentRoute.value).toEqual({ kind: 'thread-primary' });
+    navigate({ kind: 'thread-channel', slug: 'general' });
+    expect(currentRoute.value).toEqual({ kind: 'thread-channel', slug: 'general' });
     // Simulate back button: change the URL + dispatch popstate.
     window.history.replaceState(null, '', '/objectives');
     window.dispatchEvent(new PopStateEvent('popstate'));

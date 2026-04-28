@@ -65,7 +65,17 @@ export default defineConfig({
     'font-body',
     'font-mono',
   ],
+  // Mockup-aligned breakpoints (override Wind4 defaults so the
+  // existing `sm:`/`md:`/`lg:` markers across components match the
+  // brand mockup's five-step compression: 700 / 900 / 1100 / 1280).
+  // preset-wind4 reads from `theme.breakpoint` (singular).
   theme: {
+    breakpoint: {
+      sm: '700px',
+      md: '900px',
+      lg: '1100px',
+      xl: '1280px',
+    },
     colors: {
       brand: {
         // ─── Canonical palette anchors (match theme.css :root) ─────

@@ -38,6 +38,10 @@ import { effect, signal } from '@preact/signals';
 import type { JSX } from 'preact';
 import { useEffect } from 'preact/hooks';
 import { AccountPanel } from './components/AccountPanel.js';
+import { ActivityInspector } from './components/ActivityInspector.js';
+import { ChannelBrowse } from './components/ChannelBrowse.js';
+import { ChannelCreate } from './components/ChannelCreate.js';
+import { ChannelHeader } from './components/ChannelHeader.js';
 import { CommandPalette } from './components/CommandPalette.js';
 import { Composer } from './components/Composer.js';
 import { DisconnectedBanner } from './components/DisconnectedBanner.js';
@@ -49,11 +53,14 @@ import { MembersPanel } from './components/MembersPanel.js';
 import { ObjectiveCreate } from './components/ObjectiveCreate.js';
 import { ObjectiveDetail } from './components/ObjectiveDetail.js';
 import { ObjectivesPanel } from './components/ObjectivesPanel.js';
+import { RouteModal } from './components/RouteModal.js';
 import { AppShell, NavColumn } from './components/shell/index.js';
 import { TeamHome } from './components/TeamHome.js';
 import { Transcript } from './components/Transcript.js';
 import { loadBriefing } from './lib/briefing.js';
+import { channelBySlug, loadChannels } from './lib/channels.js';
 import { setClient } from './lib/client.js';
+import { setEmbeddedShell, setTeamSettingsHandler } from './lib/embedded.js';
 import {
   handleUnauthorized,
   type SignOutHandler,
@@ -62,15 +69,23 @@ import {
   type UnauthorizedHandler,
 } from './lib/handlers.js';
 import { type Identity, setIdentity } from './lib/identity.js';
+import { closeInspector } from './lib/inspector.js';
 import { startSubscribe, streamConnected } from './lib/live.js';
-import { appendMessages, messagesByThread } from './lib/messages.js';
+import { appendMessages, dmOther, messagesByThread } from './lib/messages.js';
 import { loadObjectives } from './lib/objectives.js';
 import { closePalette, togglePalette } from './lib/palette.js';
 import { initializePushState } from './lib/push.js';
 import { loadRoster, startRosterPolling } from './lib/roster.js';
 import { setRouterTeamSlug } from './lib/router.js';
 import { initializeLastReadFromStore, markThreadRead } from './lib/unread.js';
-import { type View, view } from './lib/view.js';
+import {
+  closeModalView,
+  closeSidebar,
+  isModalView,
+  lastNonModalView,
+  type View,
+  view,
+} from './lib/view.js';
 
 export interface TeamShellProps {
   client: Client;
@@ -97,6 +112,19 @@ export interface TeamShellProps {
    * closes the loop so navigation emits the prefix back.
    */
   teamSlug?: string;
+  /**
+   * Optional outer rail rendered between the header and the nav
+   * column — typically the multi-team switcher in the SaaS. Passing
+   * this also flips the shell into "embedded" mode: Header drops its
+   * profile button and NavColumn drops its user chip, since the
+   * host's outer chrome already provides an identity anchor.
+   */
+  leftRail?: JSX.Element;
+  /**
+   * Invoked when the viewer clicks "Team settings" in the NavColumn
+   * footer. Only shown in embedded mode (no `leftRail`, no button).
+   */
+  onTeamSettings?: () => void;
 }
 
 /**
@@ -118,9 +146,21 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
   setSignOutHandler(props.onSignOut ?? null);
   setUnauthorizedHandler(props.onUnauthorized ?? null);
   setRouterTeamSlug(props.teamSlug ?? null);
+  setEmbeddedShell(props.leftRail !== undefined);
+  setTeamSettingsHandler(props.onTeamSettings ?? null);
 
   const viewer = props.identity.member;
   const v = view.value;
+  // Modalized routes (today: just `account`) render the previous
+  // non-modal view as the underlay so the chrome stays visible
+  // behind the dialog. Closing the modal navigates back to that
+  // route — see `closeModalView`.
+  const modal = isModalView(v);
+  const baseView = modal ? lastNonModalView.value : v;
+  // The right-rail inspector mounts only on DM-thread views, with the
+  // peer as the inspected agent. Team chat / panels don't have a single
+  // "agent in focus," so the drawer slot stays empty there.
+  const inspectedAgent = inspectableAgentFromView(baseView);
 
   useEffect(() => {
     let disposeSubscribe: (() => void) | null = null;
@@ -176,6 +216,15 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
           return;
         }
         recordFailure('objectives', err);
+      }
+      try {
+        await loadChannels();
+      } catch (err) {
+        if (isUnauthorized(err)) {
+          handleUnauthorized('Your session expired — please sign in again.');
+          return;
+        }
+        recordFailure('channels', err);
       }
       mountError.value = failures.length > 0 ? failures.join(' · ') : null;
       disposeRoster = startRosterPolling();
@@ -234,9 +283,10 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
     // shallow and stable.
   }, [viewer]);
 
-  // Global ⌘K / Ctrl-K to toggle the command palette. Installed once
-  // while the shell is mounted so it's only live inside the
-  // authenticated app.
+  // Global ⌘K / Ctrl-K to toggle the command palette + Escape to
+  // dismiss any open overlay (palette, navcol drawer, inspector
+  // overlay). Installed once while the shell is mounted so it's only
+  // live inside the authenticated app.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const isK = e.key === 'k' || e.key === 'K';
@@ -245,6 +295,8 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
         togglePalette();
       } else if (e.key === 'Escape') {
         closePalette();
+        closeInspector();
+        closeSidebar();
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -288,8 +340,15 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
             )}
           </>
         }
-        main={renderView(v, viewer)}
+        main={renderView(baseView, viewer)}
+        drawer={inspectedAgent !== null ? <ActivityInspector agentName={inspectedAgent} /> : null}
+        leftRail={props.leftRail}
       />
+      {modal && (
+        <RouteModal onClose={closeModalView} ariaLabel="Account settings" size="lg">
+          <AccountPanel viewer={viewer} />
+        </RouteModal>
+      )}
       <CommandPalette />
     </>
   );
@@ -307,19 +366,29 @@ export function __resetTeamShellForTests(): void {
  */
 function renderView(v: View, viewer: string) {
   switch (v.kind) {
-    case 'thread':
+    case 'thread': {
+      // Channel threads get a header above the transcript with the
+      // channel name + member count + admin gear. DMs and objective
+      // threads don't (those have their own headers inside Transcript).
+      const channel = v.channelSlug ? channelBySlug(v.channelSlug) : null;
       return (
         <>
+          {channel !== null && <ChannelHeader channel={channel} viewer={viewer} />}
           <Transcript viewer={viewer} />
           <Composer viewer={viewer} />
         </>
       );
+    }
     case 'overview':
       return <TeamHome viewer={viewer} />;
     case 'inbox':
       return <InboxPanel />;
     case 'account':
       return <AccountPanel viewer={viewer} />;
+    case 'channels-browse':
+      return <ChannelBrowse />;
+    case 'channel-create':
+      return <ChannelCreate />;
     case 'objectives-list':
       return <ObjectivesPanel viewer={viewer} />;
     case 'objective-detail':
@@ -333,6 +402,18 @@ function renderView(v: View, viewer: string) {
     case 'members':
       return <MembersPanel />;
   }
+}
+
+/**
+ * Resolve the agent the right-rail inspector should mount for, given
+ * the current view. Returns null when no single agent is in focus —
+ * the drawer slot is then empty. Today only DM threads inspect; the
+ * primary team thread spans many members and doesn't fit a per-agent
+ * activity stream.
+ */
+function inspectableAgentFromView(v: View): string | null {
+  if (v.kind !== 'thread') return null;
+  return dmOther(v.key);
 }
 
 /** Narrow error to 401 — the SDK throws `ClientError` with `.status`. */

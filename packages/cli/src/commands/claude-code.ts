@@ -299,8 +299,8 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
     }
   }
 
-  // Auto-inject the two `--dangerously-*` flags that ac7's
-  // bridge-based setup fundamentally depends on:
+  // Auto-inject the flags that ac7's bridge-based setup fundamentally
+  // depends on:
   //
   //   --dangerously-skip-permissions
   //     ac7's MCP tools (broadcast, send, objectives_*, etc.) are
@@ -317,16 +317,28 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
   //     ignores it and push events never reach the agent — the
   //     whole "events arrive mid-session" value prop collapses.
   //
-  // We prepend both flags unconditionally. If the caller explicitly
-  // passed either flag already, we de-dup so claude doesn't see it
-  // twice. User-supplied args still end up on the command line,
-  // just after ours.
+  //   --append-system-prompt <briefing>
+  //     Pins the composed team briefing (ac7 framing + team name /
+  //     directive / brief, role, personal instructions, teammates,
+  //     objectives primer) into claude's system prompt for the whole
+  //     session. The same prose is also delivered through the MCP
+  //     `instructions` channel, but `--append-system-prompt` keeps it
+  //     in EVERY turn's context — survives compaction and beats the
+  //     "agent forgot who it is by turn 40" failure mode. Snapshot
+  //     at startup: edits to role / personal instructions / team
+  //     config require an agent rerun to take effect.
+  //
+  // We prepend the flags unconditionally. If the caller explicitly
+  // passed any of them already, we de-dup so claude doesn't see them
+  // twice. User-supplied args still end up on the command line, just
+  // after ours.
   const injectedArgs: string[] = [];
   const injectedSummary: string[] = [];
   const userPassedSkipPerms = input.claudeArgs.includes('--dangerously-skip-permissions');
   const userPassedDevChannels = input.claudeArgs.includes(
     '--dangerously-load-development-channels',
   );
+  const userPassedAppendSysPrompt = input.claudeArgs.includes('--append-system-prompt');
   if (!userPassedSkipPerms) {
     injectedArgs.push('--dangerously-skip-permissions');
     injectedSummary.push('--dangerously-skip-permissions');
@@ -334,6 +346,16 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
   if (!userPassedDevChannels) {
     injectedArgs.push('--dangerously-load-development-channels', 'server:ac7');
     injectedSummary.push('--dangerously-load-development-channels server:ac7');
+  }
+  if (!userPassedAppendSysPrompt && runner.briefing.instructions.length > 0) {
+    injectedArgs.push('--append-system-prompt', runner.briefing.instructions);
+    // Don't dump 1-8K of prose into the banner — show a summary line
+    // sized so individual-contributors notice it, with a deterministic char count
+    // so changes-after-rerun are visible to anyone diffing two stderr
+    // captures.
+    injectedSummary.push(
+      `--append-system-prompt <ac7 briefing, ${runner.briefing.instructions.length} chars>`,
+    );
   }
   const finalClaudeArgs = [...injectedArgs, ...input.claudeArgs];
 

@@ -19,6 +19,7 @@ import { NavColumn as Sidebar } from '../src/components/shell/NavColumn.js';
 import { TeamHome } from '../src/components/TeamHome.js';
 import { Transcript } from '../src/components/Transcript.js';
 import { __resetBriefingForTests, briefing } from '../src/lib/briefing.js';
+import { __resetChannelsForTests, channels as channelsSignal } from '../src/lib/channels.js';
 import { __resetClientForTests, setClient } from '../src/lib/client.js';
 import { __resetIdentityForTests, identity } from '../src/lib/identity.js';
 import { __resetLiveForTests } from '../src/lib/live.js';
@@ -78,9 +79,25 @@ beforeEach(() => {
   __resetBriefingForTests();
   __resetRosterForTests();
   __resetLiveForTests();
+  __resetChannelsForTests();
   __resetViewForTests();
   __resetClientForTests();
   __resetComposerForTests();
+  // Seed a synthetic general channel so the sidebar's channels list
+  // has the well-known default. Tests that need additional channels
+  // override this in their setup.
+  channelsSignal.value = [
+    {
+      id: 'general',
+      slug: 'general',
+      createdBy: '__system__',
+      createdAt: 0,
+      archivedAt: null,
+      joined: true,
+      myRole: 'member',
+      memberCount: 0,
+    },
+  ];
 });
 
 afterEach(() => {
@@ -181,9 +198,9 @@ describe('<Sidebar />', () => {
     };
   }
 
-  it('shows Team Chat even when roster is still loading', () => {
+  it('shows the general channel even when roster is still loading', () => {
     render(<Sidebar viewer="director-1" />);
-    expect(screen.getByText('Team Chat')).toBeTruthy();
+    expect(screen.getByText('general')).toBeTruthy();
   });
 
   it('lists every teammate from the roster (excluding the viewer as a DM row)', () => {
@@ -195,7 +212,10 @@ describe('<Sidebar />', () => {
     expect(screen.queryByRole('button', { name: /message director-1/i })).toBeNull();
     // Viewer still appears in the UserChip footer — but that's a
     // profile button, not a DM entry.
-    expect(screen.getByRole('button', { name: /open your profile \(director-1\)/i })).toBeTruthy();
+    // Identity affordance is the gear-iconed Account button in the
+    // navcol footer (post-modalization). The avatar+name UserChip
+    // it replaced has no equivalent surface anymore.
+    expect(screen.getByRole('button', { name: /account settings/i })).toBeTruthy();
   });
 
   it('does NOT use @ prefix on teammate rows', () => {
@@ -214,13 +234,17 @@ describe('<Sidebar />', () => {
     });
   });
 
-  it('clicking Team Chat selects the primary thread', async () => {
+  it('clicking the general channel selects the primary thread', async () => {
     setRoster();
     selectDmWith('build-bot');
     render(<Sidebar viewer="director-1" />);
-    fireEvent.click(screen.getByText('Team Chat'));
+    fireEvent.click(screen.getByText('general'));
     await waitFor(() => {
-      expect(view.value).toEqual({ kind: 'thread', key: 'primary' });
+      expect(view.value).toEqual({
+        kind: 'thread',
+        key: 'primary',
+        channelSlug: 'general',
+      });
     });
   });
 
@@ -300,7 +324,7 @@ describe('<Composer />', () => {
       }),
     });
     render(<Composer viewer="director-1" />);
-    const textarea = screen.getByPlaceholderText(/broadcast/i) as HTMLTextAreaElement;
+    const textarea = screen.getByPlaceholderText(/reply to #general/i) as HTMLTextAreaElement;
     fireEvent.input(textarea, { target: { value: 'ping' } });
     fireEvent.keyDown(textarea, { key: 'Enter' });
     await waitFor(() => {
@@ -339,7 +363,7 @@ describe('<Composer />', () => {
     });
     selectThread('dm:build-bot');
     render(<Composer viewer="director-1" />);
-    const textarea = screen.getByPlaceholderText(/message build-bot/i) as HTMLTextAreaElement;
+    const textarea = screen.getByPlaceholderText(/reply to @build-bot/i) as HTMLTextAreaElement;
     fireEvent.input(textarea, { target: { value: 'hey' } });
     fireEvent.keyDown(textarea, { key: 'Enter' });
     await waitFor(() => {
@@ -485,8 +509,10 @@ describe('briefing bootstrap', () => {
     render(<Sidebar viewer="director-1" />);
     // Team name renders in the NavColumn team header.
     expect(screen.getByText('demo-team')).toBeTruthy();
-    // Viewer chip at the bottom.
-    expect(screen.getByText('director-1')).toBeTruthy();
+    // Footer identity is the gear-iconed Account button (the legacy
+    // avatar + viewer-name UserChip was retired in favor of a single
+    // settings affordance).
+    expect(screen.getByRole('button', { name: /account settings/i })).toBeTruthy();
   });
 });
 

@@ -208,12 +208,79 @@ export interface RosterResponse {
 /** Query parameters for `GET /history`. */
 export interface HistoryQuery {
   with?: string;
+  /**
+   * Filter to messages tagged for a specific channel. Matches the
+   * channel id (server treats `general` as the implicit-broadcast
+   * channel). Mutually exclusive with `with`.
+   */
+  channel?: string;
   limit?: number;
   before?: number;
 }
 
 export interface HistoryResponse {
   messages: Message[];
+}
+
+// ─────────────────────────── Channels ─────────────────────────────────
+
+export type ChannelMemberRole = 'admin' | 'member';
+
+/**
+ * A team channel record. `id` is opaque + immutable; `slug` is
+ * mutable + URL-facing. Messages tag their channel via
+ * `data.thread = 'chan:<id>'` (note: by id, not slug — renames are
+ * decoupled from existing message references).
+ */
+export interface Channel {
+  id: string;
+  slug: string;
+  createdBy: string;
+  createdAt: number;
+  /** null when active; epoch-ms timestamp when soft-archived. */
+  archivedAt: number | null;
+}
+
+export interface ChannelMember {
+  channelId: string;
+  memberName: string;
+  role: ChannelMemberRole;
+  joinedAt: number;
+}
+
+/**
+ * Per-viewer channel summary returned from `GET /channels`. Includes
+ * the channel itself plus the caller's relationship to it.
+ *
+ * `general` is special-cased: every viewer always sees `joined: true`
+ * because membership is implicit on that channel.
+ */
+export interface ChannelSummary extends Channel {
+  joined: boolean;
+  myRole: ChannelMemberRole | null;
+  memberCount: number;
+}
+
+export interface ListChannelsResponse {
+  channels: ChannelSummary[];
+}
+
+export interface GetChannelResponse {
+  channel: ChannelSummary;
+  members: ChannelMember[];
+}
+
+export interface CreateChannelRequest {
+  slug: string;
+}
+
+export interface RenameChannelRequest {
+  slug: string;
+}
+
+export interface AddChannelMemberRequest {
+  member: string;
+  role?: ChannelMemberRole;
 }
 
 /**

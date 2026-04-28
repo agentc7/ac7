@@ -46,6 +46,7 @@ a {
   --paper: #f6f3ec;
   --graphite: #4b5560;
   --ember: #c87c4e;
+  --brick: #b04a34;
 
   /* Functional */
   --bg: var(--paper);
@@ -54,9 +55,9 @@ a {
   --rule: rgba(14, 28, 43, 0.14);
   --rule-strong: rgba(14, 28, 43, 0.42);
   --ring: rgba(62, 92, 118, 0.32);
-  --ok: #3e5c76;
-  --warn: #c87c4e;
-  --err: #b04a34;
+  --ok: var(--steel);
+  --warn: var(--ember);
+  --err: var(--brick);
 
   /* Type */
   --f-display: "Manrope", "Helvetica Neue", "Arial", sans-serif;
@@ -622,6 +623,155 @@ body::before {
 .toggle input:checked ~ .track::after,
 .toggle.is-on .track::after {
   transform: translateX(16px);
+}
+
+/* ─────────────────────────── COMPOSER ─────────────────────────── */
+/*
+ * Stacked composer: a bordered text well over a thin toolbar of icon
+ * buttons + keyboard hint + Send. Focus-within tints the well and
+ * lifts a soft ring; the toolbar lives in the parent's color, no
+ * border of its own — visual weight stays in the well.
+ */
+.composer-box {
+  position: relative;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--r-sm);
+  background: var(--ice);
+  padding: 10px 12px;
+  transition:
+    border-color 0.15s var(--ease),
+    background 0.15s var(--ease),
+    box-shadow 0.15s var(--ease);
+}
+.composer-box:focus-within {
+  border-color: var(--steel);
+  background: var(--paper);
+  box-shadow: 0 0 0 3px var(--ring);
+}
+.composer-box textarea {
+  width: 100%;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--ink);
+  font-family: var(--f-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  resize: none;
+  min-height: 22px;
+  max-height: 140px;
+  /* Reserve room for the absolute-positioned expand toggle so long
+   * lines don't run under the button. */
+  padding-right: 28px;
+}
+.composer-box textarea::placeholder {
+  color: var(--muted);
+  opacity: 0.6;
+}
+/*
+ * Expand/collapse toggle. Sits at the top-right of the box so the
+ * textarea's resting single-line height stays compact while the
+ * affordance stays visible. Reveals itself on focus-within or hover
+ * so the box reads quietly when idle.
+ */
+.composer-expand {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-xs);
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0.55;
+  transition:
+    background 0.15s var(--ease),
+    color 0.15s var(--ease),
+    opacity 0.15s var(--ease);
+}
+.composer-box:hover .composer-expand,
+.composer-box:focus-within .composer-expand {
+  opacity: 1;
+}
+.composer-expand:hover {
+  background: var(--rule);
+  color: var(--ink);
+}
+.composer-toolbar {
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--f-mono);
+  font-size: 10.5px;
+  color: var(--muted);
+}
+.composer-toolbar .iconbtn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  transition:
+    background 0.15s var(--ease),
+    color 0.15s var(--ease);
+}
+.composer-toolbar .iconbtn:hover {
+  background: var(--ice);
+  color: var(--ink);
+}
+.composer-hint {
+  letter-spacing: 0.04em;
+  /* Push the Send button to the far right by absorbing the slack. */
+  margin-left: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.composer-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: var(--steel);
+  color: #0e1c2b;
+  font-family: var(--f-sans);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: -0.005em;
+  border: 0;
+  border-radius: var(--r-xs);
+  cursor: pointer;
+  transition:
+    background 0.15s var(--ease),
+    opacity 0.15s var(--ease);
+}
+.composer-send:hover:not(:disabled) {
+  background: var(--glacier);
+}
+.composer-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Hide hint on narrow viewports where the toolbar gets cramped — the
+ * keyboard hint is helpful but not essential, and the Send button
+ * must always have room. */
+@media (max-width: 540px) {
+  .composer-hint {
+    display: none;
+  }
 }
 
 /* ─────────────────────────── SURFACES ─────────────────────────── */
@@ -1723,8 +1873,378 @@ body::before {
 }
 
 /* ─────────────────────────── RESPONSIVE ─────────────────────────── */
+/*
+ * Five-step compression mirrors the brand mockup. Each level changes
+ * only what the next size down can't accommodate; everything above
+ * stays at the wider state. Pivots:
+ *
+ *   ≥1280  Full layout — rail · navcol · main · inspector(380)
+ *   ≤1279  Inspector compresses to 320
+ *   ≤1099  Inspector becomes right overlay (toggle in thread head)
+ *   ≤899   NavColumn becomes left drawer (hamburger in topbar)
+ *   ≤699   Rail also drawers; main fills viewport; chrome compresses
+ */
+
 @media (max-width: 980px) {
   :root {
     --edge: 24px;
   }
+}
+
+/* ─── Activity inspector ─────────────────────────────────────────── */
+/*
+ * Wide-state default lives in JSX (component owns layout). Below 1100
+ * we absolutely-position it inside the AppShell row so it overlays
+ * the main content area while the navcol stays visible and tappable.
+ * The toggle in the thread head animates `data-inspector-open`
+ * between closed (off-canvas right) and open (in view).
+ */
+.activity-inspector {
+  width: 380px;
+}
+
+@media (max-width: 1279px) {
+  .activity-inspector {
+    width: 320px;
+  }
+}
+
+@media (max-width: 1099px) {
+  .activity-inspector {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 380px;
+    transform: translateX(100%);
+    transition:
+      transform 0.25s var(--ease),
+      box-shadow 0.25s var(--ease);
+    z-index: 50;
+    border-left-color: var(--rule-strong);
+    box-shadow: none;
+  }
+  .activity-inspector[data-inspector-open="true"] {
+    transform: translateX(0);
+    box-shadow: -8px 0 40px -12px rgba(11, 20, 32, 0.45);
+  }
+}
+
+@media (max-width: 699px) {
+  .activity-inspector {
+    width: 100vw;
+  }
+}
+
+/* Toggle button in the thread head — hidden until the inspector is
+ * an overlay (i.e. below 1100). Above that the inspector is always
+ * visible and the toggle would be confusing. */
+.inspector-toggle {
+  display: none;
+}
+@media (max-width: 1099px) {
+  .inspector-toggle {
+    display: inline-flex;
+  }
+}
+
+/* Inline close button at the inspector head — shown only when in
+ * overlay mode so the user has a way out without reaching for the
+ * toggle that the overlay itself may now cover. */
+.inspector-close {
+  display: none;
+}
+@media (max-width: 1099px) {
+  .inspector-close {
+    display: inline-flex;
+  }
+}
+
+/* ─── NavColumn drawer ───────────────────────────────────────────── */
+/*
+ * The Tailwind `md:` utility (overridden to 900px in uno.config) drives
+ * the static-vs-drawer toggle on `<nav>`. Below the breakpoint:
+ *
+ *   - `left: var(--rail-w)` parks the drawer alongside the outer rail
+ *     instead of overlapping it. The AppShell row sets `--rail-w` to
+ *     the rail's width (64px Platform, 0 OSS), so the drawer sits at
+ *     left:64 in embedded mode and left:0 in standalone.
+ *
+ *   - `translateX(calc(-100% - var(--rail-w)))` slides it the full
+ *     drawer-width PLUS the rail-width offscreen when closed. Without
+ *     the rail-w bonus, an embedded drawer's right edge would land at
+ *     x=64 (atop the rail) and bleed its lighter ground over.
+ *
+ * Both rules use higher specificity than the Tailwind utility classes
+ * on the same element so the inline `left-0` doesn't win.
+ */
+@media (max-width: 899px) {
+  nav.nav-drawer {
+    left: var(--rail-w, 0px);
+    transform: translateX(calc(-100% - var(--rail-w, 0px)));
+  }
+  nav.nav-drawer.is-open {
+    transform: translateX(0);
+  }
+}
+
+/* ─── Outer rail drawer (Platform only, narrow widths) ───────────── */
+/*
+ * Wide state (≥700): the rail is a flex member of the AppShell row.
+ * Lifted above the shared backdrop with `z-index: 45` so it stays
+ * visible (and tappable) when a navcol or inspector overlay is open.
+ *
+ * Narrow state (≤699): the rail collapses into a drawer behind the
+ * navcol. Driven by the same `is-open` state as the navcol so the
+ * hamburger opens both — the navcol slides in to its drawer position
+ * (left:64), and the rail slides in alongside it (left:0).
+ */
+.outer-rail {
+  position: relative;
+  z-index: 45;
+}
+@media (max-width: 699px) {
+  .outer-rail {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    transform: translateX(-100%);
+    transition: transform 0.25s var(--ease);
+    z-index: 60;
+  }
+  .outer-rail.is-open {
+    transform: translateX(0);
+  }
+}
+
+/* ─── Shared drawer backdrop ─────────────────────────────────────── */
+/*
+ * Single backdrop layer that shows whenever any overlay (navcol
+ * drawer, inspector overlay, or the rail drawer) is open. Anchored
+ * inside the AppShell content row via `position: absolute`, so the
+ * topbar stays uncovered and the search pill remains accessible.
+ * Click dismisses every open drawer in one go (handled by AppShell).
+ */
+.drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(11, 20, 32, 0.55);
+  z-index: 40;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s var(--ease);
+}
+.drawer-backdrop.is-active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ─── Topbar / brand column ──────────────────────────────────────── */
+/*
+ * Standalone (OSS) topbar: symmetric padding on all four sides plus a
+ * safe-area allowance on top so notched devices don't crash into the
+ * brand mark.
+ */
+.topbar {
+  background: var(--paper);
+  border-bottom: 1px solid var(--rule);
+  padding: 10px max(0.75rem, env(safe-area-inset-right)) 10px
+    max(0.75rem, env(safe-area-inset-left));
+  padding-top: max(10px, env(safe-area-inset-top));
+}
+
+/*
+ * Embedded (Platform) topbar: drop the left padding so the 64px
+ * brand-column meets the viewport edge, lining up vertically with
+ * the outer team rail.
+ */
+.topbar-embedded {
+  padding-left: 0;
+}
+
+/*
+ * Brand column: fixed 64px in embedded mode so it lines up directly
+ * above the outer team-switcher rail. The width is owned here (not
+ * inline on the element) so the narrow-width media query below can
+ * unset it without `!important` gymnastics.
+ */
+.brand-column {
+  width: 64px;
+}
+
+/*
+ * Below 700, the rail collapses into a drawer — there's no column
+ * left to align to. Restore normal left padding so the brand mark
+ * isn't flush against the viewport edge, and unset the brand
+ * column's fixed width so the mark falls back to inline placement.
+ */
+@media (max-width: 699px) {
+  .topbar-embedded {
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+  }
+  .brand-column {
+    width: auto;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DUSK MODE
+   ─────────────────────────────────────────────────────────────────────
+   Applied wherever the `.app` shell is mounted. Token remap cascades
+   through every component that references `var(--*)` — no per-component
+   rewrites needed except the small deltas below whose *logic* (not just
+   color) depends on ground tone. Spec: branding-guide-v7.html §07.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+body:has(.app)::before {
+  display: none;
+}
+body:has(.app) {
+  background: #182232;
+}
+
+.app {
+  /* Surfaces */
+  --paper: #182232;
+  --ice: #243347;
+  /* Text */
+  --ink: #e8e2d4;
+  --graphite: #a4b0bd;
+  /* Blue family — brightened for contrast on dark */
+  --frost: #4e6278;
+  --glacier: #88a8c4;
+  --steel: #8ab0d0;
+  /* Warm accents */
+  --ember: #dda080;
+  --brick: #d37058;
+
+  --rule: rgba(232, 226, 212, 0.09);
+  --rule-strong: rgba(232, 226, 212, 0.22);
+  --ring: rgba(138, 176, 208, 0.32);
+
+  --bg: var(--paper);
+  --fg: var(--ink);
+  --muted: var(--graphite);
+  --ok: var(--steel);
+  --warn: var(--ember);
+  --err: var(--brick);
+
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* Component deltas — rules whose semantics don't survive a blind token flip. */
+
+.app .btn-primary {
+  background: var(--steel);
+  color: #0e1c2b;
+}
+.app .btn-primary:hover {
+  background: #a6c4df;
+}
+.app .btn-secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--ink);
+}
+.app .btn-secondary:hover {
+  background: var(--ice);
+}
+.app .btn-ghost:hover {
+  background: var(--ice);
+}
+.app .btn-accent {
+  background: var(--ember);
+  color: #1a1208;
+}
+.app .btn-accent:hover {
+  background: #e8b18d;
+}
+.app .btn-icon {
+  background: var(--paper);
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+.app .btn-icon:hover {
+  background: var(--ice);
+}
+
+.app .banner {
+  background: #0b1420;
+  color: var(--ink);
+}
+.app .banner .badge {
+  border-color: var(--frost);
+  color: var(--ink);
+}
+.app .banner.ember {
+  background: #b8704a;
+  color: #f6f3ec;
+}
+
+.app .codeblock {
+  background: #0b1420;
+  color: var(--ink);
+}
+.app .codeblock .com {
+  color: rgba(232, 226, 212, 0.45);
+}
+
+.app .avatar {
+  background: var(--ice);
+  color: var(--steel);
+  border-color: var(--rule);
+}
+.app .avatar.dark {
+  background: #0b1420;
+  color: var(--ink);
+  border-color: #0b1420;
+}
+
+.app .select {
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23E8E2D4' stroke-width='1.5'/></svg>");
+}
+
+.app .check .box {
+  border-color: var(--ink);
+  background: var(--paper);
+}
+.app .check input:checked ~ .box,
+.app .check.is-checked .box {
+  background: var(--steel);
+  border-color: var(--steel);
+}
+.app .check .box::after {
+  border-left-color: #0e1c2b;
+  border-bottom-color: #0e1c2b;
+}
+
+.app .radio .circle {
+  border-color: var(--ink);
+  background: var(--paper);
+}
+.app .radio .circle::after {
+  background: var(--steel);
+}
+
+.app .toggle .track {
+  background: var(--frost);
+}
+.app .toggle input:checked ~ .track,
+.app .toggle.is-on .track {
+  background: var(--steel);
+}
+.app .toggle .track::after {
+  background: var(--ink);
+}
+
+.app .callout.err {
+  background: rgba(211, 112, 88, 0.08);
+}
+.app .tbl tbody tr:hover {
+  background: rgba(138, 176, 208, 0.06);
+}
+.app .stat .stat-value {
+  color: var(--ink);
 }

@@ -20,6 +20,7 @@ import { cleanup, render, screen } from '@testing-library/preact';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { NavColumn as Sidebar } from '../src/components/shell/NavColumn.js';
 import { __resetBriefingForTests } from '../src/lib/briefing.js';
+import { __resetChannelsForTests, channels as channelsSignal } from '../src/lib/channels.js';
 import { __resetMessagesForTests, appendMessages, messagesByThread } from '../src/lib/messages.js';
 import { __resetRosterForTests, roster } from '../src/lib/roster.js';
 import {
@@ -56,7 +57,23 @@ beforeEach(() => {
   __resetUnreadForTests();
   __resetBriefingForTests();
   __resetRosterForTests();
+  __resetChannelsForTests();
   __resetViewForTests();
+  // Seed the channels signal with a synthetic general entry so the
+  // sidebar renders the channels list. Tests that need additional
+  // channels override this.
+  channelsSignal.value = [
+    {
+      id: 'general',
+      slug: 'general',
+      createdBy: '__system__',
+      createdAt: 0,
+      archivedAt: null,
+      joined: true,
+      myRole: 'member',
+      memberCount: 0,
+    },
+  ];
 });
 
 afterEach(() => {
@@ -180,7 +197,7 @@ describe('<Sidebar /> unread indicators', () => {
     expect(screen.queryByText('1')).toBeNull();
   });
 
-  it('shows a count badge on Team Chat for unread broadcasts', () => {
+  it('shows a count badge on the general channel for unread broadcasts', () => {
     setRoster();
     appendMessages('me', [mkMsg({ id: 'a', ts: 10, to: null, from: 'other' })]);
     // Explicitly mark lastRead so it's clear this is unread territory.
@@ -229,7 +246,7 @@ describe('<Sidebar /> unread indicators', () => {
     expect(label.className).toMatch(/\bfont-semibold\b/);
   });
 
-  it('does NOT count self-sends as unread on Team Chat', () => {
+  it('does NOT count self-sends as unread on the general channel', () => {
     setRoster();
     appendMessages('me', [mkMsg({ id: 'a', ts: 10, to: null, from: 'me' })]);
     lastReadByThread.value = new Map([['primary', 0]]);

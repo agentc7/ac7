@@ -26,6 +26,11 @@ export const PATHS = {
   // Objectives — members with `objectives.create` post and assign,
   // assignees execute, watchers observe.
   objectives: '/objectives',
+  // Channels — Slack-style named team threads. Anyone can create;
+  // admins (creator-by-default) manage. The `general` channel is
+  // synthetic and seeded server-side; everyone is implicitly a
+  // member.
+  channels: '/channels',
   // Members — requires `members.manage` for mutations. Top-level GET
   // is dual-auth (everyone can read the teammate list); mutating verbs
   // gate on the permission. The helpers below compose the `:name`
@@ -55,6 +60,28 @@ export const OBJECTIVE_PATHS = {
   reassign: (id: string) => `/objectives/${encodeURIComponent(id)}/reassign`,
   discuss: (id: string) => `/objectives/${encodeURIComponent(id)}/discuss`,
   watchers: (id: string) => `/objectives/${encodeURIComponent(id)}/watchers`,
+} as const;
+
+/**
+ * Path builders for channel subresources. Channels are addressed by
+ * slug (URL-facing, mutable); the server resolves slug → id on each
+ * call so renames don't break URLs already in flight.
+ *
+ *   GET    /channels                              — list (per viewer)
+ *   POST   /channels                              — create
+ *   GET    /channels/:slug                        — detail + members
+ *   PATCH  /channels/:slug                        — rename
+ *   DELETE /channels/:slug                        — archive
+ *   POST   /channels/:slug/members                — add member (admin)
+ *                                                   or self-join
+ *   DELETE /channels/:slug/members/:name          — remove member
+ *                                                   (admin) or self-leave
+ */
+export const CHANNEL_PATHS = {
+  one: (slug: string) => `/channels/${encodeURIComponent(slug)}`,
+  members: (slug: string) => `/channels/${encodeURIComponent(slug)}/members`,
+  member: (slug: string, name: string) =>
+    `/channels/${encodeURIComponent(slug)}/members/${encodeURIComponent(name)}`,
 } as const;
 
 /**

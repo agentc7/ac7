@@ -29,7 +29,9 @@
  */
 
 import type { Message } from '@agentc7/sdk/types';
+import { useEffect, useRef } from 'preact/hooks';
 import { renderInlineMarkdown } from '../lib/markdown.js';
+import { selectedThreadMessageId } from '../lib/messages.js';
 import { senderTextClass } from '../lib/theme.js';
 import { MessageAttachments } from './MessageAttachments.js';
 
@@ -80,6 +82,20 @@ export function MessageLine({ message, viewer, previousMessage }: MessageLinePro
   const isContinuation =
     previousMessage !== undefined && isContinuationOf(message, previousMessage);
 
+  // When this message is the target of an inspector → thread jump,
+  // mark it visually and scroll it into view. Clearing happens at the
+  // thread level (Transcript drops the selection on thread switch).
+  const isSelected = selectedThreadMessageId.value === message.id;
+  const rowRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (isSelected && rowRef.current) {
+      rowRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [isSelected]);
+  const highlightStyle = isSelected
+    ? ';background:var(--ice);box-shadow:-3px 0 0 var(--steel);border-radius:0 4px 4px 0;transition:background .2s,box-shadow .2s'
+    : ';transition:background .2s,box-shadow .2s';
+
   // Two-column row: a fixed timestamp gutter on the left and the
   // message column on the right. Putting the body in its own flex
   // child means long messages wrap *within* that column instead of
@@ -102,8 +118,9 @@ export function MessageLine({ message, viewer, previousMessage }: MessageLinePro
   if (isContinuation) {
     return (
       <div
+        ref={rowRef}
         class="sm:flex sm:gap-3"
-        style="padding:2px 0;line-height:1.55;font-family:var(--f-sans);font-size:14.5px"
+        style={`padding:2px 0;line-height:1.55;font-family:var(--f-sans);font-size:14.5px${highlightStyle}`}
       >
         <span
           class="hidden sm:inline flex-shrink-0 tabular-nums"
@@ -130,8 +147,9 @@ export function MessageLine({ message, viewer, previousMessage }: MessageLinePro
   const topMargin = previousMessage !== undefined ? 12 : 0;
   return (
     <div
+      ref={rowRef}
       class="sm:flex sm:gap-3"
-      style={`padding:2px 0;margin-top:${topMargin}px;line-height:1.55;font-family:var(--f-sans);font-size:14.5px`}
+      style={`padding:2px 0;margin-top:${topMargin}px;line-height:1.55;font-family:var(--f-sans);font-size:14.5px${highlightStyle}`}
     >
       <span
         class="hidden sm:inline flex-shrink-0 tabular-nums"

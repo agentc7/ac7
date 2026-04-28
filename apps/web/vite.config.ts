@@ -104,7 +104,7 @@ export default defineConfig({
   // `vite build` idempotent across rebuilds — stale hashed assets
   // from prior builds get cleaned up instead of piling up.
   build: {
-    outDir: resolve(__dirname, '../../apps/server/public'),
+    outDir: resolve(__dirname, '../server/public'),
     emptyOutDir: true,
     sourcemap: true,
     target: 'es2022',

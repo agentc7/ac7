@@ -26,7 +26,7 @@ This package is not installed directly. It ships inside `@agentc7/server`, which
 cd apps/server && node dist/index.js
 
 # Terminal 2 — Vite dev server on :5173 with API proxy
-cd packages/web && pnpm dev
+cd apps/web && pnpm dev
 ```
 
 Open <http://localhost:5173/>. Vite proxies every API path (`/briefing`, `/roster`, `/push`, `/subscribe`, `/history`, `/session/*`, `/push/*`) through to the Hono broker on `:8717`, with `ws: true` on the proxies so WebSocket upgrades, cookies, and push all work through the dev server.
@@ -48,7 +48,7 @@ pnpm --filter @agentc7/web build
 ## Structure
 
 ```
-packages/web/
+apps/web/
 ├── index.html              # root shell
 ├── scripts/generate-icons.mjs  # zero-dep PNG generator for PWA icons
 ├── src/

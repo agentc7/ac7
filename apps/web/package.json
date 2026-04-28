@@ -8,7 +8,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/agentc7/ac7.git",
-    "directory": "packages/web"
+    "directory": "apps/web"
   },
   "bugs": {
     "url": "https://github.com/agentc7/ac7/issues"
@@ -28,7 +28,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --config vitest.config.ts",
-    "clean": "rm -rf dist .turbo ../../apps/server/public"
+    "clean": "rm -rf dist .turbo ../server/public"
   },
   "dependencies": {
     "@agentc7/sdk": "workspace:*",

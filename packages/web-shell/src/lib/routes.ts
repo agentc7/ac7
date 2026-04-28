@@ -28,8 +28,10 @@ export type Route =
   | (RouteBase & { kind: 'home' })
   | (RouteBase & { kind: 'inbox' })
   | (RouteBase & { kind: 'account' })
-  | (RouteBase & { kind: 'thread-primary' })
+  | (RouteBase & { kind: 'thread-channel'; slug: string })
   | (RouteBase & { kind: 'thread-dm'; name: string })
+  | (RouteBase & { kind: 'channels-browse' })
+  | (RouteBase & { kind: 'channel-create' })
   | (RouteBase & { kind: 'objectives-list' })
   | (RouteBase & { kind: 'objective-create' })
   | (RouteBase & { kind: 'objective-detail'; id: string })
@@ -64,8 +66,13 @@ export function parseRoute(pathname: string): Route {
 
   if (head === 'account' && rest.length === 0) return withTeam({ kind: 'account' }, team);
 
-  if (head === 'c' && rest[0] === 'team-chat' && rest.length === 1) {
-    return withTeam({ kind: 'thread-primary' }, team);
+  if (head === 'c' && rest.length === 1 && rest[0]) {
+    return withTeam({ kind: 'thread-channel', slug: rest[0] }, team);
+  }
+
+  if (head === 'channels') {
+    if (rest.length === 0) return withTeam({ kind: 'channels-browse' }, team);
+    if (rest.length === 1 && rest[0] === 'new') return withTeam({ kind: 'channel-create' }, team);
   }
 
   if (head === 'dm' && rest.length === 1 && rest[0]) {
@@ -118,10 +125,14 @@ function baseFor(route: Route): string {
       return '/inbox';
     case 'account':
       return '/account';
-    case 'thread-primary':
-      return '/c/team-chat';
+    case 'thread-channel':
+      return `/c/${encodeURIComponent(route.slug)}`;
     case 'thread-dm':
       return `/dm/${encodeURIComponent(route.name)}`;
+    case 'channels-browse':
+      return '/channels';
+    case 'channel-create':
+      return '/channels/new';
     case 'objectives-list':
       return '/objectives';
     case 'objective-create':

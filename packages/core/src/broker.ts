@@ -60,6 +60,17 @@ export interface BrokerOptions {
  */
 export interface PushContext {
   from: string | null;
+  /**
+   * Explicit recipient list, used by channel-scoped pushes to fan out
+   * only to the channel's member set instead of the whole team.
+   * `undefined` (or omitted) means "use the default routing":
+   * targeted-DM when `payload.to` is set, broadcast-to-all otherwise.
+   *
+   * When provided, the sender is auto-included so multi-device sync
+   * still works (mirrors the targeted-DM convention). Each name is
+   * looked up in the registry; missing names are silently skipped.
+   */
+  recipients?: string[];
 }
 
 /**
@@ -234,6 +245,21 @@ export class Broker {
         const sender = this.registry.get(context.from);
         if (sender) recipients.add(sender);
       }
+    } else if (context.recipients !== undefined) {
+      // Explicit recipient list (channel-scoped push). Look up each
+      // name in the registry; missing names are dropped silently —
+      // an offline channel member is just no-live-delivery, which
+      // is the same outcome they'd get for a broadcast push.
+      for (const name of context.recipients) {
+        const state = this.registry.get(name);
+        if (state) recipients.add(state);
+      }
+      // Always include the sender so their other devices receive
+      // their own message (parity with the targeted-DM path).
+      if (context.from) {
+        const sender = this.registry.get(context.from);
+        if (sender) recipients.add(sender);
+      }
     } else {
       for (const state of this.registry.allStates()) recipients.add(state);
     }
@@ -279,10 +305,21 @@ export class Broker {
       },
     );
 
+    let targets: number;
+    if (targetName) {
+      targets = this.registry.has(targetName) ? 1 : 0;
+    } else if (context.recipients !== undefined) {
+      // Channel push — `targets` reports the explicit recipient set
+      // (excluding the auto-added sender which got there via
+      // multi-device-sync, not as an addressee).
+      targets = context.recipients.length;
+    } else {
+      targets = targetStates.length;
+    }
     return {
       delivery: {
         live,
-        targets: targetName ? (this.registry.has(targetName) ? 1 : 0) : targetStates.length,
+        targets,
       },
       message,
     };

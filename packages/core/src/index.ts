@@ -23,11 +23,14 @@ export {
   type RegistrationResult,
 } from './broker.js';
 export {
+  CHANNEL_THREAD_PREFIX,
+  channelThreadTag,
   clampQueryLimit,
   DEFAULT_QUERY_LIMIT,
   type EventLog,
   type EventLogQueryOptions,
   type EventLogTailOptions,
+  GENERAL_CHANNEL_ID,
   InMemoryEventLog,
   MAX_QUERY_LIMIT,
 } from './event-log.js';

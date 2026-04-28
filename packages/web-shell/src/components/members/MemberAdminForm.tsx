@@ -123,6 +123,19 @@ export function MemberAdminForm({
     });
   }
 
+  async function onChangeInstructions(next: string): Promise<void> {
+    if (next === member.instructions) return;
+    await withBusy(`update:${rowKey}`, async () => {
+      try {
+        await getClient().updateMember(member.name, { instructions: next });
+        await onChanged();
+        await refreshSharedStores();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : String(err));
+      }
+    });
+  }
+
   async function onRotate(): Promise<void> {
     if (
       !confirm(
@@ -219,6 +232,38 @@ export function MemberAdminForm({
             }
           />
         </label>
+
+        <label style="display:flex;flex-direction:column;gap:4px;font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">
+          <span>personal instructions</span>
+          <textarea
+            class="input"
+            rows={6}
+            maxLength={8192}
+            placeholder="Standing instructions for this member. Pinned into the agent's system prompt at runner startup."
+            style="font-size:13px;font-family:var(--f-sans);text-transform:none;letter-spacing:normal;color:var(--ink);white-space:pre-wrap"
+            defaultValue={member.instructions}
+            disabled={disabled}
+            onBlur={(e) =>
+              void onChangeInstructions((e.currentTarget as HTMLTextAreaElement).value)
+            }
+          />
+        </label>
+
+        {/* Role title, role description, and personal instructions are
+            snapshotted into the runner's system prompt (claude's
+            --append-system-prompt) at the moment `ac7 claude-code`
+            starts. Editing them here updates the team record
+            immediately, but the running agent won't see the change
+            until it's rerun. The MemberProfile header already shows
+            the member's online/offline state via the presence dot —
+            individual-contributors can use that to tell whether a rerun is pending. */}
+        <div
+          class="card"
+          style="padding:8px 10px;font-family:var(--f-mono);font-size:11px;line-height:1.4;color:var(--muted);border-left:3px solid var(--warn)"
+        >
+          Role and instructions are pinned into the agent's system prompt at runner startup. Restart
+          any running agents for changes to take effect.
+        </div>
 
         <div style="display:flex;flex-direction:column;gap:6px">
           <span style="font-family:var(--f-mono);font-size:11px;letter-spacing:.04em;color:var(--muted);text-transform:uppercase">

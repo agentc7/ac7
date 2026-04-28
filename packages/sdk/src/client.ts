@@ -13,6 +13,7 @@
 import { WebSocket as NodeWebSocket } from 'ws';
 import {
   AUTH_HEADER,
+  CHANNEL_PATHS,
   FS_PATHS,
   MEMBER_PATHS,
   OBJECTIVE_PATHS,
@@ -21,16 +22,21 @@ import {
   PROTOCOL_VERSION,
 } from './protocol.js';
 import {
+  AddChannelMemberRequestSchema,
   BriefingResponseSchema,
+  ChannelSchema,
+  CreateChannelRequestSchema,
   CreateMemberResponseSchema,
   EnrollTotpResponseSchema,
   FsEntryResponseSchema,
   FsListResponseSchema,
   FsWriteResponseSchema,
+  GetChannelResponseSchema,
   GetObjectiveResponseSchema,
   HealthResponseSchema,
   HistoryResponseSchema,
   ListActivityResponseSchema,
+  ListChannelsResponseSchema,
   ListMembersResponseSchema,
   ListObjectivesResponseSchema,
   MemberSchema,
@@ -39,6 +45,7 @@ import {
   PushPayloadSchema,
   PushResultSchema,
   PushSubscriptionResponseSchema,
+  RenameChannelRequestSchema,
   RosterResponseSchema,
   RotateTokenResponseSchema,
   SessionResponseSchema,
@@ -47,8 +54,12 @@ import {
 } from './schemas.js';
 import type {
   ActivityRow,
+  AddChannelMemberRequest,
   BriefingResponse,
   CancelObjectiveRequest,
+  Channel,
+  ChannelSummary,
+  CreateChannelRequest,
   CreateMemberRequest,
   CreateMemberResponse,
   CreateObjectiveRequest,
@@ -56,6 +67,7 @@ import type {
   EnrollTotpResponse,
   FsEntry,
   FsWriteResponse,
+  GetChannelResponse,
   GetObjectiveResponse,
   HealthResponse,
   HistoryQuery,
@@ -69,6 +81,7 @@ import type {
   PushSubscriptionPayload,
   PushSubscriptionResponse,
   ReassignObjectiveRequest,
+  RenameChannelRequest,
   RosterResponse,
   RotateTokenResponse,
   SessionResponse,
@@ -557,6 +570,7 @@ export class Client {
   async history(query: HistoryQuery = {}): Promise<Message[]> {
     const params = new URLSearchParams();
     if (query.with) params.set('with', query.with);
+    if (query.channel) params.set('channel', query.channel);
     if (query.limit !== undefined) params.set('limit', String(query.limit));
     if (query.before !== undefined) params.set('before', String(query.before));
     const qs = params.toString();
@@ -564,6 +578,92 @@ export class Client {
     const resp = await this.request(path, { method: 'GET' });
     const parsed = HistoryResponseSchema.parse(await this.json(resp));
     return parsed.messages;
+  }
+
+  // ─────────────────────────── Channels ─────────────────────────
+
+  /**
+   * List the channels visible to the caller. Always includes the
+   * synthetic `general` channel (where membership is implicit).
+   * Other channels appear regardless of join status; the per-row
+   * `joined` flag drives whether the UI shows "Open" or "Join".
+   */
+  async listChannels(): Promise<ChannelSummary[]> {
+    const resp = await this.request(PATHS.channels, { method: 'GET' });
+    return ListChannelsResponseSchema.parse(await this.json(resp)).channels;
+  }
+
+  /** Fetch one channel + its full member list (general → empty list). */
+  async getChannel(slug: string): Promise<GetChannelResponse> {
+    const resp = await this.request(CHANNEL_PATHS.one(slug), { method: 'GET' });
+    return GetChannelResponseSchema.parse(await this.json(resp));
+  }
+
+  /** Create a new channel. The caller becomes its admin. */
+  async createChannel(input: CreateChannelRequest): Promise<Channel> {
+    const validated = CreateChannelRequestSchema.parse(input);
+    const resp = await this.request(PATHS.channels, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    return ChannelSchema.parse(await this.json(resp));
+  }
+
+  /** Rename a channel (admin-only). The id is unchanged. */
+  async renameChannel(slug: string, input: RenameChannelRequest): Promise<Channel> {
+    const validated = RenameChannelRequestSchema.parse(input);
+    const resp = await this.request(CHANNEL_PATHS.one(slug), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    return ChannelSchema.parse(await this.json(resp));
+  }
+
+  /** Soft-archive a channel (admin-only). */
+  async archiveChannel(slug: string): Promise<Channel> {
+    const resp = await this.request(CHANNEL_PATHS.one(slug), { method: 'DELETE' });
+    return ChannelSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * Add a member to a channel. Self-join when `member` matches the
+   * caller; admin-add otherwise. Returns the refreshed channel
+   * detail so callers can re-render the member list.
+   */
+  async addChannelMember(
+    slug: string,
+    input: AddChannelMemberRequest,
+  ): Promise<GetChannelResponse> {
+    const validated = AddChannelMemberRequestSchema.parse(input);
+    const resp = await this.request(CHANNEL_PATHS.members(slug), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    return GetChannelResponseSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * Self-join helper — convenience over `addChannelMember` for the
+   * common "I want to join this channel" flow. The caller's name is
+   * inferred server-side from the auth context, so the body is empty
+   * and the server uses the authenticated member.
+   */
+  async joinChannel(slug: string): Promise<GetChannelResponse> {
+    const resp = await this.request(CHANNEL_PATHS.members(slug), { method: 'POST' });
+    return GetChannelResponseSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * Remove a member from a channel. When `name` is the caller, this
+   * is a self-leave; otherwise admin-remove. The last admin can't
+   * leave a channel that still has members.
+   */
+  async removeChannelMember(slug: string, name: string): Promise<GetChannelResponse> {
+    const resp = await this.request(CHANNEL_PATHS.member(slug, name), { method: 'DELETE' });
+    return GetChannelResponseSchema.parse(await this.json(resp));
   }
 
   async push(payload: PushPayload): Promise<PushResult> {

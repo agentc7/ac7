@@ -9,7 +9,14 @@
 
 import { useEffect, useRef } from 'preact/hooks';
 import { briefing } from '../lib/briefing.js';
-import { dmOther, messagesByThread, PRIMARY_THREAD, threadMessages } from '../lib/messages.js';
+import { isInspectorOpen, toggleInspector } from '../lib/inspector.js';
+import {
+  dmOther,
+  messagesByThread,
+  PRIMARY_THREAD,
+  selectThreadMessage,
+  threadMessages,
+} from '../lib/messages.js';
 import { selectAgentDetail, view } from '../lib/view.js';
 import { MessageLine } from './MessageLine.js';
 
@@ -54,6 +61,14 @@ export function Transcript({ viewer }: TranscriptProps) {
     el.scrollTop = el.scrollHeight;
   }, [messages.length, threadKey]);
 
+  // Drop any inspector → thread selection when navigating away from
+  // the thread it was anchored to. The selected message id is opaque
+  // across threads, so leaving it set would highlight nothing
+  // visible and confuse a return visit.
+  useEffect(() => {
+    selectThreadMessage(null);
+  }, [threadKey]);
+
   if (v.kind !== 'thread' || threadKey === null) return null;
 
   return (
@@ -65,9 +80,9 @@ export function Transcript({ viewer }: TranscriptProps) {
       {showDmHeader && dmCounterpart && (
         <div
           class="flex items-center justify-between flex-shrink-0"
-          style="background:var(--ice);border-bottom:1px solid var(--rule);padding:10px max(0.75rem,env(safe-area-inset-right)) 10px max(0.75rem,env(safe-area-inset-left))"
+          style="background:var(--ice);border-bottom:1px solid var(--rule);padding:10px max(0.75rem,env(safe-area-inset-right)) 10px max(0.75rem,env(safe-area-inset-left));gap:10px"
         >
-          <div class="eyebrow">
+          <div class="eyebrow flex-1 min-w-0 truncate">
             DM with <span style="color:var(--ink)">{dmCounterpart}</span>
           </div>
           {isDirector && (
@@ -80,6 +95,34 @@ export function Transcript({ viewer }: TranscriptProps) {
               → VIEW AGENT
             </button>
           )}
+          {/* Inspector toggle — visible only at narrow widths where the
+              inspector is an overlay; CSS hides it at ≥1100. */}
+          <button
+            type="button"
+            onClick={toggleInspector}
+            class="inspector-toggle items-center justify-center"
+            aria-label={
+              isInspectorOpen.value ? 'Close activity inspector' : 'Open activity inspector'
+            }
+            aria-pressed={isInspectorOpen.value}
+            title="Activity inspector"
+            style={`width:32px;height:32px;background:${isInspectorOpen.value ? 'var(--paper)' : 'transparent'};border:1px solid ${isInspectorOpen.value ? 'var(--rule)' : 'transparent'};color:${isInspectorOpen.value ? 'var(--steel)' : 'var(--graphite)'};border-radius:var(--r-sm);cursor:pointer;flex-shrink:0`}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
+              <rect x="3" y="3" width="18" height="18" rx="2" />
+              <path d="M15 3 L15 21" />
+            </svg>
+          </button>
         </div>
       )}
       <div

@@ -29,7 +29,10 @@ export function App() {
   if (state.status === 'loading') return <Boot />;
   if (state.status === 'anonymous') return <Login />;
   return (
-    <>
+    // `.app` activates dusk mode per the brand split (branding-guide-v7 §07):
+    // operator surfaces run on a dark ground. Token remap cascades through
+    // every child component automatically.
+    <div class="app h-full flex flex-col">
       <TeamShell
         client={getClient()}
         identity={{
@@ -42,6 +45,6 @@ export function App() {
         onUnauthorized={(notice) => logout(notice)}
       />
       <ToastContainer />
-    </>
+    </div>
   );
 }

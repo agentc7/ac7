@@ -71,7 +71,7 @@ function decstbm(top: number, bottom: number): string {
 /** Reset the scroll region to full screen. */
 const DECSTBM_RESET = `${CSI}r`;
 
-// Palette — same hex values as packages/web/src/theme.css so the
+// Palette — same hex values as apps/web/src/theme.css so the
 // terminal HUD reads visually like a sibling of the web UI chrome.
 // The separator stays as muted chrome; the status text itself pops
 // in saturated palette tones so "online / offline" reads at a glance.

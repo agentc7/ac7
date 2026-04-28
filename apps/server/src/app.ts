@@ -26,8 +26,10 @@ import { type Broker, clampQueryLimit } from '@agentc7/core';
 import { PATHS, PROTOCOL_HEADER, PROTOCOL_VERSION } from '@agentc7/sdk/protocol';
 import {
   ActivityKindSchema,
+  AddChannelMemberRequestSchema,
   CancelObjectiveRequestSchema,
   CompleteObjectiveRequestSchema,
+  CreateChannelRequestSchema,
   CreateMemberRequestSchema,
   CreateObjectiveRequestSchema,
   DiscussObjectiveRequestSchema,
@@ -40,6 +42,7 @@ import {
   PushPayloadSchema,
   PushSubscriptionPayloadSchema,
   ReassignObjectiveRequestSchema,
+  RenameChannelRequestSchema,
   TotpLoginRequestSchema,
   UpdateMemberRequestSchema,
   UpdateObjectiveRequestSchema,
@@ -49,6 +52,7 @@ import {
 import type {
   ActivityEvent,
   Attachment,
+  ChannelSummary,
   Message,
   Objective,
   ObjectiveEvent,
@@ -65,6 +69,7 @@ import { type Context, Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
+import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
 import { type FilesystemStore, FsError, type ViewerContext } from './files/index.js';
 import type { JwtVerifier } from './jwt.js';
 import type { Logger } from './logger.js';
@@ -95,6 +100,13 @@ export interface AppOptions {
    * they're only exercising chat paths.
    */
   objectives?: ObjectivesStore;
+  /**
+   * Channels store — named-thread metadata + membership. The
+   * `/channels*` endpoints are registered iff this is provided. When
+   * omitted, the server has no channel concept and team chat collapses
+   * to the legacy single-broadcast thread.
+   */
+  channels?: ChannelStore;
   /**
    * Per-member activity store — append-only timeline of LLM
    * exchanges, opaque HTTP, and objective lifecycle markers the
@@ -267,6 +279,7 @@ export function createApp(options: AppOptions): CreatedApp {
     sessions,
     team,
     objectives,
+    channels,
     activityStore,
     version,
     logger,
@@ -636,7 +649,39 @@ export function createApp(options: AppOptions): CreatedApp {
       ? { ...parsed.data, attachments: canonicalAttachments }
       : parsed.data;
 
-    const result = await broker.push(payload, { from: member.name });
+    // Channel-scoped routing: if the payload tags itself for a
+    // channel via `data.thread = 'chan:<id>'`, resolve the channel,
+    // verify the sender is a member, and pass an explicit recipient
+    // list down to the broker so the message fans out only to
+    // channel members instead of broadcasting team-wide.
+    //
+    // The general channel (`chan:general`) deliberately falls through
+    // to default broadcast routing — its membership is implicit.
+    let pushContext: { from: string; recipients?: string[] } = { from: member.name };
+    if (channels) {
+      const threadTag = parsed.data.data?.thread;
+      if (typeof threadTag === 'string' && threadTag.startsWith('chan:')) {
+        const channelId = threadTag.slice('chan:'.length);
+        if (channelId !== GENERAL_CHANNEL_ID) {
+          const ch = channels.get(channelId);
+          if (!ch) {
+            return c.json({ error: `no such channel: ${channelId}` }, 404);
+          }
+          if (ch.archivedAt !== null) {
+            return c.json({ error: 'channel is archived' }, 410);
+          }
+          if (!channels.isMember(channelId, member.name)) {
+            return c.json({ error: 'not a member of this channel' }, 403);
+          }
+          const explicit = channels.recipientNames(channelId);
+          if (explicit !== null) {
+            pushContext = { from: member.name, recipients: explicit };
+          }
+        }
+      }
+    }
+
+    const result = await broker.push(payload, pushContext);
 
     // Grant fanout — for every recipient that isn't the owner, record
     // a read grant keyed on the message id. The recipient set is the
@@ -672,6 +717,204 @@ export function createApp(options: AppOptions): CreatedApp {
     }
     return c.json(result);
   });
+
+  // ─── Channels ─────────────────────────────────────────────────────
+  //
+  // Slack-style named team threads. Anyone can create; the creator
+  // becomes admin. Admins manage rename/archive/membership; members
+  // can self-leave (last-admin guard prevents orphaning a non-empty
+  // channel). The synthetic `general` channel is everyone's default
+  // and can't be modified — its membership is implicit.
+
+  if (channels !== undefined) {
+    const mapChannelsError = (
+      // biome-ignore lint/suspicious/noExplicitAny: Hono's Context type is invariant; helper is only ever called inside a route handler
+      ctx: Context<any, string, Record<string, unknown>>,
+      err: unknown,
+    ): Response => {
+      if (err instanceof ChannelsError) {
+        const status =
+          err.code === 'not_found'
+            ? 404
+            : err.code === 'forbidden'
+              ? 403
+              : err.code === 'slug_taken'
+                ? 409
+                : err.code === 'archived'
+                  ? 410
+                  : err.code === 'reserved'
+                    ? 403
+                    : err.code === 'already_member' || err.code === 'not_member'
+                      ? 409
+                      : 400;
+        return ctx.json({ error: err.message, code: err.code }, status);
+      }
+      return ctx.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    };
+    // Use validateSlug at module-eval time so a startup typo in the
+    // import doesn't slip past — it's the same validator the create
+    // path uses. Keeps it from being flagged as unused.
+    void validateSlug;
+
+    const summarize = (slug: string, viewer: string): ChannelSummary | null => {
+      const ch = channels.getBySlug(slug);
+      if (!ch) return null;
+      const members = channels.listMembers(ch.id);
+      // General reports the team count; broker doesn't expose a
+      // member-store-size primitive so we use the actively-known
+      // member set (live presences) as the closest available proxy.
+      const memberCount =
+        ch.id === GENERAL_CHANNEL_ID ? broker.listPresences().length : members.length;
+      const myRole = channels.roleOf(ch.id, viewer);
+      return {
+        ...ch,
+        joined: ch.id === GENERAL_CHANNEL_ID ? true : myRole !== null,
+        myRole: ch.id === GENERAL_CHANNEL_ID ? 'member' : myRole,
+        memberCount,
+      };
+    };
+
+    app.get(PATHS.channels, auth, (c) => {
+      const member = c.get('member');
+      const all = channels.listAll();
+      const summaries: ChannelSummary[] = [];
+      for (const ch of all) {
+        const members = channels.listMembers(ch.id);
+        const memberCount =
+          ch.id === GENERAL_CHANNEL_ID ? broker.listPresences().length : members.length;
+        const myRole = channels.roleOf(ch.id, member.name);
+        summaries.push({
+          ...ch,
+          joined: ch.id === GENERAL_CHANNEL_ID ? true : myRole !== null,
+          myRole: ch.id === GENERAL_CHANNEL_ID ? 'member' : myRole,
+          memberCount,
+        });
+      }
+      return c.json({ channels: summaries });
+    });
+
+    app.post(PATHS.channels, auth, async (c) => {
+      const raw = await c.req.json().catch(() => null);
+      const parsed = CreateChannelRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid channel input', details: parsed.error.issues }, 400);
+      }
+      const member = c.get('member');
+      try {
+        const ch = channels.create({ slug: parsed.data.slug, creator: member.name });
+        return c.json(ch, 201);
+      } catch (err) {
+        return mapChannelsError(c, err);
+      }
+    });
+
+    app.get(`${PATHS.channels}/:slug`, auth, (c) => {
+      const slug = c.req.param('slug');
+      const member = c.get('member');
+      const summary = summarize(slug, member.name);
+      if (!summary) return c.json({ error: `no such channel: ${slug}` }, 404);
+      const members = channels.listMembers(summary.id);
+      return c.json({ channel: summary, members });
+    });
+
+    app.patch(`${PATHS.channels}/:slug`, auth, async (c) => {
+      const slug = c.req.param('slug');
+      const raw = await c.req.json().catch(() => null);
+      const parsed = RenameChannelRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid rename input', details: parsed.error.issues }, 400);
+      }
+      const ch = channels.getBySlug(slug);
+      if (!ch) return c.json({ error: `no such channel: ${slug}` }, 404);
+      const member = c.get('member');
+      try {
+        const renamed = channels.rename(ch.id, parsed.data.slug, member.name);
+        return c.json(renamed);
+      } catch (err) {
+        return mapChannelsError(c, err);
+      }
+    });
+
+    app.delete(`${PATHS.channels}/:slug`, auth, (c) => {
+      const slug = c.req.param('slug');
+      const ch = channels.getBySlug(slug);
+      if (!ch) return c.json({ error: `no such channel: ${slug}` }, 404);
+      const member = c.get('member');
+      try {
+        const archived = channels.archive(ch.id, member.name);
+        return c.json(archived);
+      } catch (err) {
+        return mapChannelsError(c, err);
+      }
+    });
+
+    // Add a member. Body may be empty for self-join (caller adds self
+    // as `member`); else admins may add any team member at either role.
+    app.post(`${PATHS.channels}/:slug/members`, auth, async (c) => {
+      const slug = c.req.param('slug');
+      const ch = channels.getBySlug(slug);
+      if (!ch) return c.json({ error: `no such channel: ${slug}` }, 404);
+      const caller = c.get('member');
+      const raw = await c.req.json().catch(() => null);
+      let target: string;
+      let role: 'admin' | 'member' = 'member';
+      if (raw === null) {
+        // Empty body — self-join.
+        target = caller.name;
+      } else {
+        const parsed = AddChannelMemberRequestSchema.safeParse(raw);
+        if (!parsed.success) {
+          return c.json({ error: 'invalid member input', details: parsed.error.issues }, 400);
+        }
+        target = parsed.data.member;
+        role = parsed.data.role;
+      }
+      // Self-join is always allowed (this is a public-channel model).
+      // Admin-add gates on the caller being an admin AND the target
+      // being a real team member.
+      const isSelf = target === caller.name;
+      if (!isSelf) {
+        const callerRole = channels.roleOf(ch.id, caller.name);
+        if (callerRole !== 'admin') {
+          return c.json({ error: 'only admins can add other members' }, 403);
+        }
+        if (members.findByName(target) === null) {
+          return c.json({ error: `no such team member: ${target}` }, 404);
+        }
+      }
+      try {
+        channels.addMember({ channelId: ch.id, memberName: target, role });
+      } catch (err) {
+        return mapChannelsError(c, err);
+      }
+      const summary = summarize(slug, caller.name);
+      const memberRows = channels.listMembers(ch.id);
+      return c.json({ channel: summary, members: memberRows });
+    });
+
+    app.delete(`${PATHS.channels}/:slug/members/:name`, auth, (c) => {
+      const slug = c.req.param('slug');
+      const name = c.req.param('name');
+      const ch = channels.getBySlug(slug);
+      if (!ch) return c.json({ error: `no such channel: ${slug}` }, 404);
+      const caller = c.get('member');
+      const isSelf = name === caller.name;
+      if (!isSelf) {
+        const callerRole = channels.roleOf(ch.id, caller.name);
+        if (callerRole !== 'admin') {
+          return c.json({ error: 'only admins can remove other members' }, 403);
+        }
+      }
+      try {
+        channels.removeMember(ch.id, name);
+      } catch (err) {
+        return mapChannelsError(c, err);
+      }
+      const summary = summarize(slug, caller.name);
+      const memberRows = channels.listMembers(ch.id);
+      return c.json({ channel: summary, members: memberRows });
+    });
+  }
 
   // ─── Web Push endpoints ───────────────────────────────────────────
 
@@ -1391,6 +1634,29 @@ export function createApp(options: AppOptions): CreatedApp {
       withOther = parsed.data;
     }
 
+    const channelRaw = c.req.query('channel');
+    let channelId: string | undefined;
+    if (channelRaw !== undefined && channelRaw.length > 0) {
+      if (withOther !== undefined) {
+        return c.json({ error: '`with` and `channel` are mutually exclusive' }, 400);
+      }
+      // Resolve slug → id when channels are wired up. Allow the
+      // sentinel "general" through unconditionally so callers don't
+      // need to special-case it client-side.
+      if (channelRaw === GENERAL_CHANNEL_ID) {
+        channelId = GENERAL_CHANNEL_ID;
+      } else if (channels) {
+        const ch = channels.getBySlug(channelRaw) ?? channels.get(channelRaw);
+        if (!ch) return c.json({ error: `no such channel: ${channelRaw}` }, 404);
+        if (!channels.isMember(ch.id, member.name)) {
+          return c.json({ error: 'not a member of this channel' }, 403);
+        }
+        channelId = ch.id;
+      } else {
+        return c.json({ error: 'channels are not enabled on this server' }, 404);
+      }
+    }
+
     const limitQuery = c.req.query('limit');
     const limit = clampQueryLimit(limitQuery === undefined ? undefined : Number(limitQuery));
     const beforeRaw = c.req.query('before');
@@ -1402,9 +1668,10 @@ export function createApp(options: AppOptions): CreatedApp {
     const eventLog = broker.getEventLog();
     const messages = await eventLog.query({
       viewer: member.name,
-      with: withOther,
+      ...(withOther !== undefined ? { with: withOther } : {}),
+      ...(channelId !== undefined ? { channel: channelId } : {}),
       limit,
-      before,
+      ...(before !== undefined ? { before } : {}),
     });
     return c.json({ messages });
   });
