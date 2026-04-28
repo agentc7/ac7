@@ -18,6 +18,7 @@ import { openDatabase } from '../src/db.js';
 import { createJwtVerifier, type JwtConfig } from '../src/jwt.js';
 import { createMemberStore } from '../src/members.js';
 import { SESSION_COOKIE_NAME, SessionStore } from '../src/sessions.js';
+import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { currentCode, generateSecret, verifyCode } from '../src/totp.js';
 
 const OP_TOKEN = 'ac7_auth_test_operator_token';
@@ -55,9 +56,11 @@ function makeApp(options: { now?: () => number; totpSecret?: string } = {}) {
   ]);
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db, { now: options.now });
+  const tokens = createTokenStoreFromMembers(db, members, { now: options.now });
   const { app } = createApp({
     broker,
     members,
+    tokens,
     sessions,
     team: TEAM,
     version: '0.0.0',
@@ -69,7 +72,7 @@ function makeApp(options: { now?: () => number; totpSecret?: string } = {}) {
     },
     now: options.now,
   });
-  return { app, members, sessions, secret };
+  return { app, members, sessions, tokens, secret };
 }
 
 function cookieFrom(res: Response): string | null {
@@ -521,9 +524,11 @@ function makeJwtApp(fixture: JwtFixture) {
   ]);
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db);
+  const tokens = createTokenStoreFromMembers(db, members);
   const { app } = createApp({
     broker,
     members,
+    tokens,
     sessions,
     team: TEAM,
     version: '0.0.0',

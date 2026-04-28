@@ -23,10 +23,16 @@ import {
 } from './protocol.js';
 import {
   AddChannelMemberRequestSchema,
+  ApproveEnrollmentRequestSchema,
+  ApproveEnrollmentResponseSchema,
   BriefingResponseSchema,
   ChannelSchema,
   CreateChannelRequestSchema,
   CreateMemberResponseSchema,
+  DeviceAuthorizationRequestSchema,
+  DeviceAuthorizationResponseSchema,
+  DeviceTokenErrorResponseSchema,
+  DeviceTokenResponseSchema,
   EnrollTotpResponseSchema,
   FsEntryResponseSchema,
   FsListResponseSchema,
@@ -39,12 +45,15 @@ import {
   ListChannelsResponseSchema,
   ListMembersResponseSchema,
   ListObjectivesResponseSchema,
+  ListPendingEnrollmentsResponseSchema,
+  ListTokensResponseSchema,
   MemberSchema,
   MessageSchema,
   ObjectiveSchema,
   PushPayloadSchema,
   PushResultSchema,
   PushSubscriptionResponseSchema,
+  RejectEnrollmentRequestSchema,
   RenameChannelRequestSchema,
   RosterResponseSchema,
   RotateTokenResponseSchema,
@@ -55,6 +64,8 @@ import {
 import type {
   ActivityRow,
   AddChannelMemberRequest,
+  ApproveEnrollmentRequest,
+  ApproveEnrollmentResponse,
   BriefingResponse,
   CancelObjectiveRequest,
   Channel,
@@ -63,6 +74,10 @@ import type {
   CreateMemberRequest,
   CreateMemberResponse,
   CreateObjectiveRequest,
+  DeviceAuthorizationRequest,
+  DeviceAuthorizationResponse,
+  DeviceTokenErrorCode,
+  DeviceTokenResponse,
   DiscussObjectiveRequest,
   EnrollTotpResponse,
   FsEntry,
@@ -76,15 +91,18 @@ import type {
   Member,
   Message,
   Objective,
+  PendingEnrollment,
   PushPayload,
   PushResult,
   PushSubscriptionPayload,
   PushSubscriptionResponse,
   ReassignObjectiveRequest,
+  RejectEnrollmentRequest,
   RenameChannelRequest,
   RosterResponse,
   RotateTokenResponse,
   SessionResponse,
+  TokenInfo,
   TotpLoginRequest,
   UpdateMemberRequest,
   UpdateObjectiveRequest,
@@ -565,6 +583,152 @@ export class Client {
   async enrollTotp(name: string): Promise<EnrollTotpResponse> {
     const resp = await this.request(MEMBER_PATHS.enrollTotp(name), { method: 'POST' });
     return EnrollTotpResponseSchema.parse(await this.json(resp));
+  }
+
+  // ─────────────────────── Tokens (multi-token) ──────────────────
+
+  /**
+   * List `name`'s active bearer tokens. Returns metadata only — never
+   * plaintext. Requires `members.manage` (admin) or matches the
+   * authenticated member (self).
+   *
+   * Useful for: spotting tokens you don't recognize (potential leak),
+   * inventorying which devices a member has bound, deciding which
+   * token to revoke without nuking the rest.
+   */
+  async listTokens(name: string): Promise<TokenInfo[]> {
+    const resp = await this.request(MEMBER_PATHS.tokens(name), { method: 'GET' });
+    return ListTokensResponseSchema.parse(await this.json(resp)).tokens;
+  }
+
+  /**
+   * Revoke a specific token row by id. Requires `members.manage` or
+   * self. Revoking the token currently authenticating the request is
+   * permitted — the caller is signing off this device.
+   *
+   * Token rows are deleted, not soft-flagged, so a future request
+   * with the same plaintext gets a clean 401.
+   */
+  async revokeToken(name: string, tokenId: string): Promise<void> {
+    const resp = await this.request(MEMBER_PATHS.token(name, tokenId), { method: 'DELETE' });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      throw new ClientError(
+        `revokeToken failed: ${resp.status} ${resp.statusText}`,
+        resp.status,
+        body,
+      );
+    }
+  }
+
+  // ─────────────────── Device-code enrollment ───────────────────
+
+  /**
+   * Begin a device-code enrollment from this device. Anonymous —
+   * intentionally requires no auth so a fresh VM with no token can
+   * still kick off the flow. The server mints `(deviceCode,
+   * userCode)`, persists a pending row, and returns both plus a
+   * verification URI for the operator to visit.
+   *
+   * The device caller MUST keep `deviceCode` secret; only present
+   * `userCode` to humans. The CLI saves `deviceCode` in memory and
+   * polls `pollDeviceToken` until the row resolves.
+   */
+  async beginDeviceAuthorization(
+    payload: DeviceAuthorizationRequest = {},
+  ): Promise<DeviceAuthorizationResponse> {
+    const validated = DeviceAuthorizationRequestSchema.parse(payload);
+    const resp = await this.request(PATHS.enroll, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+      skipAuth: true,
+    });
+    return DeviceAuthorizationResponseSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * Poll for completion of a device-code enrollment. RFC 8628 §3.5
+   * shape: success returns 200 + `{token, tokenId, member}`; the four
+   * canonical pending/error states return 400 + `{error: <code>}`.
+   *
+   * Returns a discriminated union so the caller can `switch` on
+   * `status` without parsing HTTP status codes themselves.
+   *
+   * Polling cadence: respect the `interval` returned by
+   * `beginDeviceAuthorization`; on `slow_down` increment by 5 seconds.
+   */
+  async pollDeviceToken(
+    deviceCode: string,
+  ): Promise<
+    | { status: 'approved'; data: DeviceTokenResponse }
+    | { status: DeviceTokenErrorCode; description?: string }
+  > {
+    const resp = await this.request(PATHS.enrollPoll, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceCode }),
+      skipAuth: true,
+    });
+    const text = await resp.text();
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new ClientError(`invalid JSON from poll`, resp.status, text);
+    }
+    if (resp.ok) {
+      const data = DeviceTokenResponseSchema.parse(parsed);
+      return { status: 'approved', data };
+    }
+    if (resp.status === 400) {
+      const err = DeviceTokenErrorResponseSchema.safeParse(parsed);
+      if (err.success) {
+        const out: { status: DeviceTokenErrorCode; description?: string } = {
+          status: err.data.error,
+        };
+        if (err.data.errorDescription !== undefined) {
+          out.description = err.data.errorDescription;
+        }
+        return out;
+      }
+    }
+    throw new ClientError(`poll failed: ${resp.status} ${resp.statusText}`, resp.status, text);
+  }
+
+  /** List currently-pending enrollment requests (director scope). */
+  async listPendingEnrollments(): Promise<PendingEnrollment[]> {
+    const resp = await this.request(PATHS.enrollPending, { method: 'GET' });
+    return ListPendingEnrollmentsResponseSchema.parse(await this.json(resp)).enrollments;
+  }
+
+  /** Approve a pending enrollment by user code. Director scope. */
+  async approveEnrollment(payload: ApproveEnrollmentRequest): Promise<ApproveEnrollmentResponse> {
+    const validated = ApproveEnrollmentRequestSchema.parse(payload);
+    const resp = await this.request(PATHS.enrollApprove, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    return ApproveEnrollmentResponseSchema.parse(await this.json(resp));
+  }
+
+  /** Reject a pending enrollment by user code. Director scope. */
+  async rejectEnrollment(payload: RejectEnrollmentRequest): Promise<void> {
+    const validated = RejectEnrollmentRequestSchema.parse(payload);
+    const resp = await this.request(PATHS.enrollReject, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(validated),
+    });
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      throw new ClientError(
+        `rejectEnrollment failed: ${resp.status} ${resp.statusText}`,
+        resp.status,
+        body,
+      );
+    }
   }
 
   async history(query: HistoryQuery = {}): Promise<Message[]> {

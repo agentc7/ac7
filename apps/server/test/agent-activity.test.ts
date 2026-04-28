@@ -30,6 +30,7 @@ import { openDatabase } from '../src/db.js';
 import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
+import { createTokenStoreFromMembers } from '../src/tokens.js';
 
 const CMD_TOKEN = 'ac7_test_director';
 const ASSIGNEE_TOKEN = 'ac7_test_assignee';
@@ -70,9 +71,11 @@ function makeApp() {
   ]);
   const db = openDatabase(':memory:');
   const activityStore = createSqliteActivityStore(db);
+  const tokens = createTokenStoreFromMembers(db, members);
   const { app } = createApp({
     broker,
     members,
+    tokens,
     sessions: new SessionStore(db),
     activityStore,
     team: TEAM,
@@ -84,7 +87,7 @@ function makeApp() {
       error: vi.fn(),
     },
   });
-  return { app, activityStore, db };
+  return { app, activityStore, db, tokens };
 }
 
 function bearer(token: string): RequestInit {

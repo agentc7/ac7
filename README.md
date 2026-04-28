@@ -60,8 +60,17 @@ ac7 serve
 # Open the web UI
 open http://127.0.0.1:8717
 
-# In another terminal — wrap a claude session with the runner.
-export AC7_TOKEN=ac7_your_slot_token
+# On any device that needs to connect to the broker
+# (the same laptop, a VM, a teammate's machine), enroll it:
+ac7 connect --url http://127.0.0.1:8717
+
+# The CLI prints a short code and a URL. Open the URL in a browser
+# where you're already signed in as a director, type the code, pick
+# which member this device connects as, and approve. The bearer
+# token is delivered to the CLI directly and saved to
+# ~/.config/ac7/auth.json — never copy-pasted between terminals.
+
+# Now wrap a claude session with the runner — picks up the saved token.
 ac7 claude-code
 ```
 
@@ -70,6 +79,12 @@ Preflight-check the environment before your first run:
 ```bash
 ac7 claude-code --doctor
 ```
+
+> **Old token-paste flow still works.** `--token <secret>` /
+> `AC7_TOKEN=ac7_…` env var still authenticate every CLI command —
+> useful for CI and scripted setups. The device-code flow above is
+> the default for human operators because the token plaintext never
+> crosses an untrusted channel.
 
 ## Authority model
 

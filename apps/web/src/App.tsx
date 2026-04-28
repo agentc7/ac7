@@ -16,7 +16,22 @@ import { useEffect } from 'preact/hooks';
 import { getClient } from './lib/client.js';
 import { bootstrap, logout, session } from './lib/session.js';
 import { Boot } from './routes/Boot.js';
+import { Enroll } from './routes/Enroll.js';
 import { Login } from './routes/Login.js';
+
+/**
+ * Top-level routes that bypass TeamShell. The device-code enrollment
+ * page is the only one today — operators land here from a CLI deep
+ * link and the page handles its own auth gate (anonymous → Login,
+ * non-admin → polite refusal, admin → approval form).
+ *
+ * `pathname === '/enroll'` is the exact match; sub-paths (`/enroll/foo`)
+ * fall through to TeamShell so the in-shell router can resolve them.
+ */
+function isEnrollRoute(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.location.pathname === '/enroll';
+}
 
 export function App() {
   // Bootstrap once on mount. Empty dep array is intentional — we only
@@ -24,6 +39,8 @@ export function App() {
   useEffect(() => {
     void bootstrap();
   }, []);
+
+  if (isEnrollRoute()) return <Enroll />;
 
   const state = session.value;
   if (state.status === 'loading') return <Boot />;

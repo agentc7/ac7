@@ -35,9 +35,17 @@ import { type JwtVerifier, looksLikeJwt } from './jwt.js';
 import type { Logger } from './logger.js';
 import type { LoadedMember, MemberStore } from './members.js';
 import { SESSION_COOKIE_NAME, type SessionStore } from './sessions.js';
+import type { TokenStore } from './tokens.js';
 
 export interface AuthDependencies {
   members: MemberStore;
+  /**
+   * Bearer-token store. Multi-token-per-member SQLite-backed lookup
+   * replaces the legacy `MemberStore.resolve`. Plumbed through here
+   * because the resolver needs to translate `Authorization: Bearer
+   * ac7_…` → token row → member, and update `last_used_at` on hit.
+   */
+  tokens: TokenStore;
   sessions: SessionStore;
   logger: Logger;
   /**
@@ -55,6 +63,13 @@ export type AuthBindings = {
     member: LoadedMember;
     /** Id of the session that authenticated, if any. Null on bearer auth. */
     sessionId: string | null;
+    /**
+     * Id of the token row that authenticated, if any. Null on session
+     * or JWT auth. Used by token-revoke endpoints so a member can
+     * "sign off this device" by revoking the token they're currently
+     * authenticating with.
+     */
+    tokenId: string | null;
   };
 };
 
@@ -64,7 +79,7 @@ export type AuthBindings = {
  * credentials" from "stale session" and redirect accordingly.
  */
 export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<AuthBindings> {
-  const { members, sessions, logger, jwt } = deps;
+  const { members, tokens, sessions, logger, jwt } = deps;
 
   return async (c, next) => {
     // Bearer token wins if present — keeps machine-path semantics
@@ -97,6 +112,7 @@ export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<
           }
           c.set('member', member);
           c.set('sessionId', null);
+          c.set('tokenId', null);
           await next();
           return;
         } catch (err) {
@@ -116,13 +132,33 @@ export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<
         }
       }
 
-      // Opaque bearer path — long-lived token from the team config.
-      const member = members.resolve(raw);
-      if (!member) {
+      // Opaque bearer path — multi-token store keyed on sha256(token).
+      // Unknown / expired hashes both surface as `unknown token` to
+      // avoid leaking which case applied. The token row binds to a
+      // member name; the member must still exist in the loaded store
+      // (the member could have been removed since this token was
+      // issued — fail closed).
+      const tokenRow = tokens.resolve(raw);
+      if (!tokenRow) {
         return c.json({ error: 'unknown token' }, 401);
       }
+      const member = members.findByName(tokenRow.memberName);
+      if (!member) {
+        logger.warn('token references unknown member', {
+          tokenId: tokenRow.id,
+          name: tokenRow.memberName,
+        });
+        // Auto-clean: a stale token whose member was deleted should
+        // not silently keep authenticating until the next purge.
+        tokens.revoke(tokenRow.id);
+        return c.json({ error: 'token references unknown member' }, 401);
+      }
+      // Bump last_used_at (debounced internally — we don't write on
+      // every request).
+      tokens.touch(tokenRow.id);
       c.set('member', member);
       c.set('sessionId', null);
+      c.set('tokenId', tokenRow.id);
       await next();
       return;
     }
@@ -150,6 +186,7 @@ export function createAuthMiddleware(deps: AuthDependencies): MiddlewareHandler<
       sessions.touch(sessionId);
       c.set('member', member);
       c.set('sessionId', sessionId);
+      c.set('tokenId', null);
       await next();
       return;
     }

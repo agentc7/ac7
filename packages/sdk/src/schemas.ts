@@ -543,11 +543,157 @@ export const ListMembersResponseSchema = z.object({
 
 export const RotateTokenResponseSchema = z.object({
   token: z.string(),
+  tokenInfo: z.lazy(() => TokenInfoSchema).optional(),
 });
 
 export const EnrollTotpResponseSchema = z.object({
   totpSecret: z.string(),
   totpUri: z.string(),
+});
+
+// ───────────────────────── Tokens (multi-token) ────────────────
+
+/**
+ * Token row id — uuid v4 string. Stable across the token's lifetime;
+ * used in revoke calls so an admin can revoke a specific device's
+ * token without affecting peer tokens for the same member.
+ */
+export const TokenIdSchema = z
+  .string()
+  .regex(
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    'token id must be a uuid',
+  );
+
+export const TokenLabelSchema = z.string().max(64).default('');
+
+export const TokenOriginSchema = z.enum(['bootstrap', 'rotate', 'enroll']);
+
+export const TokenInfoSchema = z.object({
+  id: TokenIdSchema,
+  memberName: NameSchema,
+  label: TokenLabelSchema,
+  origin: TokenOriginSchema,
+  createdAt: z.number().int().nonnegative(),
+  lastUsedAt: z.number().int().nonnegative().nullable(),
+  expiresAt: z.number().int().nonnegative().nullable(),
+  createdBy: NameSchema.nullable(),
+});
+
+export const ListTokensResponseSchema = z.object({
+  tokens: z.array(TokenInfoSchema),
+});
+
+// ───────────────────────── Device-code enrollment ──────────────
+
+/**
+ * Public-facing 8-char user code, formatted with a hyphen for
+ * readability (`XXXX-XXXX`). Crockford base32 alphabet (excludes
+ * I, L, O, U) keeps it unambiguous when read aloud or transcribed.
+ *
+ * The server emits this exact format; on input (approve/reject)
+ * we accept any case and any spacing/hyphenation that normalizes
+ * to 8 valid chars — this regex matches the canonical wire form.
+ */
+export const UserCodeSchema = z
+  .string()
+  .regex(
+    /^[0-9A-HJKMNP-TV-Z]{4}-[0-9A-HJKMNP-TV-Z]{4}$/,
+    'userCode must be `XXXX-XXXX` (Crockford base32)',
+  );
+
+/**
+ * Device code: high-entropy opaque secret. 32 raw bytes → 43-char
+ * base64url payload, prefixed for legibility in logs. Treated as a
+ * shared secret on the wire; the server stores only its sha256 hash.
+ */
+export const DeviceCodeSchema = z
+  .string()
+  .regex(
+    /^ac7-dc_[A-Za-z0-9_-]{40,64}$/,
+    'deviceCode must be in the canonical `ac7-dc_<base64url>` form',
+  );
+
+export const DeviceAuthorizationRequestSchema = z.object({
+  labelHint: z.string().max(64).optional(),
+});
+
+export const DeviceAuthorizationResponseSchema = z.object({
+  deviceCode: DeviceCodeSchema,
+  userCode: UserCodeSchema,
+  verificationUri: z.string().min(1),
+  verificationUriComplete: z.string().min(1),
+  expiresIn: z.number().int().positive(),
+  interval: z.number().int().positive(),
+});
+
+export const DeviceTokenRequestSchema = z.object({
+  deviceCode: DeviceCodeSchema,
+});
+
+export const DeviceTokenResponseSchema = z.object({
+  token: z.string(),
+  tokenId: TokenIdSchema,
+  member: TeammateSchema,
+});
+
+export const DeviceTokenErrorCodeSchema = z.enum([
+  'authorization_pending',
+  'slow_down',
+  'expired_token',
+  'access_denied',
+]);
+
+export const DeviceTokenErrorResponseSchema = z.object({
+  error: DeviceTokenErrorCodeSchema,
+  errorDescription: z.string().max(512).optional(),
+});
+
+export const PendingEnrollmentSchema = z.object({
+  userCode: UserCodeSchema,
+  labelHint: z.string().max(64),
+  sourceIp: z.string().max(64).nullable(),
+  sourceUa: z.string().max(512).nullable(),
+  createdAt: z.number().int().nonnegative(),
+  expiresAt: z.number().int().nonnegative(),
+});
+
+export const ListPendingEnrollmentsResponseSchema = z.object({
+  enrollments: z.array(PendingEnrollmentSchema),
+});
+
+/**
+ * Approve body. Discriminated union on `mode` so zod surfaces
+ * clear errors when a `bind` payload is missing `memberName` or a
+ * `create` payload is missing `role` / `permissions`. Inputs are
+ * lenient on label (optional, capped) but strict on names and roles.
+ */
+export const ApproveEnrollmentRequestSchema = z.discriminatedUnion('mode', [
+  z.object({
+    mode: z.literal('bind'),
+    userCode: UserCodeSchema,
+    memberName: NameSchema,
+    label: TokenLabelSchema.optional(),
+  }),
+  z.object({
+    mode: z.literal('create'),
+    userCode: UserCodeSchema,
+    memberName: NameSchema,
+    role: RoleSchema,
+    instructions: z.string().max(8192).default(''),
+    permissions: PermissionRefListSchema,
+    label: TokenLabelSchema.optional(),
+  }),
+]);
+
+export const ApproveEnrollmentResponseSchema = z.object({
+  member: TeammateSchema,
+  tokenInfo: TokenInfoSchema,
+});
+
+export const RejectEnrollmentRequestSchema = z.object({
+  userCode: UserCodeSchema,
+  reason: z.string().max(256).optional(),
 });
 
 // ───────────────────────── Briefing + session ─────────────────

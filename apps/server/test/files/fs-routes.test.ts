@@ -18,6 +18,7 @@ import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { createMemberStore } from '../../src/members.js';
 import { SessionStore } from '../../src/sessions.js';
+import { createTokenStoreFromMembers } from '../../src/tokens.js';
 
 const ALICE_TOKEN = 'ac7_test_alice_secret';
 const BOB_TOKEN = 'ac7_test_bob_secret';
@@ -61,6 +62,7 @@ function makeApp() {
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db);
+  const tokens = createTokenStoreFromMembers(db, members);
   const blobDir = mkdtempSync(join(tmpdir(), 'ac7-fsroute-'));
   tmpDirs.push(blobDir);
   const blobs = new LocalBlobStore(blobDir);
@@ -71,6 +73,7 @@ function makeApp() {
   const { app } = createApp({
     broker,
     members,
+    tokens,
     sessions,
     team: TEAM,
     files,

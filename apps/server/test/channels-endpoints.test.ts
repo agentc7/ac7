@@ -6,6 +6,7 @@ import { createSqliteChannelStore } from '../src/channels.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
+import { createTokenStoreFromMembers } from '../src/tokens.js';
 
 const ALICE = 'ac7_test_alice_secret';
 const BOB = 'ac7_test_bob_secret';
@@ -49,10 +50,12 @@ function makeApp() {
   ]);
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db);
+  const tokens = createTokenStoreFromMembers(db, members);
   const channels = createSqliteChannelStore(db);
   const { app } = createApp({
     broker,
     members,
+    tokens,
     sessions,
     team: TEAM,
     channels,
@@ -64,7 +67,7 @@ function makeApp() {
       error: vi.fn(),
     },
   });
-  return { app, broker, members, sessions, db, channels };
+  return { app, broker, members, sessions, db, channels, tokens };
 }
 
 function authed(token: string, body?: unknown, method?: string): RequestInit {

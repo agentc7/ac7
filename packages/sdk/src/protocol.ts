@@ -47,6 +47,22 @@ export const PATHS = {
   fsRm: '/fs/rm',
   fsMv: '/fs/mv',
   fsShared: '/fs/shared',
+  // Device-code enrollment (RFC 8628-shaped). `enroll` mints a
+  // device_code/user_code pair; `enrollPoll` is the device-side poll;
+  // `enrollPending` lists requests waiting for director approval;
+  // `enrollApprove` and `enrollReject` are director actions.
+  enroll: '/enroll',
+  enrollPoll: '/enroll/poll',
+  enrollPending: '/enroll/pending',
+  enrollApprove: '/enroll/approve',
+  enrollReject: '/enroll/reject',
+  /**
+   * The web-UI route an operator visits to enter a user code. Lives
+   * on the SPA, not the API — but pinned here so the broker can
+   * include the same canonical path in the device-authorization
+   * response without each consumer hard-coding it.
+   */
+  enrollVerify: '/enroll',
   // The helpers below compose `:id` / `:name` paths at runtime
   // rather than templating here, since `PATHS` is keyed by
   // identifier not URL.
@@ -101,6 +117,11 @@ export const MEMBER_PATHS = {
   enrollTotp: (name: string) => `/members/${encodeURIComponent(name)}/enroll-totp`,
   activity: (name: string) => `/members/${encodeURIComponent(name)}/activity`,
   activityStream: (name: string) => `/members/${encodeURIComponent(name)}/activity/stream`,
+  /** GET — list this member's active bearer tokens (members.manage or self). */
+  tokens: (name: string) => `/members/${encodeURIComponent(name)}/tokens`,
+  /** DELETE — revoke a specific token row by id (members.manage or self). */
+  token: (name: string, tokenId: string) =>
+    `/members/${encodeURIComponent(name)}/tokens/${encodeURIComponent(tokenId)}`,
 } as const;
 
 /**

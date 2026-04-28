@@ -20,6 +20,7 @@ import { HttpsConfigError, loadCustomCert, loadOrGenerateSelfSigned } from '../s
 import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
 import { SessionStore } from '../src/sessions.js';
+import { createTokenStoreFromMembers } from '../src/tokens.js';
 
 const OP_TOKEN = 'ac7_https_test_operator_token';
 
@@ -236,6 +237,7 @@ describe('secureCookies option', () => {
     });
     const db = openDatabase(':memory:');
     const sessions = new SessionStore(db);
+    const tokens = createTokenStoreFromMembers(db, members);
     // Dynamically import TOTP helpers so we don't ship them into
     // the stable part of the test fixtures.
     const { currentCode } = await import('../src/totp.js');
@@ -245,6 +247,7 @@ describe('secureCookies option', () => {
     const { app } = createApp({
       broker,
       members,
+      tokens,
       sessions,
       team: TEAM,
 

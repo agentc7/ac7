@@ -28,6 +28,7 @@ import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { createSqliteChannelStore } from './channels.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
+import { EnrollmentStore } from './enrollments.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
 import { createHttp2ServerFactory } from './https/server.js';
 import {
@@ -41,6 +42,7 @@ import { logger as defaultLogger, type Logger } from './logger.js';
 import { type ActivityStore, createSqliteActivityStore } from './member-activity.js';
 import {
   defaultHttpsConfig,
+  getKek,
   type HttpsConfig,
   type MemberStore,
   persistMemberStore,
@@ -53,10 +55,18 @@ import { PushSubscriptionStore } from './push/store.js';
 import { configureVapid, generateVapidKeys } from './push/vapid.js';
 import { SessionStore } from './sessions.js';
 import { SqliteEventLog } from './sqlite-event-log.js';
+import { createTokenStoreFromMembers } from './tokens.js';
 import { SERVER_VERSION } from './version.js';
 
 export { composeBriefing } from './briefing.js';
 export { type DatabaseSyncInstance, openDatabase } from './db.js';
+export {
+  DEFAULT_POLL_INTERVAL_S,
+  ENROLLMENT_TTL_MS,
+  EnrollmentStore,
+  formatUserCode,
+  normalizeUserCode,
+} from './enrollments.js';
 export { HttpsConfigError, type LoadedCert } from './https/store.js';
 export {
   createJwtVerifier,
@@ -108,6 +118,15 @@ export {
   type ObjectivesStore,
 } from './objectives.js';
 export { SESSION_COOKIE_NAME, SESSION_TTL_MS, SessionStore } from './sessions.js';
+export {
+  createTokenStoreFromMembers,
+  generateBearerToken,
+  hashRawToken,
+  type InsertTokenInput,
+  type InternalTokenRow,
+  TOKEN_HASH_PREFIX,
+  TokenStore,
+} from './tokens.js';
 export {
   currentCode as currentTotpCode,
   generateSecret as generateTotpSecret,
@@ -290,6 +309,28 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const db: DatabaseSyncInstance = openDatabase(dbPath);
   const eventLog = new SqliteEventLog(db);
   const sessions = new SessionStore(db);
+  // Bootstrap-migrated token store: every member's legacy `tokenHash`
+  // from ac7.json is copied in as an `origin = 'bootstrap'` row,
+  // idempotent across reboots. After this point the auth resolver
+  // reads only from `tokens`; the JSON `tokenHash` stays put as a
+  // human-readable record but is no longer load-bearing.
+  //
+  // Sysadmins who hand-edit ac7.json to add a member with a fresh
+  // plaintext `token` field flow through here on next boot —
+  // `loadTeamConfigFromFile` re-hashes, `MemberStore` exposes the
+  // hash, and we copy it in (label = 'legacy', so device-code-issued
+  // tokens stand out visually in the admin UI).
+  const tokens = createTokenStoreFromMembers(db, options.members);
+
+  // Pending-enrollment store for the device-code (`ac7 connect`)
+  // flow. KEK is the same one that wraps TOTP secrets and VAPID
+  // keys at rest — pulled from `members.getKek()` (set earlier in
+  // the entry point). Without a KEK the issued-token plaintext
+  // sits in the DB cleartext for the brief window between approval
+  // and the device's poll; the existing audit-completion path
+  // (`apps/server/src/index.ts`) refuses to boot without a KEK so
+  // production never hits that path.
+  const enrollments = new EnrollmentStore(db, { kek: getKek() });
   const pushStore = new PushSubscriptionStore(db);
   const objectivesStore = createSqliteObjectivesStore(db);
   const channelStore = createSqliteChannelStore(db);
@@ -315,6 +356,8 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   }
 
   sessions.purgeExpired();
+  enrollments.purgeExpired();
+  tokens.purgeExpired();
 
   // VAPID lifecycle: either the caller provided keys (from the
   // team config file), or we generate a fresh set and persist them
@@ -450,6 +493,8 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const { app, injectWebSocket } = createApp({
     broker,
     members: options.members,
+    tokens,
+    enrollments,
     sessions,
     team: options.team,
     objectives: objectivesStore,

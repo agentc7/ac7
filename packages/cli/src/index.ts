@@ -24,7 +24,9 @@
 import { Client } from '@agentc7/sdk/client';
 import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 import { parseDataFlag, parseSubcommandArgs } from './args.js';
+import { findAuthEntry } from './commands/auth-config.js';
 import { runClaudeCodeCommand } from './commands/claude-code.js';
+import { runConnectCommand } from './commands/connect.js';
 import { formatReport, runDoctor } from './commands/doctor.js';
 import { runEnrollCommand } from './commands/enroll.js';
 import { UsageError } from './commands/errors.js';
@@ -45,7 +47,9 @@ const USAGE = `ac7 cli v${CLI_VERSION}
 usage:
   ac7 setup       [--config-path <path>]                 first-run wizard (team + first admin + TOTP)
   ac7 member        list|create|update|delete [--config-path <path>]   offline user management (runs without the broker)
-  ac7 enroll      --member <name> [--config-path <path>]   (re-)enroll a user for web UI login
+  ac7 connect     [--url <broker>] [--label <hint>] [--no-write] [--quiet]
+                                    enroll this device with the broker (device-code flow); writes ~/.config/ac7/auth.json on approval
+  ac7 enroll      --member <name> [--config-path <path>]   (re-)enroll a user for web UI login (TOTP — separate from 'ac7 connect')
   ac7 rotate      --member <name> [--config-path <path>]   rotate a user's bearer token (atomic; prints new token once)
   ac7 quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
   ac7 telemetry   enable|disable|preview|rotate|status       opt-in, zero-PII, off-by-default install telemetry
@@ -85,9 +89,18 @@ function getBoolean(values: Record<string, unknown>, key: string): boolean {
 function makeClient(values: Record<string, unknown>): Client {
   const url =
     getString(values, 'url') ?? process.env[ENV.url] ?? `http://127.0.0.1:${DEFAULT_PORT}`;
-  const token = getString(values, 'token') ?? process.env[ENV.token];
+  // Token resolution order: explicit flag → env var → saved auth.json
+  // entry for this URL. The saved-entry path closes the loop with
+  // `ac7 connect`: once an operator has approved a device, the token
+  // is on disk and `ac7 push` / `ac7 roster` / `ac7 claude-code`
+  // pick it up without touching env vars.
+  let token = getString(values, 'token') ?? process.env[ENV.token];
   if (!token) {
-    fail(`--token or ${ENV.token} is required`);
+    const saved = findAuthEntry(url);
+    if (saved) token = saved.token;
+  }
+  if (!token) {
+    fail(`--token or ${ENV.token} is required (or run \`ac7 connect\` to enroll this device).`);
   }
   return new Client({ url, token });
 }
@@ -115,6 +128,9 @@ async function main(): Promise<void> {
       return;
     case 'enroll':
       await handleEnroll(rest);
+      return;
+    case 'connect':
+      await handleConnect(rest);
       return;
     case 'rotate':
       await handleRotate(rest);
@@ -195,6 +211,37 @@ async function handleEnroll(args: string[]): Promise<void> {
         configPath: getString(values, 'config-path') ?? getString(values, 'config'),
       },
       (line) => log(line),
+    );
+  } catch (err) {
+    if (err instanceof UsageError) fail(err.message, 2);
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function handleConnect(args: string[]): Promise<void> {
+  const { values } = parseSubcommandArgs(args, {
+    url: { type: 'string' },
+    label: { type: 'string', short: 'l' },
+    'no-write': { type: 'boolean' },
+    quiet: { type: 'boolean', short: 'q' },
+    'auth-config': { type: 'string' },
+    help: { type: 'boolean', short: 'h' },
+  });
+  if (values.help === true) {
+    process.stdout.write(USAGE);
+    return;
+  }
+  try {
+    await runConnectCommand(
+      {
+        url: getString(values, 'url'),
+        label: getString(values, 'label'),
+        noWrite: getBoolean(values, 'no-write'),
+        quiet: getBoolean(values, 'quiet'),
+        authConfigPath: getString(values, 'auth-config'),
+      },
+      (line) => process.stdout.write(`${line}\n`),
+      (line) => process.stderr.write(`${line}\n`),
     );
   } catch (err) {
     if (err instanceof UsageError) fail(err.message, 2);

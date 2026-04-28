@@ -14,6 +14,7 @@ import { shouldPush } from '../src/push/policy.js';
 import { PushSubscriptionStore } from '../src/push/store.js';
 import { generateVapidKeys } from '../src/push/vapid.js';
 import { SessionStore } from '../src/sessions.js';
+import { createTokenStoreFromMembers } from '../src/tokens.js';
 
 // Mock web-push sendNotification so no real network traffic happens.
 //
@@ -423,10 +424,12 @@ describe('push HTTP endpoints', () => {
     ]);
     const db = openDatabase(':memory:');
     const sessions = new SessionStore(db);
+    const tokens = createTokenStoreFromMembers(db, members);
     const pushStore = new PushSubscriptionStore(db);
     const { app } = createApp({
       broker,
       members,
+      tokens,
       sessions,
       team: TEAM,
 

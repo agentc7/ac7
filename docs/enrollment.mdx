@@ -1,0 +1,263 @@
+---
+title: Device enrollment
+description: How `ac7 connect` lets a CLI on any device join the broker without copy-pasting a bearer token.
+---
+
+# Device enrollment
+
+`ac7 connect` is the recommended onboarding flow for any CLI talking
+to the broker — your own laptop, a CI runner, a VM, a teammate's
+workstation. It's modeled on RFC 8628 (OAuth 2.0 Device Authorization
+Grant), the same handshake `gh auth login` uses, with one tweak:
+the broker is its own identity provider, so there's no third party
+involved.
+
+## Why not just paste a token?
+
+The "create a member, copy the token, paste it into your VM's config"
+flow has been the default until now. It works, but it has a sharp
+edge: at some point the bearer plaintext exists in someone's clipboard,
+terminal scrollback, screenshot, IM thread, or Slack DM. Any of those
+surfaces can leak; some get cached and indexed by tools the operator
+has no control over.
+
+Device-code enrollment closes the gap by routing the plaintext
+**directly from the broker to the CLI on the connecting device** —
+the director who approves never sees it, no human types it, and no
+chat-style channel ever carries it.
+
+## The flow
+
+```
+┌────────────────────┐         ┌────────────────────┐         ┌────────────────────┐
+│ Operator's CLI     │         │ ac7 broker         │         │ Director's browser │
+│ (the new device)   │         │                    │         │ (TOTP-signed-in)   │
+└─────────┬──────────┘         └─────────┬──────────┘         └─────────┬──────────┘
+          │                              │                              │
+          │  1. POST /enroll             │                              │
+          ├─────────────────────────────►│                              │
+          │  ← deviceCode + userCode     │                              │
+          │◄─────────────────────────────┤                              │
+          │                              │                              │
+          │  2. show URL + userCode to   │                              │
+          │     the operator             │                              │
+          │                              │                              │
+          │  3. poll /enroll/poll every  │                              │
+          │     interval seconds         │                              │
+          │  ──────────► ──────────►     │                              │
+          │  ← authorization_pending     │                              │
+          │                              │                              │
+          │                              │  4. director visits /enroll, │
+          │                              │     types userCode, picks    │
+          │                              │     bind/create, approves    │
+          │                              │  ◄─────────────────────────  │
+          │                              │                              │
+          │  5. next poll                │                              │
+          │  ────────────►               │                              │
+          │  ← bearer plaintext (one-shot)                              │
+          │◄─────────────────────────────┤                              │
+          │                              │                              │
+          │  6. CLI saves to             │                              │
+          │     ~/.config/ac7/auth.json  │                              │
+          │     at mode 0o600            │                              │
+          │                              │                              │
+└──────────────────────────────┴──────────────────────────────┘
+```
+
+### From the operator's side
+
+```bash
+$ ac7 connect --url https://broker.example.com
+
+  ┌─────────────────────────────────────────────────────┐
+  │  visit:  https://broker.example.com/enroll?code=…   │
+  │  code:   KQ4M-7P2H                                  │
+  │  expires in 300s                                    │
+  └─────────────────────────────────────────────────────┘
+  waiting for approval... (press Ctrl-C to cancel)
+```
+
+The operator can ignore the code and just send the URL — the broker
+prefills the code via the query string. Both forms are equivalent;
+the code is the human-typeable fallback.
+
+The CLI polls `/enroll/poll` every 5 seconds (RFC 8628 default),
+respecting any `slow_down` response from the broker. When the
+director approves, the CLI's next poll resolves with the bearer
+token plaintext — written immediately to `~/.config/ac7/auth.json`
+at mode `0o600`. The plaintext is never echoed to stdout in the
+default flow (use `--no-write` to print it instead, an escape hatch
+for testing).
+
+### From the director's side
+
+The director — already signed in to the broker via TOTP — visits
+`/enroll` (or follows a deep link with `?code=…` prefilled), types
+the user code, and is shown:
+
+- **Source IP / User-Agent** — captured at mint time. Helps spot a
+  request from somewhere unexpected.
+- **Label hint** — what the operator suggested. Defaults to the VM's
+  hostname. The director can override.
+- **Bind to existing member** — pick from the team roster. Adds a
+  new bearer token to that member's existing tokens; their other
+  devices keep working.
+- **Create new member** — pick a name, role title/description,
+  permissions preset, and (optional) personal instructions. The
+  member is created on approval.
+
+After approval the director sees a confirmation banner. The CLI on
+the operator's side resolves on its next poll.
+
+## Token storage
+
+Each enrollment mints a new row in the broker's `tokens` SQLite table
+with `origin = 'enroll'` plus a label. The CLI saves it to
+`~/.config/ac7/auth.json`:
+
+```json
+{
+  "schema": 1,
+  "entries": [
+    {
+      "url": "https://broker.example.com",
+      "token": "ac7_…",
+      "savedAt": 1714255200000
+    }
+  ]
+}
+```
+
+File mode is `0o600` in a `0o700` directory; the path varies by OS:
+
+| OS         | Path                                                      |
+|------------|-----------------------------------------------------------|
+| Linux/BSD  | `$XDG_CONFIG_HOME/ac7/auth.json` (default `~/.config/ac7/`)|
+| macOS      | `~/Library/Application Support/ac7/auth.json`             |
+| Windows    | `%APPDATA%\ac7\auth.json`                                 |
+
+The CLI's `makeClient()` resolves bearer tokens in this order:
+
+1. `--token <secret>` flag
+2. `AC7_TOKEN` environment variable
+3. The saved entry in `auth.json` for the resolved broker URL
+
+Existing CI / scripted setups using env vars or `--token` keep working
+unchanged.
+
+## Multi-token
+
+A member can hold many bearer tokens at once. Each enrollment adds
+one — operators don't need to share devices, and director rotation
+no longer means "kick everyone offline."
+
+Visible in the web UI under each member's Manage tab:
+
+- **Label** — `prod-vm-east`, `laptop`, etc.
+- **Origin** — `bootstrap` (came from `ac7.json`), `rotated` (from
+  `ac7 rotate`), or `enroll` (from device-code).
+- **Created / last used / expires** — for forensic review.
+- **Revoke** — single-row delete, takes effect immediately.
+
+The legacy `ac7 rotate` command still exists, with one semantic
+shift: it now revokes **every** active token for the named member
+and mints a fresh one. Use it as the break-glass for "I think a
+token leaked, restart from a clean slate." For everyday "add a new
+device," use `ac7 connect`.
+
+## RFC 8628 alignment
+
+The endpoints follow RFC 8628 wire shape so OAuth-aware tooling
+recognizes the responses:
+
+- `POST /enroll` — device authorization request. Returns `deviceCode`,
+  `userCode`, `verificationUri`, `verificationUriComplete`,
+  `expiresIn`, `interval`.
+- `POST /enroll/poll` — the device-side token endpoint. Body
+  `{deviceCode}`. Success returns 200 with the bearer token; failures
+  return 400 + JSON body `{error: <code>}` where `<code>` is one of
+  the four canonical states:
+  - `authorization_pending` — keep polling
+  - `slow_down` — increment poll interval by 5s
+  - `expired_token` — TTL elapsed, restart
+  - `access_denied` — director rejected
+- `GET /enroll/pending` — director-only listing
+- `POST /enroll/approve` / `POST /enroll/reject` — director-only
+
+Notable adaptations from vanilla RFC 8628:
+
+- No `client_id` — the broker is its own IdP, every enrollment is
+  treated equally.
+- `POST` everywhere (some implementations use form-encoded GETs).
+- The `device_code` plaintext is treated as a shared secret in
+  transit; the broker stores only its sha256 hash.
+
+## Security posture
+
+- **Plaintext in transit, hash at rest.** The device code is a
+  256-bit random plaintext shown to the CLI; the server stores
+  `sha256(device_code)` only. The user code is shown to humans
+  but is too short to be a secret on its own — the rate limit
+  on `/enroll` (10 mints/IP/hour) and the 5-min single-use TTL
+  bound brute-force.
+- **KEK at rest for the bearer plaintext.** Between approval and
+  the device's next poll, the issued bearer token plaintext sits
+  briefly in the `pending_enrollments` row, AES-256-GCM-encrypted
+  under the same KEK that wraps TOTP secrets. Auto-deleted after
+  one read or 5min, whichever comes first.
+- **Single-use semantics.** A successful poll deletes the row in
+  the same transaction. Replays return `expired_token`.
+- **Per-IP rate limiting on mint.** 10 enrollments/IP/hour;
+  rejected with 429 + `Retry-After`.
+- **Constant-time-ish lookup.** Both `device_code_hash` and
+  `user_code` are SQL primary-key / UNIQUE indexed lookups, so
+  wall-clock cost doesn't reveal whether a row exists.
+- **Director-side gating.** Approve/reject require `members.manage`.
+  An operator running `ac7 connect` cannot approve themselves; the
+  flow forces a separate identity (the director, signed in via
+  TOTP) into the loop.
+- **Source IP / UA visible to the director.** Display only — never
+  enforced. Helps spot a request from an unexpected origin before
+  approving.
+
+## Troubleshooting
+
+**`enrollment expired (5 min TTL)`** — the operator didn't get the
+director to approve in time. Run `ac7 connect` again to start fresh.
+
+**`rejected by director`** — the director hit Reject. Check with
+them why; if it was a misclick, run `ac7 connect` again.
+
+**`broker rate-limited this device (HTTP 429)`** — too many mint
+requests from this IP in the last hour. Wait or use a different IP;
+this is the spam-prevention guardrail.
+
+**`failed to reach broker at <url>`** — network / DNS / TLS issue.
+Verify the URL with `curl <url>/healthz`; for self-signed certs in
+LAN deployments you'll need to use the broker's HTTPS port and
+trust the cert.
+
+**`--token` / `AC7_TOKEN` still required after `ac7 connect`** —
+your shell is preferring the env var over the saved entry. Either
+unset `AC7_TOKEN` or invoke the CLI with the URL that matches the
+saved entry exactly (the lookup is exact-match on URL, no trailing-
+slash normalization yet).
+
+## Break-glass: when device-code isn't an option
+
+The legacy print-and-paste path still works:
+
+```bash
+# Director, on any machine with the team config:
+ac7 rotate --member alice
+# Prints the new plaintext token once. Save it. Old tokens for
+# `alice` are revoked in the same step.
+
+# Operator, on the device:
+export AC7_TOKEN='ac7_…'
+ac7 claude-code
+```
+
+Reach for this when the director can't be reached for live approval —
+e.g. an air-gapped CI runner that needs an environment-variable
+secret. For everything else, prefer `ac7 connect`.

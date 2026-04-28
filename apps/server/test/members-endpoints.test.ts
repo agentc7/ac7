@@ -14,6 +14,7 @@ import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
+import { createTokenStoreFromMembers } from '../src/tokens.js';
 
 const ADMIN_TOKEN = 'ac7_members_test_admin_token';
 const OPERATOR_TOKEN = 'ac7_members_test_operator_token';
@@ -41,6 +42,7 @@ interface Harness {
   app: ReturnType<typeof createApp>['app'];
   persistMembers: ReturnType<typeof vi.fn>;
   broker: Broker;
+  tokens: ReturnType<typeof createTokenStoreFromMembers>;
 }
 
 function makeApp(): Harness {
@@ -72,17 +74,19 @@ function makeApp(): Harness {
   broker.seedMembers(members.members());
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db);
+  const tokens = createTokenStoreFromMembers(db, members);
   const persistMembers = vi.fn();
   const { app } = createApp({
     broker,
     members,
+    tokens,
     sessions,
     team: TEAM,
     version: '0.0.0',
     persistMembers,
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
   });
-  return { app, persistMembers, broker };
+  return { app, persistMembers, broker, tokens };
 }
 
 function authed(token: string): HeadersInit {

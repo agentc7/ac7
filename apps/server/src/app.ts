@@ -27,11 +27,14 @@ import { PATHS, PROTOCOL_HEADER, PROTOCOL_VERSION } from '@agentc7/sdk/protocol'
 import {
   ActivityKindSchema,
   AddChannelMemberRequestSchema,
+  ApproveEnrollmentRequestSchema,
   CancelObjectiveRequestSchema,
   CompleteObjectiveRequestSchema,
   CreateChannelRequestSchema,
   CreateMemberRequestSchema,
   CreateObjectiveRequestSchema,
+  DeviceAuthorizationRequestSchema,
+  DeviceTokenRequestSchema,
   DiscussObjectiveRequestSchema,
   FsMkdirRequestSchema,
   FsMoveRequestSchema,
@@ -42,6 +45,7 @@ import {
   PushPayloadSchema,
   PushSubscriptionPayloadSchema,
   ReassignObjectiveRequestSchema,
+  RejectEnrollmentRequestSchema,
   RenameChannelRequestSchema,
   TotpLoginRequestSchema,
   UpdateMemberRequestSchema,
@@ -70,12 +74,12 @@ import { deleteCookie, setCookie } from 'hono/cookie';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
+import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import { type FilesystemStore, FsError, type ViewerContext } from './files/index.js';
 import type { JwtVerifier } from './jwt.js';
 import type { Logger } from './logger.js';
 import type { ActivityStore } from './member-activity.js';
 import {
-  generateMemberToken,
   type LoadedMember,
   MemberLoadError,
   type MemberStore,
@@ -86,11 +90,27 @@ import {
 import { ObjectivesError, type ObjectivesStore } from './objectives.js';
 import type { PushSubscriptionStore } from './push/store.js';
 import { SESSION_COOKIE_NAME, SESSION_TTL_MS, type SessionStore } from './sessions.js';
+import { generateBearerToken, type TokenStore } from './tokens.js';
 import { generateSecret, otpauthUri, verifyCode as verifyTotpCode } from './totp.js';
 
 export interface AppOptions {
   broker: Broker;
   members: MemberStore;
+  /**
+   * Multi-token bearer-credential store. Authoritative for live
+   * authentication after the bootstrap migration in `runServer`.
+   * Required: every authenticated bearer-token request resolves
+   * here, and admin endpoints (rotate, list-tokens, revoke,
+   * device-code approve) all write here.
+   */
+  tokens: TokenStore;
+  /**
+   * Device-code enrollment store. The `/enroll*` endpoints register
+   * iff this is provided. Tests that aren't exercising the
+   * onboarding flow can omit it; production always wires it up via
+   * `runServer`.
+   */
+  enrollments?: EnrollmentStore;
   sessions: SessionStore;
   team: Team;
   /**
@@ -245,6 +265,15 @@ const API_PATH_PREFIXES = [
   PATHS.pushVapidPublicKey,
   PATHS.pushSubscriptions,
   PATHS.objectives,
+  // Note: PATHS.enroll (`/enroll`) is intentionally NOT here. The
+  // SPA serves the verification page at the same path; only the
+  // POST verb is API-routed. The four sub-endpoints below ARE
+  // API-only — they should 404 when accessed via GET, not return
+  // the SPA's index.html.
+  PATHS.enrollPoll,
+  PATHS.enrollPending,
+  PATHS.enrollApprove,
+  PATHS.enrollReject,
   '/agents',
   '/fs',
 ] as const;
@@ -276,6 +305,8 @@ export function createApp(options: AppOptions): CreatedApp {
   const {
     broker,
     members,
+    tokens,
+    enrollments,
     sessions,
     team,
     objectives,
@@ -305,6 +336,7 @@ export function createApp(options: AppOptions): CreatedApp {
 
   const auth = createAuthMiddleware({
     members,
+    tokens,
     sessions,
     logger,
     ...(jwt !== undefined ? { jwt } : {}),
@@ -1922,7 +1954,7 @@ export function createApp(options: AppOptions): CreatedApp {
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
     }
-    const token = generateMemberToken();
+    const token = generateBearerToken();
     try {
       members.addMember({
         name: parsed.data.name,
@@ -1935,6 +1967,19 @@ export function createApp(options: AppOptions): CreatedApp {
     } catch (err) {
       return c.json({ error: err instanceof Error ? err.message : 'failed to add member' }, 409);
     }
+    // Mirror the bootstrap token into the SQLite token store so the
+    // resolver finds it on the very next request. Without this the
+    // newly-minted plaintext would 401 because nothing in `tokens`
+    // would match its hash. `origin = 'bootstrap'` matches the JSON-
+    // initiated path; the row is labeled 'initial' so directors
+    // listing tokens can see this is the one created at member-add.
+    tokens.insert({
+      memberName: parsed.data.name,
+      rawToken: token,
+      label: 'initial',
+      origin: 'bootstrap',
+      createdBy: member.name,
+    });
     persistMembers();
     const teammate: Teammate = {
       name: parsed.data.name,
@@ -2051,8 +2096,18 @@ export function createApp(options: AppOptions): CreatedApp {
       if (err instanceof MemberLoadError) return c.json({ error: err.message }, 404);
       throw err;
     }
+    // Nuke every bearer token belonging to the deleted member —
+    // otherwise a stale token in someone's clipboard could keep
+    // authenticating as a now-orphaned identity. Auth middleware
+    // would catch this anyway (member not found → 401), but
+    // proactive deletion keeps the table clean.
+    const revoked = tokens.revokeAllForMember(parsedName.data);
     persistMembers();
-    logger.info('member deleted', { name: parsedName.data, deletedBy: member.name });
+    logger.info('member deleted', {
+      name: parsedName.data,
+      deletedBy: member.name,
+      tokensRevoked: revoked,
+    });
     return c.body(null, 204);
   });
 
@@ -2069,17 +2124,488 @@ export function createApp(options: AppOptions): CreatedApp {
     if (!hasPermission(member.permissions, 'members.manage') && member.name !== target.name) {
       return c.json({ error: 'rotate-token requires members.manage, or self' }, 403);
     }
-    const token = generateMemberToken();
+    // Multi-token rotation: in the legacy single-token world rotate
+    // meant "replace the only token." Now it means "issue a fresh
+    // token AND invalidate every other active token for this
+    // member" — the canonical break-glass posture for "I think a
+    // token leaked, restart from a clean slate." Members who want
+    // to add a token without nuking peers should use the
+    // device-code flow (`ac7 connect` → director approve) which
+    // calls `tokens.insert` on its own.
+    const token = generateBearerToken();
+    const before = tokens.listForMember(parsedName.data);
+    for (const t of before) {
+      tokens.revoke(t.id);
+    }
+    const newRow = tokens.insert({
+      memberName: parsedName.data,
+      rawToken: token,
+      label: 'rotated',
+      origin: 'rotate',
+      createdBy: member.name,
+    });
+    // Keep MemberStore.rotateToken in sync so the JSON config (still
+    // the canonical place for sysadmin hand-edits) shows the latest
+    // hash. Treat any failure as soft — the SQLite store is the
+    // resolver's source of truth, the JSON is just a record.
     try {
       members.rotateToken(parsedName.data, token);
     } catch (err) {
-      if (err instanceof MemberLoadError) return c.json({ error: err.message }, 404);
-      throw err;
+      logger.warn('rotate: members.rotateToken failed (SQLite tokens still updated)', {
+        name: parsedName.data,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     persistMembers();
-    logger.info('token rotated', { name: parsedName.data, rotatedBy: member.name });
-    return c.json({ token });
+    logger.info('token rotated', {
+      name: parsedName.data,
+      rotatedBy: member.name,
+      tokenId: newRow.id,
+      revokedPeers: before.length,
+    });
+    // `tokenInfo` strips the hash before going on the wire (the
+    // schema's `TokenInfoSchema` doesn't include it).
+    const { hash: _hash, ...publicTokenInfo } = newRow;
+    return c.json({ token, tokenInfo: publicTokenInfo });
   });
+
+  // ─── Multi-token management ──────────────────────────────────
+  //
+  // GET  /members/:name/tokens           — list active token rows
+  // DELETE /members/:name/tokens/:id     — revoke one row
+  //
+  // Both gate on `members.manage` OR self. Plaintext is never
+  // surfaced — that lives only in the issuance responses (rotate /
+  // device-code approve). Listing is what lets a director spot a
+  // token they don't recognize before it's used, and revoke a
+  // specific device's binding without nuking the rest.
+
+  app.get(`${PATHS.members}/:name/tokens`, auth, (c) => {
+    const caller = c.get('member');
+    const targetRaw = c.req.param('name');
+    const parsedName = NameSchema.safeParse(targetRaw);
+    if (!parsedName.success) return c.json({ error: 'invalid member name' }, 400);
+    const target = members.findByName(parsedName.data);
+    if (!target) return c.json({ error: `no such member: ${parsedName.data}` }, 404);
+    if (!hasPermission(caller.permissions, 'members.manage') && caller.name !== target.name) {
+      return c.json({ error: 'listing tokens requires members.manage, or self' }, 403);
+    }
+    const list = tokens.listForMember(parsedName.data);
+    return c.json({ tokens: list });
+  });
+
+  app.delete(`${PATHS.members}/:name/tokens/:id`, auth, (c) => {
+    const caller = c.get('member');
+    const targetRaw = c.req.param('name');
+    const tokenIdRaw = c.req.param('id');
+    const parsedName = NameSchema.safeParse(targetRaw);
+    if (!parsedName.success) return c.json({ error: 'invalid member name' }, 400);
+    const target = members.findByName(parsedName.data);
+    if (!target) return c.json({ error: `no such member: ${parsedName.data}` }, 404);
+    if (!hasPermission(caller.permissions, 'members.manage') && caller.name !== target.name) {
+      return c.json({ error: 'revoking tokens requires members.manage, or self' }, 403);
+    }
+    const row = tokens.findById(tokenIdRaw);
+    if (!row || row.memberName !== parsedName.data) {
+      // Don't leak whether the id exists for a different member; just
+      // 404 either way.
+      return c.json({ error: 'no such token' }, 404);
+    }
+    // Last-token guard: if revoking would leave the member with zero
+    // active tokens AND the member is the last remaining admin, the
+    // team would be lockable. Members with any non-admin role can
+    // still revoke their own last token (they'd just rely on TOTP /
+    // device-code re-issue afterward). The strict-loss case mirrors
+    // the existing last-admin guard on member delete.
+    const remaining = tokens.listForMember(parsedName.data).filter((t) => t.id !== row.id);
+    if (
+      remaining.length === 0 &&
+      target.permissions.includes('members.manage') &&
+      members.members().filter((m) => m.permissions.includes('members.manage')).length <= 1
+    ) {
+      return c.json(
+        {
+          error:
+            'cannot revoke the last token of the last admin — promote another member to admin first',
+        },
+        409,
+      );
+    }
+    tokens.revoke(row.id);
+    logger.info('token revoked', {
+      name: parsedName.data,
+      tokenId: row.id,
+      revokedBy: caller.name,
+    });
+    return c.body(null, 204);
+  });
+
+  // ─── Device-code enrollment (RFC 8628-shaped) ─────────────────
+  //
+  // Five endpoints implement the gh-auth-style "operator types a
+  // short code, director approves" flow:
+  //
+  //   POST   /enroll          — anonymous; mint device_code/user_code
+  //   POST   /enroll/poll     — anonymous; CLI polls with device_code
+  //   GET    /enroll/pending  — director; list pending requests
+  //   POST   /enroll/approve  — director; approve a user_code
+  //   POST   /enroll/reject   — director; reject a user_code
+  //
+  // The director endpoints gate on `members.manage` (same as member
+  // CRUD), since approval can mint a new member with arbitrary
+  // role/permissions.
+  //
+  // RFC 8628 §3.5 token-endpoint shape: success returns 200 with the
+  // bearer token, the four pending/error states return 400 with
+  // `{error: <code>}` so OAuth-aware clients recognize them.
+  if (enrollments) {
+    const enrollmentsStore = enrollments;
+
+    /**
+     * Per-IP rate limit for `POST /enroll`. Anonymous endpoint, so
+     * this is the first line of defense against an attacker spamming
+     * the server to enumerate user codes (every mint reduces the
+     * remaining 32^8 keyspace by one). Same sliding-window pattern
+     * the TOTP path uses; in-memory only — restart resets, fine for
+     * single-process scale.
+     */
+    const ENROLL_MINT_MAX = 10;
+    const ENROLL_MINT_WINDOW_MS = 60 * 60 * 1000;
+    interface MintBucket {
+      count: number;
+      firstAt: number;
+    }
+    const mintBuckets = new Map<string, MintBucket>();
+
+    function ipKey(c: Context<AppBindings>): string {
+      // Hono doesn't expose remoteAddress directly; pull from the
+      // standard headers a reverse proxy sets, falling back to a
+      // sentinel. The header chain is `Forwarded` → `X-Forwarded-For`
+      // → 'unknown'. Header values are NOT trusted for security,
+      // only for rate-limit bucketing — an attacker who can spoof
+      // `X-Forwarded-For` is already inside the trust boundary
+      // around the broker host.
+      const forwarded = c.req.header('Forwarded');
+      if (forwarded) {
+        const match = forwarded.match(/for=("?\[?[^;",\]]+\]?"?)/i);
+        if (match?.[1]) return match[1].replace(/^"|"$/g, '');
+      }
+      const xff = c.req.header('X-Forwarded-For');
+      if (xff) return xff.split(',')[0]?.trim() || 'unknown';
+      const real = c.req.header('X-Real-IP');
+      if (real) return real;
+      return 'unknown';
+    }
+
+    function checkMintLimit(key: string): { ok: true } | { ok: false; retryAfter: number } {
+      const t = now();
+      const bucket = mintBuckets.get(key);
+      if (!bucket || t - bucket.firstAt >= ENROLL_MINT_WINDOW_MS) {
+        mintBuckets.set(key, { count: 1, firstAt: t });
+        return { ok: true };
+      }
+      bucket.count += 1;
+      if (bucket.count > ENROLL_MINT_MAX) {
+        return {
+          ok: false,
+          retryAfter: Math.ceil((ENROLL_MINT_WINDOW_MS - (t - bucket.firstAt)) / 1000),
+        };
+      }
+      return { ok: true };
+    }
+
+    /**
+     * Compose the verification URI we hand back to the device. The
+     * SPA route is `/enroll`; the prefilled deep link adds `?code=`
+     * with the formatted user code. Both forms are absolute paths
+     * (no scheme/host) so the CLI can join them with whatever
+     * broker URL it was configured with — works identically across
+     * localhost / LAN / Tailscale Funnel deployments.
+     */
+    function verificationUriFor(formattedCode: string): {
+      uri: string;
+      uriComplete: string;
+    } {
+      const base = PATHS.enrollVerify;
+      return {
+        uri: base,
+        uriComplete: `${base}?code=${encodeURIComponent(formattedCode)}`,
+      };
+    }
+
+    app.post(PATHS.enroll, async (c) => {
+      const ip = ipKey(c);
+      const limit = checkMintLimit(ip);
+      if (!limit.ok) {
+        c.header('Retry-After', String(limit.retryAfter));
+        return c.json(
+          { error: 'too many enrollment requests; try again later', retryAfter: limit.retryAfter },
+          429,
+        );
+      }
+      const raw = await c.req.json().catch(() => ({}));
+      const parsed = DeviceAuthorizationRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid enroll payload', details: parsed.error.issues }, 400);
+      }
+      const sourceIp = ip === 'unknown' ? null : ip;
+      const sourceUa = c.req.header('User-Agent') ?? null;
+      const minted = enrollmentsStore.mint({
+        sourceIp,
+        sourceUa,
+        ...(parsed.data.labelHint !== undefined ? { labelHint: parsed.data.labelHint } : {}),
+      });
+      const verify = verificationUriFor(minted.userCodeFormatted);
+      logger.info('enrollment minted', {
+        userCode: minted.userCodeFormatted,
+        sourceIp,
+        labelHint: parsed.data.labelHint ?? '',
+      });
+      return c.json({
+        deviceCode: minted.deviceCode,
+        userCode: minted.userCodeFormatted,
+        verificationUri: verify.uri,
+        verificationUriComplete: verify.uriComplete,
+        expiresIn: minted.expiresIn,
+        interval: minted.interval,
+      });
+    });
+
+    app.post(PATHS.enrollPoll, async (c) => {
+      const raw = await c.req.json().catch(() => null);
+      const parsed = DeviceTokenRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid poll payload', details: parsed.error.issues }, 400);
+      }
+      const outcome = enrollmentsStore.pollByDeviceCode(parsed.data.deviceCode);
+      switch (outcome.kind) {
+        case 'authorization_pending':
+          return c.json({ error: 'authorization_pending' as const }, 400);
+        case 'slow_down':
+          return c.json({ error: 'slow_down' as const }, 400);
+        case 'expired_token':
+          return c.json({ error: 'expired_token' as const }, 400);
+        case 'access_denied': {
+          const body: { error: 'access_denied'; errorDescription?: string } = {
+            error: 'access_denied',
+          };
+          if (outcome.reason !== null) body.errorDescription = outcome.reason;
+          return c.json(body, 400);
+        }
+        case 'approved': {
+          const member = members.findByName(outcome.memberName);
+          if (!member) {
+            // Member was deleted between approval and poll — token
+            // would auth-fail at first use anyway. Return expired_token
+            // to keep the wire shape deterministic; logs flag the
+            // anomaly for forensic review.
+            logger.warn('approved enrollment references unknown member', {
+              member: outcome.memberName,
+              tokenId: outcome.tokenId,
+            });
+            // Best-effort: revoke the orphan token.
+            tokens.revoke(outcome.tokenId);
+            return c.json({ error: 'expired_token' as const }, 400);
+          }
+          logger.info('enrollment poll resolved', {
+            member: outcome.memberName,
+            tokenId: outcome.tokenId,
+          });
+          return c.json({
+            token: outcome.tokenPlaintext,
+            tokenId: outcome.tokenId,
+            member: {
+              name: member.name,
+              role: member.role,
+              permissions: member.permissions,
+            },
+          });
+        }
+      }
+    });
+
+    app.get(PATHS.enrollPending, auth, (c) => {
+      const caller = c.get('member');
+      if (!hasPermission(caller.permissions, 'members.manage')) {
+        return c.json({ error: 'listing enrollments requires members.manage' }, 403);
+      }
+      const rows = enrollmentsStore.listPending();
+      return c.json({
+        enrollments: rows.map((r) => ({
+          userCode: formatUserCode(r.userCode),
+          labelHint: r.labelHint,
+          sourceIp: r.sourceIp,
+          sourceUa: r.sourceUa,
+          createdAt: r.createdAt,
+          expiresAt: r.expiresAt,
+        })),
+      });
+    });
+
+    app.post(PATHS.enrollApprove, auth, async (c) => {
+      const caller = c.get('member');
+      if (!hasPermission(caller.permissions, 'members.manage')) {
+        return c.json({ error: 'approving enrollments requires members.manage' }, 403);
+      }
+      if (!persistMembers) {
+        return c.json(
+          { error: 'enrollment approval is not available (persistMembers missing)' },
+          501,
+        );
+      }
+      const raw = await c.req.json().catch(() => null);
+      const parsed = ApproveEnrollmentRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid approve payload', details: parsed.error.issues }, 400);
+      }
+      const normalized = normalizeUserCode(parsed.data.userCode);
+      if (!normalized) {
+        return c.json({ error: 'invalid userCode format' }, 400);
+      }
+      const lookup = enrollmentsStore.lookupByUserCode(normalized);
+      switch (lookup.kind) {
+        case 'not_found':
+          return c.json({ error: 'no such enrollment' }, 404);
+        case 'expired':
+          return c.json({ error: 'enrollment expired' }, 410);
+        case 'already_approved':
+          return c.json({ error: 'enrollment already approved' }, 409);
+        case 'already_rejected':
+          return c.json({ error: 'enrollment already rejected' }, 409);
+      }
+
+      // Branch on bind vs create — `mode === 'create'` produces a
+      // brand-new member; `mode === 'bind'` requires the named
+      // member to already exist.
+      let boundMember: { name: string; role: Role; permissions: Permission[] };
+      if (parsed.data.mode === 'create') {
+        if (members.findByName(parsed.data.memberName)) {
+          return c.json({ error: `member '${parsed.data.memberName}' already exists` }, 409);
+        }
+        let resolvedPerms: Permission[];
+        try {
+          resolvedPerms = resolvePermissions(
+            parsed.data.permissions,
+            team.permissionPresets,
+            `approve-enrollment ${parsed.data.memberName}`,
+          );
+        } catch (err) {
+          return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+        }
+        try {
+          // A throwaway plaintext we'll never expose; the real token
+          // for this member's first device is minted below and
+          // tracked in the SQLite token store. addMember requires a
+          // token, so we synthesize one and immediately replace it.
+          const placeholder = generateBearerToken();
+          members.addMember({
+            name: parsed.data.memberName,
+            role: parsed.data.role,
+            instructions: parsed.data.instructions,
+            rawPermissions: [...parsed.data.permissions],
+            permissions: resolvedPerms,
+            token: placeholder,
+          });
+        } catch (err) {
+          return c.json(
+            { error: err instanceof Error ? err.message : 'failed to create member' },
+            409,
+          );
+        }
+        const newTeammate: Teammate = {
+          name: parsed.data.memberName,
+          role: parsed.data.role,
+          permissions: resolvedPerms,
+        };
+        broker.seedMembers([newTeammate]);
+        boundMember = newTeammate;
+      } else {
+        const target = members.findByName(parsed.data.memberName);
+        if (!target) {
+          return c.json({ error: `no such member: ${parsed.data.memberName}` }, 404);
+        }
+        boundMember = {
+          name: target.name,
+          role: target.role,
+          permissions: target.permissions,
+        };
+      }
+
+      // Mint the actual bearer token for this device, insert into
+      // the token store, then attach the plaintext to the pending
+      // enrollment row for the device-side poll to consume. The
+      // plaintext is KEK-wrapped at rest by the EnrollmentStore.
+      const plaintext = generateBearerToken();
+      const tokenRow = tokens.insert({
+        memberName: boundMember.name,
+        rawToken: plaintext,
+        label: parsed.data.label ?? lookup.row.labelHint ?? 'connected device',
+        origin: 'enroll',
+        createdBy: caller.name,
+      });
+      const ok = enrollmentsStore.approve({
+        userCode: normalized,
+        approvedBy: caller.name,
+        boundMember: boundMember.name,
+        approveArgsJson: JSON.stringify({ mode: parsed.data.mode }),
+        issuedTokenId: tokenRow.id,
+        issuedTokenPlaintext: plaintext,
+      });
+      if (!ok) {
+        // Race: someone else mutated this row between lookup and
+        // approve. Roll back the token we just inserted so we don't
+        // leave an orphan.
+        tokens.revoke(tokenRow.id);
+        return c.json({ error: 'enrollment changed state during approval — try again' }, 409);
+      }
+      // Persist member-store changes only if we mutated it.
+      if (parsed.data.mode === 'create') {
+        persistMembers();
+      }
+      logger.info('enrollment approved', {
+        userCode: formatUserCode(normalized),
+        approvedBy: caller.name,
+        bound: boundMember.name,
+        mode: parsed.data.mode,
+        tokenId: tokenRow.id,
+      });
+      const { hash: _hash, ...publicTokenInfo } = tokenRow;
+      return c.json({
+        member: boundMember,
+        tokenInfo: publicTokenInfo,
+      });
+    });
+
+    app.post(PATHS.enrollReject, auth, async (c) => {
+      const caller = c.get('member');
+      if (!hasPermission(caller.permissions, 'members.manage')) {
+        return c.json({ error: 'rejecting enrollments requires members.manage' }, 403);
+      }
+      const raw = await c.req.json().catch(() => null);
+      const parsed = RejectEnrollmentRequestSchema.safeParse(raw);
+      if (!parsed.success) {
+        return c.json({ error: 'invalid reject payload', details: parsed.error.issues }, 400);
+      }
+      const normalized = normalizeUserCode(parsed.data.userCode);
+      if (!normalized) {
+        return c.json({ error: 'invalid userCode format' }, 400);
+      }
+      const ok = enrollmentsStore.reject({
+        userCode: normalized,
+        rejectedBy: caller.name,
+        ...(parsed.data.reason !== undefined ? { reason: parsed.data.reason } : {}),
+      });
+      if (!ok) {
+        return c.json({ error: 'no pending enrollment matched that userCode' }, 404);
+      }
+      logger.info('enrollment rejected', {
+        userCode: formatUserCode(normalized),
+        rejectedBy: caller.name,
+        reason: parsed.data.reason ?? '',
+      });
+      return c.body(null, 204);
+    });
+  }
 
   app.post(`${PATHS.members}/:name/enroll-totp`, auth, (c) => {
     const member = c.get('member');

@@ -370,10 +370,16 @@ export interface ListMembersResponse {
 
 /**
  * `POST /members/:name/rotate-token` response — requires
- * `members.manage` OR self. Returns the new plaintext token.
+ * `members.manage` OR self. Returns the new plaintext token; the
+ * server-side metadata for the new row is included in `tokenInfo`
+ * so the caller can display label / id without a follow-up list.
+ *
+ * The response shape was extended for multi-token: pre-multi-token
+ * callers (older CLI builds) still find `token` at the same path.
  */
 export interface RotateTokenResponse {
   token: string;
+  tokenInfo?: TokenInfo;
 }
 
 /**
@@ -384,6 +390,221 @@ export interface RotateTokenResponse {
 export interface EnrollTotpResponse {
   totpSecret: string;
   totpUri: string;
+}
+
+// ─────────────────────────── Tokens ───────────────────────────────────
+
+/**
+ * Public projection of a bearer token row. The plaintext token is
+ * NEVER exposed by this shape — it's returned exactly once at
+ * issuance (rotate, device-code approve) and only the metadata round-
+ * trips through list / revoke endpoints.
+ *
+ * Multi-token support: a member may have several active tokens at
+ * once, each with a label that names what it's for ("laptop",
+ * "ci-runner", "prod-vm"). Listing surfaces the metadata so admins
+ * can revoke a stolen device without invalidating peer tokens.
+ */
+export interface TokenInfo {
+  /** Stable id (uuid). Used in revoke calls. */
+  id: string;
+  memberName: string;
+  /** Human-friendly description ("laptop", "prod-vm"). May be empty. */
+  label: string;
+  /** Provenance — where this token was minted from. */
+  origin: TokenOrigin;
+  /** Epoch ms. */
+  createdAt: number;
+  /** Epoch ms; null if never used. */
+  lastUsedAt: number | null;
+  /** Epoch ms; null = no expiry. */
+  expiresAt: number | null;
+  /** Member name that issued this token, or null on bootstrap migration. */
+  createdBy: string | null;
+}
+
+/**
+ * How a token came into existence. `bootstrap` covers tokens carried
+ * across the first-boot config-file → SQLite migration; `rotate` is
+ * `POST /members/:name/rotate-token`; `enroll` is the device-code
+ * flow. Useful for filtering and audit — directors investigating a
+ * leak start from `enroll` rows because the metadata identifies the
+ * device a token was bound to.
+ */
+export type TokenOrigin = 'bootstrap' | 'rotate' | 'enroll';
+
+/** `GET /members/:name/tokens` — requires `members.manage` or self. */
+export interface ListTokensResponse {
+  tokens: TokenInfo[];
+}
+
+/**
+ * `DELETE /members/:name/tokens/:id` — requires `members.manage` or
+ * self. Returns 204 on success; revoking the token currently
+ * authenticating the request is allowed (caller is signing off this
+ * device themselves). No response body on success — kept here as a
+ * named alias for symmetry with the other endpoint type aliases.
+ */
+export type RevokeTokenResponse = undefined;
+
+// ─────────────────────────── Device-code enrollment ────────────────────
+
+/**
+ * `POST /enroll` body — anonymous (no auth). The CLI calls this from
+ * the device that needs a token; `labelHint` proposes a friendly
+ * label the approving director can accept or override.
+ */
+export interface DeviceAuthorizationRequest {
+  /** Suggested label the director can accept or override on approve. */
+  labelHint?: string;
+}
+
+/**
+ * `POST /enroll` response. Shape mirrors RFC 8628 §3.2 with two
+ * additions — `verificationUri` is camelCase to match the rest of
+ * the wire and `pollUrl` is a fully-qualified hint so CLI consumers
+ * don't have to reconstruct it.
+ *
+ * The `userCode` is what the human types into the web UI; the
+ * `deviceCode` is what the CLI polls with and MUST be kept secret —
+ * the broker stores only its hash.
+ */
+export interface DeviceAuthorizationResponse {
+  /** Long, opaque secret the CLI keeps in memory and presents on poll. */
+  deviceCode: string;
+  /** Short, human-typeable code displayed to the operator (`XXXX-XXXX`). */
+  userCode: string;
+  /** Path the operator visits to enter the code. Relative; CLI joins with broker URL. */
+  verificationUri: string;
+  /** Path with the user code prefilled. Operator can deep-link from CLI output. */
+  verificationUriComplete: string;
+  /** TTL of this enrollment, in seconds. RFC 8628 §3.2 — always 300 (5 min). */
+  expiresIn: number;
+  /** Minimum poll interval, in seconds. RFC 8628 §3.5 — default 5. */
+  interval: number;
+}
+
+/**
+ * `POST /enroll/poll` body. RFC 8628 §3.4 grant_type encoding is
+ * implicit — this endpoint only accepts the device-code grant, so we
+ * skip the `grant_type` field for ergonomics and require only the
+ * device code itself.
+ */
+export interface DeviceTokenRequest {
+  deviceCode: string;
+}
+
+/**
+ * `POST /enroll/poll` success response. Returns the freshly-minted
+ * bearer token plaintext exactly once (the row is deleted in the
+ * same transaction). The `member` projection lets the CLI write
+ * `~/.config/ac7/auth.json` with the bound identity.
+ */
+export interface DeviceTokenResponse {
+  /** Bearer token plaintext — `ac7_<base64url>`. Save once; never again. */
+  token: string;
+  /** Stable id of the issued token row. Useful for later revoke. */
+  tokenId: string;
+  member: Teammate;
+}
+
+/**
+ * RFC 8628 §3.5 standard error responses. Returned as 400 + JSON body
+ * `{error: <code>}`. Clients distinguish on the `error` string:
+ *
+ *   authorization_pending — keep polling, user hasn't approved yet
+ *   slow_down             — back off; increment poll interval by 5s
+ *   expired_token         — the device_code TTL elapsed; restart enrollment
+ *   access_denied         — director rejected; abort
+ */
+export type DeviceTokenErrorCode =
+  | 'authorization_pending'
+  | 'slow_down'
+  | 'expired_token'
+  | 'access_denied';
+
+export interface DeviceTokenErrorResponse {
+  error: DeviceTokenErrorCode;
+  /** Free-form note (e.g. director's reject reason). Not machine-parsed. */
+  errorDescription?: string;
+}
+
+/**
+ * Pending-enrollments listing for directors. Shows everything that's
+ * currently waiting for approval, with enough metadata that a
+ * director can spot an unexpected request (different sourceIp, odd
+ * UA, etc.) before approving.
+ *
+ * `userCode` is the same code the device-side CLI is showing the
+ * operator — directors rarely use it directly, but it lets the same
+ * row be approved either by URL deep-link or by typing the code from
+ * the device.
+ */
+export interface PendingEnrollment {
+  /** The 8-char user code, hyphen-formatted: `XXXX-XXXX`. */
+  userCode: string;
+  /** Caller-provided hint, may be empty. */
+  labelHint: string;
+  /** Best-effort source IP captured at /enroll time. May be null. */
+  sourceIp: string | null;
+  /** Best-effort User-Agent captured at /enroll time. May be null. */
+  sourceUa: string | null;
+  /** Epoch ms. */
+  createdAt: number;
+  /** Epoch ms — when this row will auto-expire. */
+  expiresAt: number;
+}
+
+export interface ListPendingEnrollmentsResponse {
+  enrollments: PendingEnrollment[];
+}
+
+/**
+ * `POST /enroll/approve` body. Two modes:
+ *
+ *   bind   — issue a token bound to an existing member (`memberName`)
+ *   create — issue a token AND create a new member with the supplied
+ *            role / permissions / instructions. The new member name
+ *            must not collide with an existing one.
+ *
+ * `label` is optional; absent means "leave whatever the device-side
+ * suggested in labelHint." `permissions` follows the same preset-or-
+ * leaf shape as `CreateMemberRequest`.
+ */
+export type ApproveEnrollmentRequest =
+  | {
+      userCode: string;
+      mode: 'bind';
+      memberName: string;
+      label?: string;
+    }
+  | {
+      userCode: string;
+      mode: 'create';
+      memberName: string;
+      role: Role;
+      instructions?: string;
+      permissions: string[];
+      label?: string;
+    };
+
+/**
+ * `POST /enroll/approve` response — confirmation only. The plaintext
+ * token is delivered to the device-side CLI on its next poll, NOT to
+ * the approver. This keeps the secret entirely on the device the
+ * operator is sitting at and out of the director's browser scrollback.
+ */
+export interface ApproveEnrollmentResponse {
+  member: Teammate;
+  /** The token row that will be issued — without the plaintext. */
+  tokenInfo: TokenInfo;
+}
+
+/** `POST /enroll/reject` body. */
+export interface RejectEnrollmentRequest {
+  userCode: string;
+  /** Free-form note returned to the device-side CLI as `errorDescription`. */
+  reason?: string;
 }
 
 // ─────────────────────────── Objectives ───────────────────────────────

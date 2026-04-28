@@ -16,6 +16,7 @@ import { getClient } from '../lib/client.js';
 import { summarizePermissions as summarize } from '../lib/permissions.js';
 import { loadRoster } from '../lib/roster.js';
 import { selectMemberProfile } from '../lib/view.js';
+import { PendingEnrollments } from './members/PendingEnrollments.js';
 import { PermissionsEditor } from './members/PermissionsEditor.js';
 import { type Reveal, RevealBanner, revealTargetName } from './members/Reveal.js';
 import { EmptyState, ErrorCallout, Loading, PageHeader } from './ui/index.js';
@@ -111,6 +112,8 @@ export function MembersPanel() {
         )}
 
       {formOpen.value && <CreateMemberForm presets={b.team.permissionPresets} />}
+
+      <PendingEnrollments style="margin-bottom:18px" />
 
       {list === null && err === null && <Loading label="Loading…" />}
 

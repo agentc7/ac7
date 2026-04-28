@@ -6,6 +6,7 @@ import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
+import { createTokenStoreFromMembers } from '../src/tokens.js';
 
 const OP_TOKEN = 'ac7_test_operator_secret';
 const BOT_TOKEN = 'ac7_test_bot_secret';
@@ -37,12 +38,14 @@ function makeApp() {
       token: BOT_TOKEN,
     },
   ]);
-  // Tests run with an in-memory SQLite solely for the sessions table.
+  // Tests run with an in-memory SQLite for sessions + tokens tables.
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db);
+  const tokens = createTokenStoreFromMembers(db, members);
   const { app } = createApp({
     broker,
     members,
+    tokens,
     sessions,
     team: TEAM,
     version: '0.0.0',
@@ -53,7 +56,7 @@ function makeApp() {
       error: vi.fn(),
     },
   });
-  return { app, broker, members, sessions, db };
+  return { app, broker, members, sessions, db, tokens };
 }
 
 function authed(token: string, body?: unknown): RequestInit {

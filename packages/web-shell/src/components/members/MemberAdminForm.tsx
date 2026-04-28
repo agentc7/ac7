@@ -18,6 +18,7 @@ import { signal } from '@preact/signals';
 import { loadBriefing } from '../../lib/briefing.js';
 import { getClient } from '../../lib/client.js';
 import { loadRoster } from '../../lib/roster.js';
+import { MemberTokenList } from './MemberTokenList.js';
 import { PermissionsEditor } from './PermissionsEditor.js';
 import type { Reveal } from './Reveal.js';
 
@@ -277,15 +278,17 @@ export function MemberAdminForm({
           />
         </div>
 
+        <MemberTokenList memberName={member.name} style="margin-top:6px" />
+
         <div class="flex flex-wrap items-center gap-2">
           <button
             type="button"
             class="btn btn-ghost btn-sm"
             onClick={() => void onRotate()}
             disabled={disabled}
-            title="Mint a new bearer token (invalidates the current one)"
+            title="Rotate this member's token: invalidates ALL active tokens for them and mints a fresh one"
           >
-            {busy === `rotate:${rowKey}` ? '…' : 'Rotate token'}
+            {busy === `rotate:${rowKey}` ? '…' : 'Rotate all tokens'}
           </button>
           <button
             type="button"

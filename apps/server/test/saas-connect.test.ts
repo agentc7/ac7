@@ -20,6 +20,7 @@ import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
+import { createTokenStoreFromMembers } from '../src/tokens.js';
 
 const OP_TOKEN = 'ac7_saas_connect_op_token';
 
@@ -46,9 +47,11 @@ function makeApp(options: { now?: () => number } = {}) {
   ]);
   const db = openDatabase(':memory:');
   const sessions = new SessionStore(db, { now: options.now });
+  const tokens = createTokenStoreFromMembers(db, members, { now: options.now });
   const { app } = createApp({
     broker,
     members,
+    tokens,
     sessions,
     team: TEAM,
     version: '0.0.0',
