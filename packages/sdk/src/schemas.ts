@@ -246,6 +246,79 @@ export const ListObjectivesQuerySchema = z.object({
   status: ObjectiveStatusSchema.optional(),
 });
 
+// ───────────────────────── Channels ─────────────────────────
+//
+// Slack-style named team threads. Identified by an opaque immutable
+// `id`; addressed in URLs and the UI by a mutable `slug`. Messages
+// reference channels by id via `data.thread = 'chan:<id>'` so a
+// rename never orphans history.
+
+/**
+ * Channel slug: 1–32 lowercase letters/digits/dashes, must start +
+ * end alphanumeric, no consecutive dashes. Mirrors `validateSlug` on
+ * the server.
+ */
+export const ChannelSlugSchema = z
+  .string()
+  .min(1)
+  .max(32)
+  .regex(
+    /^[a-z0-9](?:[a-z0-9]|-(?!-))*[a-z0-9]$|^[a-z0-9]$/,
+    'slug must be lowercase letters/digits/dashes, no consecutive dashes, no leading/trailing dash',
+  );
+
+export const ChannelMemberRoleSchema = z.enum(['admin', 'member']);
+
+export const ChannelSchema = z.object({
+  id: z.string().min(1),
+  slug: ChannelSlugSchema,
+  createdBy: z.string(),
+  createdAt: z.number().int().nonnegative(),
+  archivedAt: z.number().int().nonnegative().nullable(),
+});
+
+export const ChannelMemberSchema = z.object({
+  channelId: z.string().min(1),
+  memberName: NameSchema,
+  role: ChannelMemberRoleSchema,
+  joinedAt: z.number().int().nonnegative(),
+});
+
+/**
+ * One row in the per-viewer channel list. `joined` reflects whether
+ * the caller is a member; `myRole` is non-null only when joined.
+ * `general` is special-cased: every viewer sees `joined: true,
+ * myRole: 'member'`. The list also reports `memberCount` so the UI
+ * can render `(N members)` next to channel names.
+ */
+export const ChannelSummarySchema = ChannelSchema.extend({
+  joined: z.boolean(),
+  myRole: ChannelMemberRoleSchema.nullable(),
+  memberCount: z.number().int().nonnegative(),
+});
+
+export const ListChannelsResponseSchema = z.object({
+  channels: z.array(ChannelSummarySchema),
+});
+
+export const GetChannelResponseSchema = z.object({
+  channel: ChannelSummarySchema,
+  members: z.array(ChannelMemberSchema),
+});
+
+export const CreateChannelRequestSchema = z.object({
+  slug: ChannelSlugSchema,
+});
+
+export const RenameChannelRequestSchema = z.object({
+  slug: ChannelSlugSchema,
+});
+
+export const AddChannelMemberRequestSchema = z.object({
+  member: NameSchema,
+  role: ChannelMemberRoleSchema.default('member'),
+});
+
 // ───────────────────────── Trace entries ─────────────────────
 //
 // Trace entries are produced by the runner's MITM proxy as

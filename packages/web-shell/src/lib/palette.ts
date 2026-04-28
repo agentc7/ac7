@@ -9,14 +9,14 @@
 import type { Objective, Teammate } from '@agentc7/sdk/types';
 import { computed, signal } from '@preact/signals';
 import { briefing } from './briefing.js';
-import { PRIMARY_THREAD } from './messages.js';
+import { joinedChannels } from './channels.js';
 import { objectives as objectivesSignal } from './objectives.js';
 import { roster } from './roster.js';
 
 export type PaletteItem =
   | { kind: 'member'; id: string; name: string; label: string; sub: string }
   | { kind: 'objective'; id: string; objective: Objective; label: string; sub: string }
-  | { kind: 'thread-primary'; id: string; label: string; sub: string }
+  | { kind: 'thread-channel'; id: string; slug: string; label: string; sub: string }
   | { kind: 'thread-dm'; id: string; name: string; label: string; sub: string }
   | {
       kind: 'action';
@@ -54,12 +54,15 @@ export const paletteSource = computed<PaletteItem[]>(() => {
   const r = roster.value;
   const teammates: Teammate[] = r?.teammates ?? b?.teammates ?? [];
 
-  items.push({
-    kind: 'thread-primary',
-    id: `thread:${PRIMARY_THREAD}`,
-    label: 'Team Chat',
-    sub: 'Broadcast to the whole team',
-  });
+  for (const c of joinedChannels()) {
+    items.push({
+      kind: 'thread-channel',
+      id: `thread:chan:${c.slug}`,
+      slug: c.slug,
+      label: `#${c.slug}`,
+      sub: c.id === 'general' ? 'team channel · everyone' : `team channel · ${c.memberCount} members`,
+    });
+  }
   for (const t of teammates) {
     items.push({
       kind: 'member',

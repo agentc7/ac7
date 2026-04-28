@@ -24,29 +24,38 @@
  * whole column slides in driven by `isSidebarOpen`.
  */
 
-import type { Teammate } from '@agentc7/sdk/types';
+import type { ChannelSummary, Teammate } from '@agentc7/sdk/types';
 import { hasPermission } from '@agentc7/sdk/types';
 import type { ComponentChildren } from 'preact';
 import { briefing } from '../../lib/briefing.js';
+import { channels, joinedChannels } from '../../lib/channels.js';
+import { embeddedShell, teamSettingsHandler } from '../../lib/embedded.js';
 import { handleSignOut, hasSignOutHandler } from '../../lib/handlers.js';
 import { inboxCount } from '../../lib/inbox.js';
-import { dmThreadKey, messagesByThread, PRIMARY_THREAD } from '../../lib/messages.js';
+import {
+  channelThreadKey,
+  dmThreadKey,
+  GENERAL_CHANNEL_ID,
+  GENERAL_THREAD,
+  messagesByThread,
+} from '../../lib/messages.js';
 import { objectives } from '../../lib/objectives.js';
 import { privilegeTag, summarizePermissions } from '../../lib/permissions.js';
 import { roster } from '../../lib/roster.js';
 import { currentTeam } from '../../lib/team.js';
 import { lastReadByThread, unreadCount } from '../../lib/unread.js';
 import {
-  closeSidebar,
   isSidebarOpen,
+  selectChannel,
+  selectChannelCreate,
+  selectChannelsBrowse,
   selectDmWith,
   selectFiles,
   selectInbox,
-  selectMemberProfile,
+  selectAccount,
   selectMembers,
   selectObjectivesList,
   selectOverview,
-  selectThread,
   view,
 } from '../../lib/view.js';
 
@@ -74,31 +83,28 @@ export function NavColumn({ viewer }: NavColumnProps) {
   const filesActive = v.kind === 'files';
   const membersActive = v.kind === 'members';
   const inbox = inboxCount.value;
-  const teamChatActive = v.kind === 'thread' && v.key === PRIMARY_THREAD;
-  const teamChatUnread = unreadCount(PRIMARY_THREAD, viewer, lastRead, msgMap);
   const drawerOpen = isSidebarOpen.value;
   const isAdmin = b !== null && hasPermission(b.permissions, 'members.manage');
   const activeObjectiveCount = objectives.value.filter(
     (o) => o.assignee === viewer && (o.status === 'active' || o.status === 'blocked'),
   ).length;
+  const channelList = joinedChannels();
+  const channelsLoaded = channels.value !== null;
+  const browseActive = v.kind === 'channels-browse';
+  const createActive = v.kind === 'channel-create';
 
+  // The shared `.drawer-backdrop` rendered in AppShell handles the
+  // click-out dismissal for both navcol and inspector. NavColumn no
+  // longer renders its own backdrop button — that was a duplicate
+  // surface that conflicted with the shared layer.
   return (
     <>
-      {drawerOpen && (
-        <button
-          type="button"
-          onClick={closeSidebar}
-          aria-label="Close sidebar"
-          class="md:hidden fixed inset-0 z-30"
-          style="background:rgba(14,28,43,0.45)"
-        />
-      )}
       <nav
-        class={`flex-shrink-0 flex-col
+        class={`nav-drawer flex-shrink-0 flex-col
           md:static md:flex md:w-56 md:translate-x-0 md:shadow-none md:z-0
-          fixed inset-y-0 left-0 z-50 w-[85vw] max-w-72 transition-transform duration-200
-          ${drawerOpen ? 'translate-x-0 flex shadow-2xl' : '-translate-x-full hidden md:flex md:-translate-x-0'}`}
-        style="background:var(--paper);border-right:1px solid var(--rule);padding-left:env(safe-area-inset-left);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)"
+          fixed top-0 left-0 z-50 w-[85vw] max-w-72 transition-transform duration-200
+          ${drawerOpen ? 'is-open translate-x-0 flex shadow-2xl' : '-translate-x-full hidden md:flex md:-translate-x-0'}`}
+        style="background:var(--paper);border-right:1px solid var(--rule);padding-left:env(safe-area-inset-left);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);bottom:0"
       >
         <TeamHeader />
 
@@ -106,12 +112,14 @@ export function NavColumn({ viewer }: NavColumnProps) {
         <div style="padding:8px 0;border-bottom:1px solid var(--rule)">
           <NavItem
             label="Home"
+            glyph="⌂"
             active={homeActive}
             onClick={selectOverview}
             ariaLabel="Open team home"
           />
           <NavItem
             label="Inbox"
+            glyph="✎"
             active={inboxActive}
             onClick={selectInbox}
             ariaLabel={inbox > 0 ? `Open inbox (${inbox} items)` : 'Open inbox'}
@@ -119,6 +127,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
           />
           <NavItem
             label="Objectives"
+            glyph="◇"
             active={objectivesActive}
             onClick={selectObjectivesList}
             ariaLabel={
@@ -134,6 +143,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
           />
           <NavItem
             label="Files"
+            glyph="▤"
             active={filesActive}
             onClick={() => selectFiles(`/${viewer}`)}
             ariaLabel="Browse files"
@@ -141,6 +151,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
           {isAdmin && (
             <NavItem
               label="Members"
+              glyph="⊕"
               active={membersActive}
               onClick={selectMembers}
               ariaLabel="Manage members"
@@ -148,30 +159,67 @@ export function NavColumn({ viewer }: NavColumnProps) {
           )}
         </div>
 
-        {/* ── Chat section ─────────────────────────────────────────── */}
+        {/* ── Channels + Direct sections ───────────────────────────── */}
         <ul
           class="flex-1 overflow-y-auto"
           style="padding:12px 0 8px;list-style:none;margin:0;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation"
         >
-          <li>
-            <p class="eyebrow" style="padding:0 12px 6px">
-              Chat
-            </p>
+          <li
+            class="flex items-center justify-between"
+            style="padding:0 12px 6px"
+          >
+            <button
+              type="button"
+              onClick={selectChannelsBrowse}
+              aria-label="Browse all channels"
+              class="eyebrow"
+              style={`margin:0;background:transparent;border:0;padding:0;cursor:pointer;letter-spacing:.16em;text-transform:uppercase;color:${browseActive ? 'var(--ink)' : 'var(--muted)'}`}
+            >
+              Channels
+            </button>
+            <button
+              type="button"
+              onClick={selectChannelCreate}
+              aria-label="Create a channel"
+              title="Create a channel"
+              style="background:transparent;border:none;color:var(--muted);font-family:var(--f-mono);font-size:14px;line-height:1;cursor:pointer;padding:2px 4px;border-radius:var(--r-xs)"
+            >
+              +
+            </button>
           </li>
+          {!channelsLoaded && (
+            <li
+              class="eyebrow"
+              style="padding:4px 12px;font-style:italic;color:var(--muted)"
+            >
+              loading…
+            </li>
+          )}
+          {channelList.map((c) => (
+            <li key={c.id}>
+              <ChannelRow
+                channel={c}
+                active={isChannelActive(v, c)}
+                viewer={viewer}
+                lastRead={lastRead}
+                msgMap={msgMap}
+              />
+            </li>
+          ))}
+          {createActive && (
+            <li
+              class="eyebrow"
+              style="padding:4px 12px;color:var(--steel)"
+              aria-hidden="true"
+            >
+              + new channel
+            </li>
+          )}
+
           <li>
-            <NavItem
-              label="Team Chat"
-              active={teamChatActive}
-              onClick={() => selectThread(PRIMARY_THREAD)}
-              ariaLabel={
-                teamChatUnread > 0 ? `Open Team Chat (${teamChatUnread} unread)` : 'Open Team Chat'
-              }
-              trailing={
-                teamChatUnread > 0 && !teamChatActive ? (
-                  <UnreadBadge count={teamChatUnread} />
-                ) : undefined
-              }
-            />
+            <p class="eyebrow" style="padding:14px 12px 6px">
+              Direct
+            </p>
           </li>
           {teammates.map((t) => {
             const connected = onlineByName.get(t.name) ?? 0;
@@ -217,9 +265,42 @@ export function NavColumn({ viewer }: NavColumnProps) {
           })}
         </ul>
 
-        <UserChip viewer={viewer} />
+        {embeddedShell.value ? <TeamSettingsButton /> : <AccountSettingsButton />}
       </nav>
     </>
+  );
+}
+
+function TeamSettingsButton() {
+  const handler = teamSettingsHandler.value;
+  if (handler === null) return null;
+  return (
+    <div
+      style="padding:10px 12px;border-top:1px solid var(--rule);flex-shrink:0"
+    >
+      <button
+        type="button"
+        onClick={handler}
+        aria-label="Team settings"
+        class="navitem w-full"
+        style="text-align:left"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          class="h-4 w-4 flex-shrink-0"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+        <span class="truncate flex-1">Team settings</span>
+      </button>
+    </div>
   );
 }
 
@@ -269,9 +350,16 @@ function TeamHeader() {
   );
 }
 
-function UserChip({ viewer }: { viewer: string }) {
-  // Hide the sign-out affordance when the host didn't wire one up
-  // (e.g., the SaaS drives sign-out through its own Clerk menu).
+/**
+ * Standalone-mode footer (OSS, no host-provided rail). Visually
+ * parallels the embedded `TeamSettingsButton`: a gear-iconed
+ * "Account" button that opens the account settings modal, with a
+ * quick-action sign-out icon next to it. The avatar+name presence
+ * we used to render here was a duplicate identity anchor relative to
+ * the Header's profile button (which has since been retired); the
+ * gear keeps a single affordance in a single spot.
+ */
+function AccountSettingsButton() {
   const showSignOut = hasSignOutHandler.value !== null;
   return (
     <div
@@ -280,20 +368,25 @@ function UserChip({ viewer }: { viewer: string }) {
     >
       <button
         type="button"
-        onClick={() => selectMemberProfile(viewer)}
-        aria-label={`Open your profile (${viewer})`}
-        class="flex items-center gap-2 min-w-0 flex-1"
-        style="background:transparent;border:none;padding:0;cursor:pointer;text-align:left"
+        onClick={selectAccount}
+        aria-label="Account settings"
+        class="navitem flex-1"
+        style="text-align:left"
       >
-        <span class="avatar" aria-hidden="true" style="width:28px;height:28px;font-size:11px">
-          {chipInitials(viewer)}
-        </span>
-        <span
-          class="truncate"
-          style="font-family:var(--f-sans);font-size:13px;font-weight:600;color:var(--ink)"
+        <svg
+          viewBox="0 0 24 24"
+          class="h-4 w-4 flex-shrink-0"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
         >
-          {viewer}
-        </span>
+          <circle cx="12" cy="12" r="3" />
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+        </svg>
+        <span class="truncate flex-1">Account</span>
       </button>
       {showSignOut && (
         <button
@@ -326,12 +419,6 @@ function UserChip({ viewer }: { viewer: string }) {
   );
 }
 
-function chipInitials(name: string): string {
-  const parts = name.split(/[\s_-]+/).filter(Boolean);
-  if (parts.length >= 2) return `${parts[0]?.[0] ?? ''}${parts[1]?.[0] ?? ''}`.toUpperCase();
-  return name.slice(0, 2).toUpperCase();
-}
-
 /** Pill-shape unread counter. Caps at "99+". */
 function UnreadBadge({ count }: { count: number }) {
   const label = count > 99 ? '99+' : String(count);
@@ -348,6 +435,7 @@ function UnreadBadge({ count }: { count: number }) {
 
 function NavItem({
   label,
+  glyph,
   active,
   onClick,
   ariaLabel,
@@ -355,6 +443,7 @@ function NavItem({
   disabled,
 }: {
   label: string;
+  glyph?: string;
   active: boolean;
   onClick: () => void;
   ariaLabel?: string;
@@ -372,8 +461,66 @@ function NavItem({
       style={`text-align:left${disabled ? ';color:var(--muted);cursor:default' : ''}`}
       tabIndex={disabled ? -1 : 0}
     >
+      {glyph !== undefined && (
+        <span
+          aria-hidden="true"
+          style="color:var(--muted);font-family:var(--f-mono);font-size:12.5px;width:14px;text-align:center;flex:0 0 auto"
+        >
+          {glyph}
+        </span>
+      )}
       <span class="truncate flex-1">{label}</span>
       {trailing}
+    </button>
+  );
+}
+
+function isChannelActive(v: ReturnType<typeof view.peek>, c: ChannelSummary): boolean {
+  if (v.kind !== 'thread') return false;
+  if (c.id === GENERAL_CHANNEL_ID) return v.key === GENERAL_THREAD;
+  return v.key === channelThreadKey(c.id);
+}
+
+function ChannelRow({
+  channel,
+  active,
+  viewer,
+  lastRead,
+  msgMap,
+}: {
+  channel: ChannelSummary;
+  active: boolean;
+  viewer: string;
+  lastRead: Map<string, number>;
+  msgMap: Map<string, import('@agentc7/sdk/types').Message[]>;
+}) {
+  const threadKey =
+    channel.id === GENERAL_CHANNEL_ID ? GENERAL_THREAD : channelThreadKey(channel.id);
+  const unread = unreadCount(threadKey, viewer, lastRead, msgMap);
+  return (
+    <button
+      type="button"
+      onClick={() => selectChannel(channel.slug)}
+      aria-label={
+        unread > 0 ? `Open #${channel.slug} (${unread} unread)` : `Open #${channel.slug}`
+      }
+      title={`#${channel.slug}`}
+      class={`navitem w-full${active ? ' active' : ''}`}
+      style={`text-align:left;font-weight:${active ? 700 : 500}`}
+    >
+      <span
+        aria-hidden="true"
+        style="color:var(--muted);font-family:var(--f-mono);font-size:12.5px;width:14px;text-align:center;flex:0 0 auto"
+      >
+        #
+      </span>
+      <span
+        class={`truncate flex-1${unread > 0 && !active ? ' font-semibold' : ''}`}
+        style={unread > 0 && !active ? 'font-weight:700' : ''}
+      >
+        {channel.slug}
+      </span>
+      {unread > 0 && !active && <UnreadBadge count={unread} />}
     </button>
   );
 }

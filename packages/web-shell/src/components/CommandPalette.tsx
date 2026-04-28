@@ -31,11 +31,11 @@ import {
   rankItems,
 } from '../lib/palette.js';
 import {
+  selectChannel,
   selectDmWith,
   selectMemberProfile,
   selectObjectiveCreate,
   selectObjectiveDetail,
-  selectThread,
 } from '../lib/view.js';
 
 export function CommandPalette() {
@@ -184,8 +184,8 @@ function activate(item: PaletteItem): void {
     case 'member':
       selectMemberProfile(item.name);
       return;
-    case 'thread-primary':
-      selectThread('primary');
+    case 'thread-channel':
+      selectChannel(item.slug);
       return;
     case 'thread-dm':
       selectDmWith(item.name);
@@ -203,7 +203,7 @@ function kindIcon(kind: PaletteItem['kind']): string {
   switch (kind) {
     case 'member':
       return '@';
-    case 'thread-primary':
+    case 'thread-channel':
       return '#';
     case 'thread-dm':
       return '→';

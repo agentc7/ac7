@@ -5,7 +5,10 @@ describe('parseRoute / formatRoute', () => {
   const cases: Array<[string, Route]> = [
     ['/', { kind: 'home' }],
     ['/inbox', { kind: 'inbox' }],
-    ['/c/team-chat', { kind: 'thread-primary' }],
+    ['/c/general', { kind: 'thread-channel', slug: 'general' }],
+    ['/c/customer-research', { kind: 'thread-channel', slug: 'customer-research' }],
+    ['/channels', { kind: 'channels-browse' }],
+    ['/channels/new', { kind: 'channel-create' }],
     ['/dm/alice', { kind: 'thread-dm', name: 'alice' }],
     ['/objectives', { kind: 'objectives-list' }],
     ['/objectives/new', { kind: 'objective-create' }],

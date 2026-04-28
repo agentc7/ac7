@@ -13,9 +13,17 @@
  * paths are not a stable surface and may move without notice.
  */
 
+export { RouteModal, type RouteModalProps } from './components/RouteModal.js';
 export { ToastContainer } from './components/ui/ToastContainer.js';
 export type { SignOutHandler, UnauthorizedHandler } from './lib/handlers.js';
 export type { Identity } from './lib/identity.js';
+export {
+  closeInspector,
+  isInspectorOpen,
+  openInspector,
+  toggleInspector,
+} from './lib/inspector.js';
+export { closeSidebar, isSidebarOpen, openSidebar } from './lib/view.js';
 export {
   clearAllToasts,
   dismissToast,

@@ -41,7 +41,8 @@ import {
   memberActivityLoading,
   memberActivityRows,
 } from '../lib/member-activity.js';
-import { selectObjectiveDetail } from '../lib/view.js';
+import { dmOther, selectThreadMessage, threadMessages } from '../lib/messages.js';
+import { selectObjectiveDetail, view } from '../lib/view.js';
 
 type KindFilter = Record<ActivityEvent['kind'], boolean>;
 
@@ -270,8 +271,40 @@ export function clipToObjective(rows: ActivityRow[], objectiveId: string | null)
 
 export function AgentTimeline() {
   const rows = memberActivityRows.value;
-  const loading = memberActivityLoading.value;
   const connected = memberActivityConnected.value;
+  const filters = kindFilters.value;
+  const objFilter = objectiveFilter.value;
+
+  // Mirror TimelineBody's filter pipeline so the eyebrow count
+  // reflects what the user actually sees rendered.
+  const filteredCount = clipToObjective(rows, objFilter).filter(
+    (row) => filters[row.event.kind],
+  ).length;
+
+  return (
+    <section class="card" style="display:flex;flex-direction:column;gap:14px">
+      <div class="eyebrow" style="display:flex;align-items:center;gap:10px">
+        <span>Activity ({filteredCount})</span>
+        {!connected && (
+          <span class="badge ember" style="font-size:10px">
+            ◆ OFFLINE
+          </span>
+        )}
+      </div>
+      <TimelineBody />
+    </section>
+  );
+}
+
+/**
+ * The chip bar + scope picker + threaded feed + paging affordances.
+ * Extracted so `<AgentTimeline />` (member-profile card) and
+ * `<ActivityInspector />` (TeamShell right rail) can share rendering
+ * while supplying their own header chrome.
+ */
+export function TimelineBody() {
+  const rows = memberActivityRows.value;
+  const loading = memberActivityLoading.value;
   const exhausted = memberActivityExhausted.value;
   const filters = kindFilters.value;
   const objFilter = objectiveFilter.value;
@@ -282,20 +315,10 @@ export function AgentTimeline() {
   const objectives = objectivesSeen(rows);
 
   return (
-    <section class="card" style="display:flex;flex-direction:column;gap:14px">
-      <div class="flex items-center justify-between flex-wrap gap-2">
-        <div class="eyebrow" style="display:flex;align-items:center;gap:10px">
-          <span>Activity ({filteredRows.length})</span>
-          {!connected && (
-            <span class="badge ember" style="font-size:10px">
-              ◆ OFFLINE
-            </span>
-          )}
-        </div>
-        <div class="flex items-center gap-2 flex-wrap">
-          {objectives.length > 0 && <ObjectiveSelect objectives={objectives} current={objFilter} />}
-          <FilterBar filters={filters} />
-        </div>
+    <>
+      <div class="flex items-center gap-2 flex-wrap">
+        {objectives.length > 0 && <ObjectiveSelect objectives={objectives} current={objFilter} />}
+        <FilterBar filters={filters} />
       </div>
 
       {rows.length === 0 && loading && <div class="eyebrow">Loading activity…</div>}
@@ -331,7 +354,7 @@ export function AgentTimeline() {
           — end of activity —
         </div>
       )}
-    </section>
+    </>
   );
 }
 
@@ -481,6 +504,7 @@ function ExchangeMarker({ item }: { item: Extract<ThreadItem, { variant: 'exchan
       <summary
         class="flex items-center gap-3 flex-wrap"
         style="font-family:var(--f-mono);font-size:11.5px;color:var(--muted);cursor:pointer;padding:2px 0"
+        onClick={() => jumpToMessageForExchange(item.ts, item.duration)}
       >
         <span>
           {formatTs(item.ts)} · {item.duration}ms
@@ -597,6 +621,33 @@ function ContentBlock({ block }: { block: AnthropicContentBlock }) {
 function formatTs(ts: number): string {
   const d = new Date(ts);
   return d.toISOString().replace('T', ' ').slice(11, 19);
+}
+
+/**
+ * Heuristic mapping from an `llm_exchange` row to the agent's
+ * outgoing thread message. We don't store an exchange-id on the
+ * Message, so we match by closeness in time: the agent posts to the
+ * thread right after generating, so the right message is the inspected
+ * peer's earliest message at or after the exchange's end time.
+ *
+ * Noops outside DM threads — the activity feed also renders inside
+ * member-profile cards where there's no thread to jump into.
+ */
+const SELECTION_WINDOW_MS = 60_000;
+function jumpToMessageForExchange(exchangeTs: number, duration: number): void {
+  const v = view.peek();
+  if (v.kind !== 'thread') return;
+  const peer = dmOther(v.key);
+  if (peer === null) return;
+  const target = exchangeTs + duration;
+  let best: { id: string; diff: number } | null = null;
+  for (const m of threadMessages(v.key)) {
+    if (m.from !== peer) continue;
+    const diff = Math.abs(m.ts - target);
+    if (diff > SELECTION_WINDOW_MS) continue;
+    if (best === null || diff < best.diff) best = { id: m.id, diff };
+  }
+  selectThreadMessage(best?.id ?? null);
 }
 
 /** Test-only reset so unit tests start clean. */

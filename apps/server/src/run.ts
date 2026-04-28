@@ -26,6 +26,7 @@ import { Broker } from '@agentc7/core';
 import type { Team } from '@agentc7/sdk/types';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
+import { createSqliteChannelStore } from './channels.js';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from './files/index.js';
 import { createHttp2ServerFactory } from './https/server.js';
@@ -291,6 +292,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const sessions = new SessionStore(db);
   const pushStore = new PushSubscriptionStore(db);
   const objectivesStore = createSqliteObjectivesStore(db);
+  const channelStore = createSqliteChannelStore(db);
 
   // Activity store runs on its own `DatabaseSyncInstance` so trace
   // write pressure doesn't contend with the main broker's write
@@ -451,6 +453,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     sessions,
     team: options.team,
     objectives: objectivesStore,
+    channels: channelStore,
     activityStore: activityStore,
     files: filesStore,
     ...(options.maxFileSize !== undefined ? { maxFileSize: options.maxFileSize } : {}),

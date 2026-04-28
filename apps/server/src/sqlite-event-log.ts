@@ -24,11 +24,13 @@
  */
 
 import {
+  channelThreadTag,
   clampQueryLimit,
   DEFAULT_QUERY_LIMIT,
   type EventLog,
   type EventLogQueryOptions,
   type EventLogTailOptions,
+  GENERAL_CHANNEL_ID,
 } from '@agentc7/core';
 import type { Attachment, LogLevel, Message } from '@agentc7/sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
@@ -66,6 +68,8 @@ export class SqliteEventLog implements EventLog {
   private readonly tailSinceStmt: StatementInstance;
   private readonly queryFeedStmt: StatementInstance;
   private readonly queryDmStmt: StatementInstance;
+  private readonly queryChannelStmt: StatementInstance;
+  private readonly queryGeneralStmt: StatementInstance;
 
   constructor(db: DatabaseSyncInstance) {
     this.db = db;
@@ -114,6 +118,29 @@ export class SqliteEventLog implements EventLog {
          )
        ORDER BY ts DESC LIMIT ?`,
     );
+    // Channel filter: rows whose JSON `data.thread` matches the
+    // expected `chan:<id>` tag. Uses SQLite's JSON1 extension
+    // (`json_extract`); shipped with `node:sqlite` by default.
+    this.queryChannelStmt = this.db.prepare(
+      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
+       FROM events
+       WHERE ts < ?
+         AND json_extract(data, '$.thread') = ?
+       ORDER BY ts DESC LIMIT ?`,
+    );
+    // General channel: include both the explicit-tag variant AND
+    // any untagged broadcast (`to_name IS NULL` with no `data.thread`).
+    // Mirrors `matchesChannel` in `@agentc7/core`'s in-memory log.
+    this.queryGeneralStmt = this.db.prepare(
+      `SELECT id, ts, to_name, from_name, title, body, level, data, attachments
+       FROM events
+       WHERE ts < ?
+         AND (
+           json_extract(data, '$.thread') = ?
+           OR (to_name IS NULL AND json_extract(data, '$.thread') IS NULL)
+         )
+       ORDER BY ts DESC LIMIT ?`,
+    );
   }
 
   async append(message: Message): Promise<void> {
@@ -142,7 +169,12 @@ export class SqliteEventLog implements EventLog {
     const before = options.before ?? Number.MAX_SAFE_INTEGER;
 
     let rows: EventRow[];
-    if (options.with) {
+    if (options.channel !== undefined) {
+      const tag = channelThreadTag(options.channel);
+      const stmt =
+        options.channel === GENERAL_CHANNEL_ID ? this.queryGeneralStmt : this.queryChannelStmt;
+      rows = stmt.all(before, tag, limit) as unknown as EventRow[];
+    } else if (options.with) {
       rows = this.queryDmStmt.all(
         before,
         options.viewer,

@@ -79,7 +79,7 @@ describe('notifyNewMessage', () => {
 
   it('skips when the viewer is already reading the target thread', () => {
     useViewer();
-    navigate({ kind: 'thread-primary' });
+    navigate({ kind: 'thread-channel', slug: 'general' });
     notifyNewMessage(msg({}));
     expect(toasts.value).toHaveLength(0);
   });

@@ -30,7 +30,14 @@ import { signal } from '@preact/signals';
 import type { JSX } from 'preact';
 import { useRef } from 'preact/hooks';
 import { getClient } from '../lib/client.js';
-import { appendMessages, messagesByThread, PRIMARY_THREAD } from '../lib/messages.js';
+import {
+  appendMessages,
+  CHAN_PREFIX,
+  GENERAL_CHANNEL_ID,
+  isChannelThread,
+  messagesByThread,
+  PRIMARY_THREAD,
+} from '../lib/messages.js';
 import { view } from '../lib/view.js';
 
 interface PendingUpload {
@@ -49,15 +56,61 @@ const sending = signal(false);
 const sendError = signal<string | null>(null);
 const pending = signal<PendingUpload[]>([]);
 const dragging = signal(false);
+/**
+ * `true` pins the textarea open at full max-height (140px) regardless
+ * of content. `false` is auto-grow: the textarea is one line at rest
+ * and stretches with content up to the same cap.
+ */
+const expanded = signal(false);
+
+const COMPOSER_MAX_HEIGHT_PX = 140;
 
 let optimisticSeq = 0;
 let uploadSeq = 0;
+
+/**
+ * Resize a textarea to fit its content, capped at the composer's
+ * max-height. The `height = 'auto'` step is required so `scrollHeight`
+ * remeasures from scratch — without it, a previous large height
+ * permanently inflates `scrollHeight`.
+ */
+function autosizeTextarea(el: HTMLTextAreaElement): void {
+  el.style.height = 'auto';
+  el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT_PX)}px`;
+}
 
 function targetAgentIdFor(key: string, viewer: string): string | undefined {
   if (key === PRIMARY_THREAD) return undefined;
   if (key === 'dm:self') return viewer;
   if (key.startsWith('dm:')) return key.slice(3);
   return undefined;
+}
+
+function composerPlaceholder(threadKey: string, currentView: ReturnType<typeof view.peek>): string {
+  if (threadKey === PRIMARY_THREAD) {
+    return 'Reply to #general · @ to mention · / for commands';
+  }
+  if (isChannelThread(threadKey)) {
+    const slug = currentView.kind === 'thread' ? (currentView.channelSlug ?? threadKey.slice(CHAN_PREFIX.length)) : threadKey.slice(CHAN_PREFIX.length);
+    return `Reply to #${slug} · @ to mention · / for commands`;
+  }
+  return `Reply to @${threadKey.slice(3)} · @ to mention · / for commands`;
+}
+
+/**
+ * Server-side `data.thread` tag the composer should stamp on
+ * outgoing messages, given the active thread key. Returns `null`
+ * when no tag is needed: the general channel (legacy primary thread
+ * key) and DMs both fall through to the existing routing paths.
+ */
+function channelTagForThread(key: string): string | null {
+  if (key === PRIMARY_THREAD) return null; // general — no tag needed
+  if (!isChannelThread(key)) return null;
+  // Strip the local `chan:` prefix to recover the channel id, then
+  // re-tag with the same prefix the server expects.
+  const id = key.slice(CHAN_PREFIX.length);
+  if (id === GENERAL_CHANNEL_ID) return null;
+  return `${CHAN_PREFIX}${id}`;
 }
 
 function formatSize(bytes: number): string {
@@ -151,6 +204,15 @@ export function Composer({ viewer }: ComposerProps) {
     // guard by substituting a single space so the server doesn't
     // reject the payload. Trim on render keeps the UI clean.
     const effectiveBody = body.length > 0 ? body : ' ';
+    // For non-general channel views, tag the outgoing message with
+    // `data.thread = 'chan:<id>'` so the broker fans out only to
+    // channel members (and the client routes it back into the same
+    // channel thread). General + DMs need no tag — they fall through
+    // to the legacy broadcast / addressed paths.
+    const channelTag = channelTagForThread(threadKey);
+    const outboundData: Record<string, unknown> = channelTag
+      ? { thread: channelTag }
+      : {};
     appendMessages(viewer, [
       {
         id: optimisticId,
@@ -160,12 +222,18 @@ export function Composer({ viewer }: ComposerProps) {
         title: null,
         body: effectiveBody,
         level: 'info',
-        data: {},
+        data: outboundData,
         attachments: readyAttachments,
       },
     ]);
     const clearedDraft = draft.value;
     draft.value = '';
+    // Reset the textarea back to its single-line resting height after
+    // clearing the draft (when not pinned expanded). Without this the
+    // textarea keeps the tall height from the last grow.
+    if (textareaRef.current && !expanded.value) {
+      textareaRef.current.style.height = '';
+    }
     // Grab the current pending list before we clear it so the
     // optimistic append has stable references even if more uploads
     // start before the response returns.
@@ -175,6 +243,7 @@ export function Composer({ viewer }: ComposerProps) {
       const result = await getClient().push({
         body: effectiveBody,
         ...(agentId !== undefined ? { to: agentId } : {}),
+        ...(channelTag ? { data: { thread: channelTag } } : {}),
         ...(readyAttachments.length > 0 ? { attachments: readyAttachments } : {}),
       });
       pruneOptimistic(threadKey, optimisticId);
@@ -184,6 +253,10 @@ export function Composer({ viewer }: ComposerProps) {
       pending.value = clearedPending;
       sendError.value = err instanceof Error ? err.message : 'send failed';
       pruneOptimistic(threadKey, optimisticId);
+      // Restore the grown height for the rolled-back draft.
+      if (textareaRef.current && !expanded.value) {
+        autosizeTextarea(textareaRef.current);
+      }
     } finally {
       sending.value = false;
     }
@@ -198,6 +271,19 @@ export function Composer({ viewer }: ComposerProps) {
 
   const onInput = (event: JSX.TargetedInputEvent<HTMLTextAreaElement>) => {
     draft.value = event.currentTarget.value;
+    if (!expanded.value) autosizeTextarea(event.currentTarget);
+  };
+
+  const toggleExpanded = () => {
+    expanded.value = !expanded.value;
+    const el = textareaRef.current;
+    if (!el) return;
+    if (expanded.value) {
+      el.style.height = `${COMPOSER_MAX_HEIGHT_PX}px`;
+    } else {
+      autosizeTextarea(el);
+    }
+    el.focus();
   };
 
   const onFocus = () => {
@@ -229,11 +315,33 @@ export function Composer({ viewer }: ComposerProps) {
     dragging.value = false;
   };
 
+  const insertPrefix = (ch: string) => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const start = el.selectionStart ?? draft.value.length;
+    const end = el.selectionEnd ?? start;
+    const before = draft.value.slice(0, start);
+    const after = draft.value.slice(end);
+    // If we're at line start (or start of textarea), drop straight in;
+    // otherwise prepend a space so "/" / "@" don't glue onto a word.
+    const needsSpace = before.length > 0 && !/\s$/.test(before);
+    const insertion = (needsSpace ? ' ' : '') + ch;
+    draft.value = before + insertion + after;
+    el.focus();
+    requestAnimationFrame(() => {
+      const pos = before.length + insertion.length;
+      el.setSelectionRange(pos, pos);
+    });
+  };
+
+  const sendLabel = sending.value ? '…' : anyUploading ? 'Uploading…' : 'Send';
+  const placeholder = composerPlaceholder(threadKey, v);
+
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: drop zone wraps composer; keyboard users use the "Browse files" button
     <div
       class="flex-shrink-0"
-      style={`background:${dragging.value ? 'var(--bg-alt)' : 'var(--ice)'};border-top:1px solid var(--rule);padding:12px max(0.75rem,env(safe-area-inset-right)) max(0.75rem,env(safe-area-inset-bottom)) max(0.75rem,env(safe-area-inset-left));overflow-y:auto;-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation;transition:background 120ms`}
+      style={`background:${dragging.value ? 'var(--bg-alt)' : 'var(--paper)'};border-top:1px solid var(--rule);padding:14px max(0.75rem,env(safe-area-inset-right)) max(18px,env(safe-area-inset-bottom)) max(0.75rem,env(safe-area-inset-left));-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation;transition:background 120ms`}
       onDrop={onDrop}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}
@@ -286,46 +394,140 @@ export function Composer({ viewer }: ComposerProps) {
         </div>
       )}
 
-      <div class="flex items-end gap-2">
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          class="btn flex-shrink-0"
-          title="Attach files"
-          style="padding:6px 10px;font-size:16px"
-          aria-label="Attach files"
-        >
-          ⎌
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          multiple
-          hidden
-          onChange={(e) => onFilesChosen((e.currentTarget as HTMLInputElement).files)}
-        />
+      <div class="composer-box">
         <textarea
           ref={textareaRef}
-          rows={2}
           value={draft.value}
           onInput={onInput}
           onKeyDown={onKeyDown}
           onFocus={onFocus}
-          placeholder={
-            threadKey === PRIMARY_THREAD
-              ? 'Broadcast to #team — enter to send, shift+enter for newline'
-              : `Message ${threadKey.slice(3)} — enter to send`
-          }
-          class="textarea flex-1"
-          style="min-height:auto;font-size:16px;resize:none"
+          placeholder={placeholder}
+          rows={1}
         />
+        <button
+          type="button"
+          onClick={toggleExpanded}
+          class="composer-expand"
+          title={expanded.value ? 'Collapse composer' : 'Expand composer'}
+          aria-label={expanded.value ? 'Collapse composer' : 'Expand composer'}
+          aria-pressed={expanded.value}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 14 14"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            {expanded.value ? (
+              // Collapse — chevrons pointing inward toward center
+              <>
+                <path d="M3 1 L7 5 L11 1" />
+                <path d="M3 13 L7 9 L11 13" />
+              </>
+            ) : (
+              // Expand — chevrons pointing outward away from center
+              <>
+                <path d="M3 5 L7 1 L11 5" />
+                <path d="M3 9 L7 13 L11 9" />
+              </>
+            )}
+          </svg>
+        </button>
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={(e) => onFilesChosen((e.currentTarget as HTMLInputElement).files)}
+      />
+
+      <div class="composer-toolbar">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          class="iconbtn"
+          title="Attach files"
+          aria-label="Attach files"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            aria-hidden="true"
+          >
+            <path d="M9 4 L4 9 A2 2 0 0 0 7 12 L12 7 A4 4 0 0 0 6 1 L3 4 A3 3 0 0 0 6 9 L11 4" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => insertPrefix('/')}
+          class="iconbtn"
+          title="Slash command (/)"
+          aria-label="Insert slash command"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            aria-hidden="true"
+          >
+            <path d="M9 2 L5 12" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          onClick={() => insertPrefix('@')}
+          class="iconbtn"
+          title="Mention (@)"
+          aria-label="Mention a teammate"
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 14 14"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            aria-hidden="true"
+          >
+            <circle cx="7" cy="7" r="3" />
+            <path d="M10 7 V8.5 A2 2 0 0 0 13 7 A6 6 0 1 0 10 12" />
+          </svg>
+        </button>
+        <span class="composer-hint">⌘ + ↵ send · / for commands · @ to mention</span>
         <button
           type="button"
           onClick={() => void send()}
           disabled={!canSend}
-          class="btn btn-primary flex-shrink-0"
+          class="composer-send"
         >
-          {sending.value ? '…' : anyUploading ? 'Uploading…' : 'Send →'}
+          {sendLabel}
+          {!sending.value && !anyUploading && (
+            <svg
+              width="10"
+              height="10"
+              viewBox="0 0 12 12"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              aria-hidden="true"
+            >
+              <path d="M2 6 L10 6 M7 3 L10 6 L7 9" />
+            </svg>
+          )}
         </button>
       </div>
     </div>

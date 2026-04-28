@@ -13,16 +13,30 @@
  * feel broken.
  */
 
-import { computed, signal } from '@preact/signals';
-import { DM_PREFIX, dmThreadKey, isDmThread, PRIMARY_THREAD } from './messages.js';
+import { computed, effect, signal } from '@preact/signals';
+import { channelBySlug } from './channels.js';
+import { closeInspector } from './inspector.js';
+import {
+  channelThreadKey,
+  CHAN_PREFIX,
+  DM_PREFIX,
+  dmThreadKey,
+  GENERAL_CHANNEL_ID,
+  GENERAL_THREAD,
+  isChannelThread,
+  isDmThread,
+  PRIMARY_THREAD,
+} from './messages.js';
 import { currentRoute, navigate } from './router.js';
 import type { ProfileTab, Route } from './routes.js';
 
 export type View =
-  | { kind: 'thread'; key: string }
+  | { kind: 'thread'; key: string; channelSlug?: string }
   | { kind: 'overview' }
   | { kind: 'inbox' }
   | { kind: 'account' }
+  | { kind: 'channels-browse' }
+  | { kind: 'channel-create' }
   | { kind: 'objectives-list' }
   | { kind: 'objective-detail'; id: string }
   | { kind: 'objective-create' }
@@ -32,6 +46,69 @@ export type View =
 
 export const view = computed<View>(() => viewFromRoute(currentRoute.value));
 
+/**
+ * Routes that render as modal overlays rather than full-screen
+ * panels — the previous (non-modal) view stays visible behind them.
+ * Today: just the account settings page. Settings flows that get
+ * modalized in the future should be added here so the underlay
+ * tracking picks them up.
+ */
+const MODAL_ROUTE_KINDS: ReadonlySet<Route['kind']> = new Set<Route['kind']>(['account']);
+
+/**
+ * Most recent non-modal route the viewer was on. The `account`
+ * modal renders the view derived from this route as its underlay so
+ * closing the modal returns the viewer to where they were instead
+ * of dropping them on a default landing.
+ *
+ * Defaults to `home` for the very first render (or a direct deep
+ * link to /account) — there's no real "previous" then, so the team
+ * overview is the most predictable fallback.
+ */
+const lastNonModalRouteSignal = signal<Route>({ kind: 'home' });
+
+if (typeof window !== 'undefined') {
+  effect(() => {
+    const r = currentRoute.value;
+    if (!MODAL_ROUTE_KINDS.has(r.kind)) {
+      lastNonModalRouteSignal.value = r;
+    }
+  });
+
+  // The inspector overlay is contextual to a thread. Navigating to
+  // anything else — a panel, the browse page, an objective — should
+  // auto-close it so it doesn't reopen inappropriately on the next
+  // thread visit. Likewise the navcol drawer collapses on every
+  // navigation so a tap on a row doesn't leave the drawer obscuring
+  // the just-revealed view.
+  let lastRouteKey: string | null = null;
+  effect(() => {
+    const r = currentRoute.value;
+    const key = JSON.stringify(r);
+    if (lastRouteKey !== null && lastRouteKey !== key) {
+      closeInspector();
+      isSidebarOpen.value = false;
+    }
+    lastRouteKey = key;
+  });
+}
+
+export const lastNonModalView = computed<View>(() =>
+  viewFromRoute(lastNonModalRouteSignal.value),
+);
+
+export function isModalView(v: View): boolean {
+  return v.kind === 'account';
+}
+
+/**
+ * Navigate back to the underlay (most recent non-modal route).
+ * Used as the close handler for modalized routes.
+ */
+export function closeModalView(): void {
+  navigate(lastNonModalRouteSignal.value);
+}
+
 function viewFromRoute(route: Route): View {
   switch (route.kind) {
     case 'home':
@@ -40,10 +117,29 @@ function viewFromRoute(route: Route): View {
       return { kind: 'inbox' };
     case 'account':
       return { kind: 'account' };
-    case 'thread-primary':
-      return { kind: 'thread', key: PRIMARY_THREAD };
+    case 'thread-channel': {
+      // Map a `/c/<slug>` URL to its internal thread key. General has
+      // a known fixed key (legacy `'primary'`); other channels need a
+      // slug → id lookup against the channels signal. If the lookup
+      // misses (channel not yet loaded, or a stale URL referencing an
+      // archived/unknown channel), we fall through to a placeholder
+      // key derived from the slug — the Transcript renders the
+      // resulting thread as "no messages yet" while the load resolves.
+      if (route.slug === GENERAL_CHANNEL_ID) {
+        return { kind: 'thread', key: GENERAL_THREAD, channelSlug: route.slug };
+      }
+      const ch = channelBySlug(route.slug);
+      if (ch) {
+        return { kind: 'thread', key: channelThreadKey(ch.id), channelSlug: ch.slug };
+      }
+      return { kind: 'thread', key: `${CHAN_PREFIX}${route.slug}`, channelSlug: route.slug };
+    }
     case 'thread-dm':
       return { kind: 'thread', key: dmThreadKey(route.name) };
+    case 'channels-browse':
+      return { kind: 'channels-browse' };
+    case 'channel-create':
+      return { kind: 'channel-create' };
     case 'objectives-list':
       return { kind: 'objectives-list' };
     case 'objective-create':
@@ -76,13 +172,35 @@ export function closeSidebar(): void {
 
 export function selectThread(key: string): void {
   if (key === PRIMARY_THREAD) {
-    navigate({ kind: 'thread-primary' });
+    navigate({ kind: 'thread-channel', slug: GENERAL_CHANNEL_ID });
   } else if (isDmThread(key)) {
     navigate({ kind: 'thread-dm', name: key.slice(DM_PREFIX.length) });
+  } else if (isChannelThread(key)) {
+    // Non-general channel keys are `chan:<id>` — find the matching
+    // slug for a clean URL. If the lookup misses the user lands on
+    // the placeholder thread; the URL is best-effort.
+    const id = key.slice(CHAN_PREFIX.length);
+    const ch = channelBySlug(id);
+    navigate({ kind: 'thread-channel', slug: ch?.slug ?? id });
   }
   // `obj:<id>` threads don't have a top-level URL — they surface
   // inside the objective detail view. Ignore the call; callers
   // asking for such a thread should route to the objective instead.
+  isSidebarOpen.value = false;
+}
+
+export function selectChannel(slug: string): void {
+  navigate({ kind: 'thread-channel', slug });
+  isSidebarOpen.value = false;
+}
+
+export function selectChannelsBrowse(): void {
+  navigate({ kind: 'channels-browse' });
+  isSidebarOpen.value = false;
+}
+
+export function selectChannelCreate(): void {
+  navigate({ kind: 'channel-create' });
   isSidebarOpen.value = false;
 }
 
@@ -144,7 +262,7 @@ export function __resetViewForTests(): void {
   // Clearing the router to `/` maps to view { kind: 'overview' } via
   // the computed above. The shell tests were originally written
   // against a default of primary-thread; we preserve that by
-  // navigating explicitly.
-  navigate({ kind: 'thread-primary' }, { replace: true });
+  // navigating explicitly to the general channel (its successor).
+  navigate({ kind: 'thread-channel', slug: GENERAL_CHANNEL_ID }, { replace: true });
   isSidebarOpen.value = false;
 }

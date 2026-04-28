@@ -110,6 +110,95 @@ describe('Broker.subscribe identity', () => {
   });
 });
 
+describe('Broker.push channel-scoped fanout', () => {
+  it('with explicit recipients delivers only to those members + sender', async () => {
+    const { broker } = makeBroker();
+    for (const name of ['alice', 'bob', 'carol', 'dave']) {
+      await broker.register(name, {
+        role: { title: 'engineer', description: '' },
+        name,
+      });
+    }
+    const inboxes = new Map<string, Message[]>();
+    for (const name of ['alice', 'bob', 'carol', 'dave']) {
+      inboxes.set(name, []);
+      broker.subscribe(
+        name,
+        (m) => {
+          inboxes.get(name)?.push(m);
+        },
+        { name },
+      );
+    }
+
+    // Channel members are alice + bob; carol and dave are NOT in the
+    // channel and must not see the message.
+    const result = await broker.push(
+      { body: 'channel ping' },
+      { from: 'alice', recipients: ['alice', 'bob'] },
+    );
+
+    // targets reports the explicit recipient set (sender included
+    // for multi-device sync but not counted toward addressee size).
+    expect(result.delivery.targets).toBe(2);
+    expect(result.delivery.live).toBe(2);
+    expect(inboxes.get('alice')).toHaveLength(1);
+    expect(inboxes.get('bob')).toHaveLength(1);
+    expect(inboxes.get('carol')).toHaveLength(0);
+    expect(inboxes.get('dave')).toHaveLength(0);
+  });
+
+  it('with empty recipients still delivers to the sender (multi-device)', async () => {
+    const { broker } = makeBroker();
+    await broker.register('alice', {
+      role: { title: 'engineer', description: '' },
+      name: 'alice',
+    });
+    const inbox: Message[] = [];
+    broker.subscribe(
+      'alice',
+      (m) => {
+        inbox.push(m);
+      },
+      { name: 'alice' },
+    );
+    const result = await broker.push(
+      { body: 'lone message' },
+      { from: 'alice', recipients: [] },
+    );
+    // No explicit recipients but the sender still sees their own
+    // message via sender-fanout. Targets is 0 because the recipient
+    // list is empty.
+    expect(result.delivery.targets).toBe(0);
+    expect(inbox).toHaveLength(1);
+  });
+
+  it('skips offline channel members silently', async () => {
+    const { broker } = makeBroker();
+    await broker.register('alice', {
+      role: { title: 'engineer', description: '' },
+      name: 'alice',
+    });
+    // bob is "in the channel" but not registered/online.
+    const inbox: Message[] = [];
+    broker.subscribe(
+      'alice',
+      (m) => {
+        inbox.push(m);
+      },
+      { name: 'alice' },
+    );
+    const result = await broker.push(
+      { body: 'half-offline' },
+      { from: 'alice', recipients: ['alice', 'bob'] },
+    );
+    // Targets reports the channel-recipient count regardless of who's
+    // actually online; live counts only delivered subscribers.
+    expect(result.delivery.targets).toBe(2);
+    expect(result.delivery.live).toBe(1);
+  });
+});
+
 describe('Broker.push DM sender-fanout', () => {
   it("delivers a DM to the sender's own agent when both are registered", async () => {
     const { broker } = makeBroker();

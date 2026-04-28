@@ -30,10 +30,25 @@ export interface EventLogQueryOptions {
   viewer: string;
   /** If set, narrow to DMs between viewer and this other name. */
   with?: string;
+  /**
+   * If set, narrow to messages tagged for this channel id (matched
+   * against `data.thread === 'chan:<channel>'`). The special value
+   * `'general'` includes the implicit-broadcast variant — messages
+   * with `to === null` whose `data.thread` is unset OR explicitly
+   * `'chan:general'`. Mutually exclusive with `with`.
+   */
+  channel?: string;
   /** Hard upper bound on rows returned. Defaults to 100, max 1000. */
   limit?: number;
   /** Return only rows with `ts < before`. For pagination. */
   before?: number;
+}
+
+export const GENERAL_CHANNEL_ID = 'general' as const;
+export const CHANNEL_THREAD_PREFIX = 'chan:' as const;
+
+export function channelThreadTag(channelId: string): string {
+  return `${CHANNEL_THREAD_PREFIX}${channelId}`;
 }
 
 export interface EventLog {
@@ -88,7 +103,11 @@ export class InMemoryEventLog implements EventLog {
       const ev = this.events[i];
       if (!ev) continue;
       if (options.before !== undefined && ev.ts >= options.before) continue;
-      if (!matchesViewer(ev, options.viewer, options.with)) continue;
+      if (options.channel !== undefined) {
+        if (!matchesChannel(ev, options.channel)) continue;
+      } else if (!matchesViewer(ev, options.viewer, options.with)) {
+        continue;
+      }
       matches.push(ev);
       if (matches.length >= limit) break;
     }
@@ -99,6 +118,21 @@ export class InMemoryEventLog implements EventLog {
   size(): number {
     return this.events.length;
   }
+}
+
+function matchesChannel(ev: Message, channelId: string): boolean {
+  const tag = ev.data?.thread;
+  const expected = channelThreadTag(channelId);
+  if (typeof tag === 'string' && tag.length > 0) {
+    return tag === expected;
+  }
+  // Untagged messages — for general only, treat broadcast (`to: null`)
+  // messages without an explicit thread as channel content. Channel
+  // messages are otherwise always tagged.
+  if (channelId === GENERAL_CHANNEL_ID) {
+    return ev.to === null;
+  }
+  return false;
 }
 
 function matchesViewer(ev: Message, viewer: string, withOther?: string): boolean {

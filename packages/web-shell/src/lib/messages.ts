@@ -26,6 +26,22 @@ import { signal } from '@preact/signals';
 export const PRIMARY_THREAD = 'primary';
 export const DM_PREFIX = 'dm:';
 export const OBJ_PREFIX = 'obj:';
+export const CHAN_PREFIX = 'chan:';
+/**
+ * Special channel id reserved for the synthetic "general" channel —
+ * the always-present, everyone's-default team thread. Server-side this
+ * is `GENERAL_CHANNEL_ID` in `@agentc7/core`. We re-export the same
+ * literal here to avoid a cross-package import for one constant.
+ */
+export const GENERAL_CHANNEL_ID = 'general';
+
+/**
+ * Thread key for the general channel. We continue to use the legacy
+ * `'primary'` value so existing subscribers, persisted last-read
+ * cursors, and the messages-map don't break — `general` is the same
+ * thread, just renamed in the UI.
+ */
+export const GENERAL_THREAD = PRIMARY_THREAD;
 
 /**
  * Build a DM thread key from the counterpart name. Centralized
@@ -53,6 +69,32 @@ export function isObjectiveThread(key: string): boolean {
 }
 
 /**
+ * Thread key for a non-general channel. The general channel uses the
+ * legacy `PRIMARY_THREAD` key — see `channelThreadKey` below for the
+ * id-aware version that handles both.
+ */
+export function channelThreadKey(channelId: string): string {
+  if (channelId === GENERAL_CHANNEL_ID) return GENERAL_THREAD;
+  return `${CHAN_PREFIX}${channelId}`;
+}
+
+/** True if `key` names a channel thread (general OR explicit `chan:<id>`). */
+export function isChannelThread(key: string): boolean {
+  return key === GENERAL_THREAD || key.startsWith(CHAN_PREFIX);
+}
+
+/**
+ * Extract the channel id from a channel thread key, or `null` if the
+ * key isn't a channel key. General returns `'general'` so callers can
+ * use the result as a channel id directly.
+ */
+export function channelIdOfThread(key: string): string | null {
+  if (key === GENERAL_THREAD) return GENERAL_CHANNEL_ID;
+  if (key.startsWith(CHAN_PREFIX)) return key.slice(CHAN_PREFIX.length);
+  return null;
+}
+
+/**
  * Extract the counterpart name from a DM thread key. Returns
  * `null` for `PRIMARY_THREAD` or any non-DM key so callers can
  * short-circuit cleanly.
@@ -67,9 +109,16 @@ export function threadKeyOf(msg: Message, self: string): string {
   // Explicit thread override wins. Objective lifecycle events and
   // discussion posts both ship with `data.thread = 'obj:<id>'` so
   // they route straight into the objective's dedicated thread,
-  // bypassing the primary/DM heuristics below.
+  // bypassing the primary/DM heuristics below. Channel-tagged
+  // messages flow the same way: `data.thread = 'chan:<id>'`. The
+  // general channel uses the legacy `'primary'` key so persisted
+  // state stays valid; we collapse `chan:general` → primary here.
   const explicit = typeof msg.data?.thread === 'string' ? (msg.data.thread as string) : null;
-  if (explicit !== null && explicit.length > 0) return explicit;
+  if (explicit !== null && explicit.length > 0) {
+    if (explicit === channelThreadKey(GENERAL_CHANNEL_ID)) return GENERAL_THREAD;
+    if (explicit === `${CHAN_PREFIX}${GENERAL_CHANNEL_ID}`) return GENERAL_THREAD;
+    return explicit;
+  }
 
   if (msg.to === null) return PRIMARY_THREAD;
   if (msg.to === self) {
@@ -88,6 +137,18 @@ export function threadKeyOf(msg: Message, self: string): string {
  * replaced rather than mutated for the same reason.
  */
 export const messagesByThread = signal<Map<string, Message[]>>(new Map());
+
+/**
+ * Currently-selected message id. Set when the user clicks an exchange
+ * in the right-rail `ActivityInspector` to jump to the agent message
+ * that exchange produced. Cleared on thread switch (Transcript owns
+ * that). `null` is the "nothing selected" steady state.
+ */
+export const selectedThreadMessageId = signal<string | null>(null);
+
+export function selectThreadMessage(id: string | null): void {
+  selectedThreadMessageId.value = id;
+}
 
 /**
  * Append one or more messages to their respective threads. Handles
