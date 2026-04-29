@@ -15,6 +15,7 @@ import { useEffect } from 'preact/hooks';
 import { briefing } from '../lib/briefing.js';
 import { loadObjectives, objectives, objectivesLoaded } from '../lib/objectives.js';
 import { selectObjectiveCreate, selectObjectiveDetail } from '../lib/view.js';
+import { AlertTriangle } from './icons/index.js';
 import { EmptyState, ErrorCallout, Loading, PageHeader } from './ui/index.js';
 
 export interface ObjectivesPanelProps {
@@ -145,8 +146,12 @@ function ObjectiveRow({ objective, viewer }: { objective: Objective; viewer: str
           {isMine ? '(you)' : `→ ${objective.assignee}`}
         </div>
         {objective.blockReason && (
-          <div style="font-family:var(--f-sans);font-size:13px;color:var(--ember);margin-top:6px;font-weight:500">
-            ◆ blocked: {objective.blockReason}
+          <div
+            class="flex items-center"
+            style="font-family:var(--f-sans);font-size:13px;color:var(--ember);margin-top:6px;font-weight:500;gap:6px"
+          >
+            <AlertTriangle size={13} aria-hidden="true" class="flex-shrink-0" />
+            <span>blocked: {objective.blockReason}</span>
           </div>
         )}
       </button>

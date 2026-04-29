@@ -33,6 +33,7 @@ import type { JSX } from 'preact';
 import { useEffect } from 'preact/hooks';
 import { highlightXmlTags } from '../lib/channel-highlight.js';
 import { getClient } from '../lib/client.js';
+import { AlertCircle } from './icons/index.js';
 
 const exchanges = signal<ActivityLlmExchange[]>([]);
 const loading = signal(false);
@@ -105,7 +106,7 @@ export function TracePanel({ objective }: TracePanelProps): JSX.Element {
           {err !== null && (
             <div class="callout err" role="alert">
               <div class="icon" aria-hidden="true">
-                ◆
+                <AlertCircle size={16} />
               </div>
               <div class="body">
                 <div class="msg">{err}</div>

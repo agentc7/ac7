@@ -58,6 +58,18 @@ import {
   selectOverview,
   view,
 } from '../../lib/view.js';
+import {
+  BrandMark,
+  Folder,
+  Hash,
+  Home,
+  Inbox,
+  LogOut,
+  Plus,
+  Settings,
+  Target,
+  Users,
+} from '../icons/index.js';
 
 export interface NavColumnProps {
   viewer: string;
@@ -111,14 +123,14 @@ export function NavColumn({ viewer }: NavColumnProps) {
       <div style="padding:8px 0;border-bottom:1px solid var(--rule)">
         <NavItem
           label="Home"
-          glyph="⌂"
+          glyph={<Home size={15} aria-hidden="true" />}
           active={homeActive}
           onClick={selectOverview}
           ariaLabel="Open team home"
         />
         <NavItem
           label="Inbox"
-          glyph="✎"
+          glyph={<Inbox size={15} aria-hidden="true" />}
           active={inboxActive}
           onClick={selectInbox}
           ariaLabel={inbox > 0 ? `Open inbox (${inbox} items)` : 'Open inbox'}
@@ -126,7 +138,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
         />
         <NavItem
           label="Objectives"
-          glyph="◇"
+          glyph={<Target size={15} aria-hidden="true" />}
           active={objectivesActive}
           onClick={selectObjectivesList}
           ariaLabel={
@@ -142,7 +154,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
         />
         <NavItem
           label="Files"
-          glyph="▤"
+          glyph={<Folder size={15} aria-hidden="true" />}
           active={filesActive}
           onClick={() => selectFiles(`/${viewer}`)}
           ariaLabel="Browse files"
@@ -150,7 +162,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
         {isAdmin && (
           <NavItem
             label="Members"
-            glyph="⊕"
+            glyph={<Users size={15} aria-hidden="true" />}
             active={membersActive}
             onClick={selectMembers}
             ariaLabel="Manage members"
@@ -178,9 +190,10 @@ export function NavColumn({ viewer }: NavColumnProps) {
             onClick={selectChannelCreate}
             aria-label="Create a channel"
             title="Create a channel"
-            style="background:transparent;border:none;color:var(--muted);font-family:var(--f-mono);font-size:14px;line-height:1;cursor:pointer;padding:2px 4px;border-radius:var(--r-xs)"
+            class="flex items-center justify-center"
+            style="background:transparent;border:none;color:var(--muted);line-height:1;cursor:pointer;padding:2px 4px;border-radius:var(--r-xs)"
           >
-            +
+            <Plus size={14} aria-hidden="true" />
           </button>
         </li>
         {!channelsLoaded && (
@@ -271,19 +284,7 @@ function TeamSettingsButton() {
         class="navitem w-full"
         style="text-align:left"
       >
-        <svg
-          viewBox="0 0 24 24"
-          class="h-4 w-4 flex-shrink-0"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
+        <Settings size={16} aria-hidden="true" class="flex-shrink-0" />
         <span class="truncate flex-1">Team settings</span>
       </button>
     </div>
@@ -305,17 +306,14 @@ function TeamHeader() {
       class="w-full flex items-center gap-2"
       style="padding:12px 14px;border-bottom:1px solid var(--rule);background:transparent;border:none;border-bottom:1px solid var(--rule);text-align:left;cursor:pointer"
     >
-      <svg
-        viewBox="0 0 120 120"
-        class="h-5 w-5 flex-shrink-0"
-        fill="none"
+      <BrandMark
+        size={20}
         stroke="var(--steel)"
-        stroke-width="5"
-        stroke-linejoin="round"
+        strokeWidth={5}
+        filledVertices={false}
+        class="flex-shrink-0"
         aria-hidden="true"
-      >
-        <polygon points="60,15 95.18,31.94 103.87,70.01 79.52,100.54 40.48,100.54 16.13,70.01 24.82,31.94" />
-      </svg>
+      />
       <div class="min-w-0">
         <div
           class="font-display truncate"
@@ -359,19 +357,7 @@ function AccountSettingsButton() {
         class="navitem flex-1"
         style="text-align:left"
       >
-        <svg
-          viewBox="0 0 24 24"
-          class="h-4 w-4 flex-shrink-0"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
+        <Settings size={16} aria-hidden="true" class="flex-shrink-0" />
         <span class="truncate flex-1">Account</span>
       </button>
       {showSignOut && (
@@ -385,20 +371,7 @@ function AccountSettingsButton() {
           class="flex-shrink-0 flex items-center justify-center"
           style="width:28px;height:28px;background:transparent;border:none;color:var(--muted);cursor:pointer;border-radius:6px"
         >
-          <svg
-            viewBox="0 0 24 24"
-            class="h-4 w-4"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
-            <path d="M10 17l5-5-5-5" />
-            <path d="M15 12H3" />
-          </svg>
+          <LogOut size={16} aria-hidden="true" />
         </button>
       )}
     </div>
@@ -429,7 +402,7 @@ function NavItem({
   disabled,
 }: {
   label: string;
-  glyph?: string;
+  glyph?: ComponentChildren;
   active: boolean;
   onClick: () => void;
   ariaLabel?: string;
@@ -450,7 +423,8 @@ function NavItem({
       {glyph !== undefined && (
         <span
           aria-hidden="true"
-          style="color:var(--muted);font-family:var(--f-mono);font-size:12.5px;width:14px;text-align:center;flex:0 0 auto"
+          class="flex items-center justify-center flex-shrink-0"
+          style={`color:${active ? 'var(--ink)' : 'var(--muted)'};width:18px;height:18px`}
         >
           {glyph}
         </span>
@@ -494,9 +468,10 @@ function ChannelRow({
     >
       <span
         aria-hidden="true"
-        style="color:var(--muted);font-family:var(--f-mono);font-size:12.5px;width:14px;text-align:center;flex:0 0 auto"
+        class="flex items-center justify-center flex-shrink-0"
+        style="color:var(--muted);width:18px;height:18px"
       >
-        #
+        <Hash size={14} />
       </span>
       <span
         class={`truncate flex-1${unread > 0 && !active ? ' font-semibold' : ''}`}

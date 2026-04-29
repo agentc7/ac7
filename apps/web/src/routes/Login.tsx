@@ -10,6 +10,7 @@
  * re-enter on the next 30-second rotation.
  */
 
+import { AlertCircle, AlertTriangle, BrandMark, X } from '@agentc7/web-shell';
 import { signal } from '@preact/signals';
 import type { JSX } from 'preact';
 import { LoginError, loginWithTotp, sessionNotice } from '../lib/session.js';
@@ -70,27 +71,16 @@ export function Login() {
         style="display:flex;flex-direction:column;gap:20px"
       >
         <div style="text-align:center">
-          {/* Heptagon mark — steel on paper */}
-          <svg
-            viewBox="0 0 120 120"
+          {/* Heptagon mark — matches the dashboard top-bar mark
+              (uses `var(--ink)`: dark navy in light mode, warm cream
+              in dusk). */}
+          <BrandMark
+            size={48}
+            stroke="var(--ink)"
+            strokeWidth={3}
             class="mx-auto"
-            style="height:48px;width:48px;margin-bottom:14px"
-            fill="none"
-            stroke="var(--steel)"
-            stroke-width="3"
-            stroke-linejoin="round"
-            aria-label="AgentC7"
-            role="img"
-          >
-            <polygon points="60,15 95.18,31.94 103.87,70.01 79.52,100.54 40.48,100.54 16.13,70.01 24.82,31.94" />
-            <circle cx="60" cy="15" r="10" fill="var(--steel)" stroke="none" />
-            <circle cx="95.18" cy="31.94" r="10" fill="var(--steel)" stroke="none" />
-            <circle cx="103.87" cy="70.01" r="10" fill="var(--steel)" stroke="none" />
-            <circle cx="79.52" cy="100.54" r="10" fill="var(--steel)" stroke="none" />
-            <circle cx="40.48" cy="100.54" r="10" fill="var(--steel)" stroke="none" />
-            <circle cx="16.13" cy="70.01" r="10" fill="var(--steel)" stroke="none" />
-            <circle cx="24.82" cy="31.94" r="10" fill="var(--steel)" stroke="none" />
-          </svg>
+            style="margin-bottom:14px"
+          />
           <div
             class="font-display"
             style="font-size:28px;font-weight:700;letter-spacing:-0.02em;color:var(--ink);line-height:1.05"
@@ -105,7 +95,7 @@ export function Login() {
         {notice !== null && (
           <div role="status" class="callout warn">
             <div class="icon" aria-hidden="true">
-              ◆
+              <AlertTriangle size={16} />
             </div>
             <div class="body">
               <div class="msg">{notice}</div>
@@ -118,7 +108,7 @@ export function Login() {
               aria-label="Dismiss"
               class="close"
             >
-              ×
+              <X size={14} aria-hidden="true" />
             </button>
           </div>
         )}
@@ -147,7 +137,7 @@ export function Login() {
         {error.value && (
           <div role="alert" class="callout err">
             <div class="icon" aria-hidden="true">
-              ◆
+              <AlertCircle size={16} />
             </div>
             <div class="body">
               <div class="msg">{error.value}</div>

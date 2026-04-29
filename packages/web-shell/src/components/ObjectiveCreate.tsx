@@ -15,6 +15,7 @@ import { identity } from '../lib/identity.js';
 import { createObjective } from '../lib/objectives.js';
 import { roster } from '../lib/roster.js';
 import { selectObjectiveDetail, selectObjectivesList } from '../lib/view.js';
+import { AlertCircle, X } from './icons/index.js';
 
 interface PendingUpload {
   localId: string;
@@ -254,7 +255,7 @@ export function ObjectiveCreate() {
                       watchers.value = watchers.value.filter((x) => x !== w);
                     }}
                   >
-                    ×
+                    <X size={12} aria-hidden="true" />
                   </button>
                 </span>
               ))}
@@ -319,9 +320,9 @@ export function ObjectiveCreate() {
                     type="button"
                     onClick={() => dismissUpload(u.localId)}
                     aria-label={`Remove ${u.file.name}`}
-                    style="background:none;border:none;padding:0 0 0 4px;cursor:pointer;color:var(--muted);font-size:14px;line-height:1"
+                    style="background:none;border:none;padding:0 0 0 4px;cursor:pointer;color:var(--muted);display:inline-flex;align-items:center"
                   >
-                    ×
+                    <X size={12} aria-hidden="true" />
                   </button>
                 </span>
               ))}
@@ -346,7 +347,7 @@ export function ObjectiveCreate() {
         {err.value && (
           <div role="alert" class="callout err">
             <div class="icon" aria-hidden="true">
-              ◆
+              <AlertCircle size={16} />
             </div>
             <div class="body">
               <div class="msg">{err.value}</div>

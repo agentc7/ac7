@@ -32,7 +32,7 @@ import type { Message } from '@agentc7/sdk/types';
 import { useEffect, useRef } from 'preact/hooks';
 import { renderInlineMarkdown } from '../lib/markdown.js';
 import { selectedThreadMessageId } from '../lib/messages.js';
-import { senderTextClass } from '../lib/theme.js';
+import { senderTextClass } from '../lib/sender-color.js';
 import { MessageAttachments } from './MessageAttachments.js';
 
 /** 5 minutes — matches Slack's default "merge into a group" threshold. */

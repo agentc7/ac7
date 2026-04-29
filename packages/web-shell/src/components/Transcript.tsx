@@ -18,6 +18,7 @@ import {
   threadMessages,
 } from '../lib/messages.js';
 import { selectAgentDetail, view } from '../lib/view.js';
+import { PanelRight } from './icons/index.js';
 import { MessageLine } from './MessageLine.js';
 
 const STICKY_BOTTOM_PX = 64;
@@ -108,20 +109,7 @@ export function Transcript({ viewer }: TranscriptProps) {
             title="Activity inspector"
             style={`width:32px;height:32px;background:${isInspectorOpen.value ? 'var(--paper)' : 'transparent'};border:1px solid ${isInspectorOpen.value ? 'var(--rule)' : 'transparent'};color:${isInspectorOpen.value ? 'var(--steel)' : 'var(--graphite)'};border-radius:var(--r-sm);cursor:pointer;flex-shrink:0`}
           >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <rect x="3" y="3" width="18" height="18" rx="2" />
-              <path d="M15 3 L15 21" />
-            </svg>
+            <PanelRight size={16} aria-hidden="true" />
           </button>
         </div>
       )}

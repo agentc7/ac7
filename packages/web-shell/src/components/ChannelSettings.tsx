@@ -25,6 +25,7 @@ import {
 import { getClient } from '../lib/client.js';
 import { roster } from '../lib/roster.js';
 import { selectChannelsBrowse } from '../lib/view.js';
+import { AlertCircle, X } from './icons/index.js';
 
 interface ChannelSettingsProps {
   channel: ChannelSummary;
@@ -182,16 +183,18 @@ export function ChannelSettings({ channel, viewer, onClose }: ChannelSettingsPro
           class="btn btn-ghost btn-sm"
           style="padding:4px 8px"
         >
-          ×
+          <X size={14} aria-hidden="true" />
         </button>
       </div>
 
       {memberError.value !== null && (
-        <div
-          role="alert"
-          style="font-family:var(--f-sans);font-size:12.5px;color:var(--err);background:rgba(211,47,47,0.08);border:1px solid var(--err);border-radius:var(--r-sm);padding:8px 10px"
-        >
-          {memberError.value}
+        <div role="alert" class="callout callout--compact err">
+          <div class="icon" aria-hidden="true">
+            <AlertCircle size={14} />
+          </div>
+          <div class="body">
+            <div class="msg">{memberError.value}</div>
+          </div>
         </div>
       )}
 

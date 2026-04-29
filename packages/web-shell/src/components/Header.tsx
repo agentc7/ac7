@@ -17,6 +17,7 @@ import { embeddedShell } from '../lib/embedded.js';
 import { identity } from '../lib/identity.js';
 import { openPalette } from '../lib/palette.js';
 import { isSidebarOpen, openSidebar } from '../lib/view.js';
+import { BrandMark as BrandHeptagon, Menu, Search } from './icons/index.js';
 
 export function Header() {
   // Header renders only after identity is set so the rest of the
@@ -49,17 +50,7 @@ export function Header() {
               : 'color:var(--graphite);padding:10px;margin:-10px -6px -10px -10px'
           }
         >
-          <svg
-            viewBox="0 0 24 24"
-            class="h-5 w-5"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            aria-hidden="true"
-          >
-            <path d="M4 6h16M4 12h16M4 18h16" />
-          </svg>
+          <Menu size={20} aria-hidden="true" />
         </button>
 
         <BrandMark embedded={embedded} />
@@ -85,31 +76,7 @@ export function Header() {
  * it's a smaller inline mark with no alignment column.
  */
 function BrandMark({ embedded }: { embedded: boolean }) {
-  const size = 26;
-  const mark = (
-    <svg
-      viewBox="0 0 120 120"
-      class="flex-shrink-0"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="6"
-      stroke-linejoin="round"
-      aria-label="AgentC7"
-      role="img"
-      style={`width:${size}px;height:${size}px;color:var(--ink)`}
-    >
-      <polygon points="60,15 95.18,31.94 103.87,70.01 79.52,100.54 40.48,100.54 16.13,70.01 24.82,31.94" />
-      <g fill="currentColor" stroke="none">
-        <circle cx="60" cy="15" r="10" />
-        <circle cx="95.18" cy="31.94" r="10" />
-        <circle cx="103.87" cy="70.01" r="10" />
-        <circle cx="79.52" cy="100.54" r="10" />
-        <circle cx="40.48" cy="100.54" r="10" />
-        <circle cx="16.13" cy="70.01" r="10" />
-        <circle cx="24.82" cy="31.94" r="10" />
-      </g>
-    </svg>
-  );
+  const mark = <BrandHeptagon size={26} class="flex-shrink-0" style="color:var(--ink)" />;
 
   if (!embedded) return mark;
 
@@ -136,7 +103,7 @@ function SearchButton() {
       class="flex items-center w-full"
       style="background:var(--ice);border:1px solid var(--rule);border-radius:var(--r-sm);padding:7px 12px;gap:10px;color:var(--muted);cursor:pointer;font-family:var(--f-sans);font-size:13px;max-width:100%;transition:border-color .15s var(--ease,ease)"
     >
-      <span aria-hidden="true">⌕</span>
+      <Search size={14} aria-hidden="true" class="flex-shrink-0" />
       <span
         class="hidden sm:inline flex-1"
         style="text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0"
