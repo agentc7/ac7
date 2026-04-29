@@ -1,0 +1,32 @@
+# Quickstart compose file for self-hosting ac7.
+#
+# First run:
+#   docker compose run --rm -it ac7  # triggers the setup wizard
+#   docker compose up -d              # subsequent runs in the background
+#
+# State (config, encryption key, SQLite db, self-signed certs) lives on
+# a named volume so it survives `docker compose down`. To wipe state,
+# remove the volume: `docker compose down -v`.
+
+services:
+  ac7:
+    build: .
+    image: ac7
+    container_name: ac7
+    restart: unless-stopped
+    ports:
+      - "8717:8717"   # HTTP
+      - "7443:7443"   # HTTPS (self-signed when bound to non-loopback)
+    volumes:
+      - ac7-data:/data
+    environment:
+      AC7_CONFIG_PATH: /data/ac7.json
+      AC7_HOST: 0.0.0.0
+      AC7_PORT: 8717
+      AC7_DB_PATH: /data/ac7.db
+      # Set AC7_KEK to a base64-encoded 32-byte key in production.
+      # Without it the server generates /data/ac7-kek.bin on first boot.
+      # AC7_KEK: ""
+
+volumes:
+  ac7-data:

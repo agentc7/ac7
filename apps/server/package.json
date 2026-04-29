@@ -1,0 +1,80 @@
+{
+  "name": "@agentc7/server",
+  "version": "0.0.0-dev",
+  "description": "Node HTTP broker for ac7 — self-hostable agent control plane (Hono + SQLite).",
+  "license": "Apache-2.0",
+  "author": "Andrew Przybilla <andrewprzybilla@gmail.com>",
+  "homepage": "https://github.com/agentc7/ac7#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentc7/ac7.git",
+    "directory": "apps/server"
+  },
+  "bugs": {
+    "url": "https://github.com/agentc7/ac7/issues"
+  },
+  "keywords": [
+    "ac7",
+    "mcp",
+    "agent",
+    "broker",
+    "server",
+    "self-hosted",
+    "hono",
+    "sqlite"
+  ],
+  "type": "module",
+  "main": "./dist/run.js",
+  "types": "./dist/run.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/run.d.ts",
+      "import": "./dist/run.js"
+    },
+    "./bin": {
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "ac7-server": "./dist/index.js",
+    "ac7-connect-platform": "./dist/connect-platform.js"
+  },
+  "files": [
+    "dist",
+    "public"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "start": "node ./dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist .turbo"
+  },
+  "dependencies": {
+    "@agentc7/core": "workspace:*",
+    "@agentc7/sdk": "workspace:*",
+    "@hono/node-server": "^2.0.0",
+    "@hono/node-ws": "^1.3.0",
+    "hono": "^4.12.15",
+    "jose": "^6.2.3",
+    "otpauth": "^9.5.1",
+    "p-limit": "^7.1.1",
+    "qrcode-terminal": "^0.12.0",
+    "selfsigned": "^5.5.0",
+    "web-push": "^3.6.7",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@agentc7/web": "workspace:*",
+    "@types/node": "^25.6.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "@types/web-push": "^3.6.3",
+    "tsup": "^8.0.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.5"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

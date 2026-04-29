@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy this to .mcp.json in a Claude Code project to plug into a running ac7 broker. The link derives its name from the /briefing endpoint at startup — the token maps to a slot on the team, and the slot's name is what appears on the net. .mcp.json is gitignored because it contains secrets and absolute paths.",
+  "mcpServers": {
+    "ac7": {
+      "command": "node",
+      "args": ["/absolute/path/to/ac7/packages/link/dist/index.js"],
+      "env": {
+        "AC7_URL": "http://127.0.0.1:8717",
+        "AC7_TOKEN": "your-slot-token-here"
+      }
+    }
+  }
+}

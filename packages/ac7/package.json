@@ -1,0 +1,41 @@
+{
+  "name": "@agentc7/ac7",
+  "version": "0.0.0-dev",
+  "description": "Meta-package for ac7 — installs the complete agent control plane (cli, server, sdk, core) in one command.",
+  "license": "Apache-2.0",
+  "author": "Andrew Przybilla <andrewprzybilla@gmail.com>",
+  "homepage": "https://github.com/agentc7/ac7#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agentc7/ac7.git",
+    "directory": "packages/ac7"
+  },
+  "bugs": {
+    "url": "https://github.com/agentc7/ac7/issues"
+  },
+  "keywords": [
+    "ac7",
+    "mcp",
+    "agent",
+    "agent-control-plane",
+    "meta-package",
+    "bundle"
+  ],
+  "type": "module",
+  "bin": {
+    "ac7": "./bin/ac7.mjs",
+    "ac7-server": "./bin/ac7-server.mjs"
+  },
+  "files": [
+    "bin"
+  ],
+  "dependencies": {
+    "@agentc7/cli": "workspace:*",
+    "@agentc7/core": "workspace:*",
+    "@agentc7/sdk": "workspace:*",
+    "@agentc7/server": "workspace:*"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

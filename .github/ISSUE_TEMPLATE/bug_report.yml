@@ -1,0 +1,92 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly in AgentC7.
+title: "[bug] <short description>"
+labels:
+  - bug
+  - triage
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing a bug. Before you do:
+        - Please search existing issues to avoid duplicates.
+        - **Do not include secrets** (tokens, TOTP seeds, captured trace payloads with real auth headers) in logs or reproductions.
+        - For security vulnerabilities, use [SECURITY.md](../SECURITY.md) instead of this form.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong, in one or two sentences?
+      placeholder: "When I run `ac7 claude-code`, the trace proxy fails to bind on port 17333 ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction
+      description: Exact steps. Include commands, configs, and the shortest repro you can find.
+      placeholder: |
+        1. `ac7 serve` (fresh install, default config)
+        2. In another shell, `AC7_TOKEN=... ac7 claude-code`
+        3. Observe ...
+      render: bash
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened. Include error messages and relevant log lines (redact secrets).
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: AgentC7 version
+      description: Output of `ac7 --version` (or the git SHA if running from source).
+      placeholder: "0.3.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Which component?
+      description: Pick the closest surface. If unsure, pick "unsure."
+      options:
+        - broker (@agentc7/server)
+        - CLI (@agentc7/cli)
+        - web UI (@agentc7/web)
+        - SDK (@agentc7/sdk)
+        - core (@agentc7/core)
+        - docs
+        - unsure
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: OS and Node version
+      description: "e.g., `macOS 14.5 / Node 22.11.0` or `Ubuntu 24.04 / Node 22.10.0`"
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, related issues, workarounds you've tried, hypothesis about the cause.

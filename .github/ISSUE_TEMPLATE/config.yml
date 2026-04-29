@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/agentc7/ac7/security/policy
+    about: Please do NOT open a public issue for security problems. See SECURITY.md for how to report privately.
+  - name: Question or idea
+    url: https://github.com/agentc7/ac7/discussions
+    about: For usage questions, ideas, or anything exploratory, start a discussion first.
+  - name: Commercial / hosted AgentC7
+    url: https://agentc7.com
+    about: Questions about the hosted platform, enterprise, or commercial support.

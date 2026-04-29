@@ -1,0 +1,25 @@
+.git
+.gitignore
+node_modules
+**/node_modules
+**/dist
+**/.turbo
+**/coverage
+**/*.log
+
+# Local state — never bake into the image.
+/ac7.json
+/ac7-kek.bin
+/ac7.db*
+/certs/
+/data/
+config.dev.json
+**/config.dev.json
+.env
+.env.*
+!.env.example
+
+# Editor / OS noise
+.vscode
+.idea
+.DS_Store
