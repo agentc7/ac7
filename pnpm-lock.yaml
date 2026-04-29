@@ -30,11 +30,11 @@ importers:
         specifier: workspace:*
         version: link:../../packages/sdk
       '@hono/node-server':
-        specifier: ^1.19.14
-        version: 1.19.14(hono@4.12.15)
+        specifier: ^2.0.0
+        version: 2.0.0(hono@4.12.15)
       '@hono/node-ws':
         specifier: ^1.3.0
-        version: 1.3.0(@hono/node-server@1.19.14(hono@4.12.15))(hono@4.12.15)
+        version: 1.3.0(@hono/node-server@2.0.0(hono@4.12.15))(hono@4.12.15)
       hono:
         specifier: ^4.12.15
         version: 4.12.15
@@ -1020,9 +1020,16 @@ packages:
     peerDependencies:
       hono: ^4
 
+  '@hono/node-server@2.0.0':
+    resolution: {integrity: sha512-n3GfHwwCvHCkGmOwKfxUPOlbfzuO64Sbc5XC4NGPIXxkuOnJrdgExdRKmHfF924r914WRJPT397GdqLvdYTeyQ==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      hono: ^4
+
   '@hono/node-ws@1.3.0':
     resolution: {integrity: sha512-ju25YbbvLuXdqBCmLZLqnNYu1nbHIQjoyUqA8ApZOeL1k4skuiTcw5SW77/5SUYo2Xi2NVBJoVlfQurnKEp03Q==}
     engines: {node: '>=18.14.1'}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
     peerDependencies:
       '@hono/node-server': ^1.19.2
       hono: ^4.6.0
@@ -4447,9 +4454,13 @@ snapshots:
     dependencies:
       hono: 4.12.15
 
-  '@hono/node-ws@1.3.0(@hono/node-server@1.19.14(hono@4.12.15))(hono@4.12.15)':
+  '@hono/node-server@2.0.0(hono@4.12.15)':
     dependencies:
-      '@hono/node-server': 1.19.14(hono@4.12.15)
+      hono: 4.12.15
+
+  '@hono/node-ws@1.3.0(@hono/node-server@2.0.0(hono@4.12.15))(hono@4.12.15)':
+    dependencies:
+      '@hono/node-server': 2.0.0(hono@4.12.15)
       hono: 4.12.15
       ws: 8.20.0
     transitivePeerDependencies:
