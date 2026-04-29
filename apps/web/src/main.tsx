@@ -17,8 +17,14 @@ import '@unocss/reset/tailwind.css';
 import 'uno.css';
 import '@agentc7/web-shell/styles.css';
 import { registerSW } from 'virtual:pwa-register';
+import { initTheme } from '@agentc7/web-shell';
 import { render } from 'preact';
 import { App } from './App.js';
+
+// Set `<html data-theme>` from persisted preference + system prefs
+// before the first render, so styled content paints with the correct
+// palette on first frame.
+initTheme();
 
 const root = document.getElementById('app');
 if (!root) {

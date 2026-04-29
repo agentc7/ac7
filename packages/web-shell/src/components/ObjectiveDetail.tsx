@@ -35,6 +35,7 @@ import {
 } from '../lib/objectives.js';
 import { roster } from '../lib/roster.js';
 import { selectObjectivesList } from '../lib/view.js';
+import { AlertCircle, AlertTriangle, X } from './icons/index.js';
 import { MessageAttachments } from './MessageAttachments.js';
 import { MessageLine } from './MessageLine.js';
 import { TracePanel } from './TracePanel.js';
@@ -137,7 +138,7 @@ export function ObjectiveDetail({ id, viewer }: ObjectiveDetailProps) {
         <Breadcrumb id={id} />
         <div class="callout err" role="alert" style="margin-top:14px">
           <div class="icon" aria-hidden="true">
-            ◆
+            <AlertCircle size={16} />
           </div>
           <div class="body">
             <div class="msg">{err}</div>
@@ -374,7 +375,7 @@ function OverviewTab({
       {objective.blockReason && (
         <div class="callout warn" role="status">
           <div class="icon" aria-hidden="true">
-            ◆
+            <AlertTriangle size={16} />
           </div>
           <div class="body">
             <div class="title">Blocked</div>
@@ -432,7 +433,7 @@ function ActionsTab({
       {actionError.value && (
         <div class="callout err" role="alert">
           <div class="icon" aria-hidden="true">
-            ◆
+            <AlertCircle size={16} />
           </div>
           <div class="body">
             <div class="msg">{actionError.value}</div>
@@ -466,9 +467,11 @@ function ActionsTab({
                   }),
                 )
               }
-              class="btn btn-accent flex-shrink-0"
+              class="btn btn-accent flex-shrink-0 flex items-center"
+              style="gap:6px"
             >
-              ◆ Mark blocked
+              <AlertTriangle size={14} aria-hidden="true" />
+              Mark blocked
             </button>
           </div>
         </div>
@@ -700,7 +703,7 @@ function DiscussionTab({
           {discussError.value && (
             <div class="callout err" role="alert" style="margin-bottom:10px">
               <div class="icon" aria-hidden="true">
-                ◆
+                <AlertCircle size={16} />
               </div>
               <div class="body">
                 <div class="msg">{discussError.value}</div>
@@ -856,7 +859,7 @@ function WatchersSection({
                     void run(() => updateObjectiveWatchers(objectiveId, { remove: [w] }))
                   }
                 >
-                  ×
+                  <X size={12} aria-hidden="true" />
                 </button>
               )}
             </span>

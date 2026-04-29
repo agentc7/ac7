@@ -29,6 +29,7 @@
 import { signal } from '@preact/signals';
 import { getClient } from '../lib/client.js';
 import { selectMemberProfile } from '../lib/view.js';
+import { AppearancePanel } from './AppearancePanel.js';
 import { type Reveal, RevealBanner } from './members/Reveal.js';
 import { NotificationToggle } from './NotificationToggle.js';
 import { PageHeader } from './ui/index.js';
@@ -140,6 +141,17 @@ export function AccountPanel({ viewer }: AccountPanelProps) {
           title="Push on this device"
           description="Toggle browser push notifications for this device. You can enable or disable independently per browser."
           action={<NotificationToggle />}
+        />
+      </section>
+
+      <section class="card" style="padding:16px;margin-bottom:14px">
+        <div class="eyebrow" style="margin-bottom:12px">
+          Appearance
+        </div>
+        <Row
+          title="Theme"
+          description="Light, dark, or follow your system preference. Saved per browser."
+          action={<AppearancePanel />}
         />
       </section>
 

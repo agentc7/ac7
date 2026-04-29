@@ -30,6 +30,7 @@ import { useEffect } from 'preact/hooks';
 import { closeInspector, isInspectorOpen } from '../lib/inspector.js';
 import { memberActivityConnected, startMemberActivitySubscribe } from '../lib/member-activity.js';
 import { TimelineBody } from './AgentTimeline.js';
+import { X } from './icons/index.js';
 
 interface ActivityInspectorProps {
   /** Display name shown in the feed-header. */
@@ -74,18 +75,7 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
           title="Close (Esc)"
           style="width:28px;height:28px;background:var(--ice);border:1px solid var(--rule);color:var(--graphite);border-radius:var(--r-xs);cursor:pointer;flex-shrink:0;margin-left:4px"
         >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 14 14"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            aria-hidden="true"
-          >
-            <path d="M3 3 L11 11 M11 3 L3 11" />
-          </svg>
+          <X size={12} aria-hidden="true" />
         </button>
       </header>
 

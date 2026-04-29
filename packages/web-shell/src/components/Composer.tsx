@@ -39,6 +39,7 @@ import {
   PRIMARY_THREAD,
 } from '../lib/messages.js';
 import { view } from '../lib/view.js';
+import { AtSign, ChevronsDown, ChevronsUp, Paperclip, Send, Slash } from './icons/index.js';
 
 interface PendingUpload {
   /** Local stable id for render keys + removal. */
@@ -413,31 +414,11 @@ export function Composer({ viewer }: ComposerProps) {
           aria-label={expanded.value ? 'Collapse composer' : 'Expand composer'}
           aria-pressed={expanded.value}
         >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 14 14"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            {expanded.value ? (
-              // Collapse — chevrons pointing inward toward center
-              <>
-                <path d="M3 1 L7 5 L11 1" />
-                <path d="M3 13 L7 9 L11 13" />
-              </>
-            ) : (
-              // Expand — chevrons pointing outward away from center
-              <>
-                <path d="M3 5 L7 1 L11 5" />
-                <path d="M3 9 L7 13 L11 9" />
-              </>
-            )}
-          </svg>
+          {expanded.value ? (
+            <ChevronsDown size={12} aria-hidden="true" />
+          ) : (
+            <ChevronsUp size={12} aria-hidden="true" />
+          )}
         </button>
       </div>
 
@@ -457,17 +438,7 @@ export function Composer({ viewer }: ComposerProps) {
           title="Attach files"
           aria-label="Attach files"
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            aria-hidden="true"
-          >
-            <path d="M9 4 L4 9 A2 2 0 0 0 7 12 L12 7 A4 4 0 0 0 6 1 L3 4 A3 3 0 0 0 6 9 L11 4" />
-          </svg>
+          <Paperclip size={14} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -476,17 +447,7 @@ export function Composer({ viewer }: ComposerProps) {
           title="Slash command (/)"
           aria-label="Insert slash command"
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            aria-hidden="true"
-          >
-            <path d="M9 2 L5 12" />
-          </svg>
+          <Slash size={14} aria-hidden="true" />
         </button>
         <button
           type="button"
@@ -495,35 +456,12 @@ export function Composer({ viewer }: ComposerProps) {
           title="Mention (@)"
           aria-label="Mention a teammate"
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            aria-hidden="true"
-          >
-            <circle cx="7" cy="7" r="3" />
-            <path d="M10 7 V8.5 A2 2 0 0 0 13 7 A6 6 0 1 0 10 12" />
-          </svg>
+          <AtSign size={14} aria-hidden="true" />
         </button>
         <span class="composer-hint">⌘ + ↵ send · / for commands · @ to mention</span>
         <button type="button" onClick={() => void send()} disabled={!canSend} class="composer-send">
           {sendLabel}
-          {!sending.value && !anyUploading && (
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 12 12"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              aria-hidden="true"
-            >
-              <path d="M2 6 L10 6 M7 3 L10 6 L7 9" />
-            </svg>
-          )}
+          {!sending.value && !anyUploading && <Send size={10} aria-hidden="true" />}
         </button>
       </div>
     </div>

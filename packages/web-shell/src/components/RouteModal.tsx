@@ -13,6 +13,7 @@
 
 import type { ComponentChildren } from 'preact';
 import { useEffect } from 'preact/hooks';
+import { X } from './icons/index.js';
 
 export interface RouteModalProps {
   /**
@@ -71,18 +72,7 @@ export function RouteModal({ onClose, ariaLabel, size = 'lg', children }: RouteM
           class="absolute flex items-center justify-center"
           style="top:14px;right:14px;width:32px;height:32px;background:transparent;border:0;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;border-radius:var(--r-xs);z-index:10"
         >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 14 14"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.6"
-            stroke-linecap="round"
-            aria-hidden="true"
-          >
-            <path d="M3 3 L11 11 M11 3 L3 11" />
-          </svg>
+          <X size={14} aria-hidden="true" />
         </button>
         <div class="flex-1 overflow-y-auto" style="padding:0">
           {children}

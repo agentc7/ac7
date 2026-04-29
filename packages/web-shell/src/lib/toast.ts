@@ -121,6 +121,19 @@ export function dismissToast(id: string): void {
   removed?.onDismiss?.();
 }
 
+/**
+ * Remove every toast carrying `tag`. Used by signal→toast bridges
+ * (e.g. the stream-status bridge clears its sticky "Disconnected"
+ * toast when the stream comes back). No-op if no toast matches.
+ */
+export function dismissToastsByTag(tag: string): void {
+  const current = toasts.value;
+  const removed = current.filter((t) => t.tag === tag);
+  if (removed.length === 0) return;
+  toasts.value = current.filter((t) => t.tag !== tag);
+  for (const t of removed) t.onDismiss?.();
+}
+
 /** Flush the queue. Used in tests and on shell teardown. */
 export function clearAllToasts(): void {
   const current = toasts.value;

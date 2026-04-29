@@ -58,6 +58,11 @@ a {
   --ok: var(--steel);
   --warn: var(--ember);
   --err: var(--brick);
+  --err-bg: #fff6f6;
+  /* Cross-team rail (Discord-style team switcher in the platform).
+     Light mode uses `--ice` for a subtle "alt surface" feel; dark mode
+     drops deeper than `--paper` to give the rail more weight. */
+  --rail-bg: var(--ice);
 
   /* Type */
   --f-display: "Manrope", "Helvetica Neue", "Arial", sans-serif;
@@ -1315,64 +1320,89 @@ body::before {
   color: var(--err);
 }
 
-.banner {
-  padding: 14px 20px;
-  background: var(--ink);
-  color: var(--paper);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  border-radius: var(--r-sm);
-  font-size: 14px;
+/*
+ * .callout--compact — tighter padding + 16px non-chip icon. Used for
+ * inline form errors and panel-internal warnings where the full
+ * .callout block reads too heavy. Rendered via the same icon/body/
+ * close grid so existing JSX can opt into the variant by adding the
+ * modifier class.
+ */
+.callout--compact {
+  grid-template-columns: 18px 1fr auto;
+  gap: 10px;
+  padding: 10px 12px;
 }
-.banner .left {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  flex-wrap: wrap;
+.callout--compact .icon {
+  width: 18px;
+  height: 18px;
+  background: transparent;
+  color: var(--steel);
+  border-radius: 0;
 }
-.banner .badge {
-  border-color: var(--frost);
-  color: var(--frost);
+.callout--compact .body .title {
+  font-size: 13px;
+  margin-bottom: 1px;
 }
-.banner.ember {
-  background: var(--ember);
+.callout--compact .body .msg {
+  font-size: 12.5px;
 }
-
-/* Banner buttons: border matches the opposite accent so hover fills into the existing outline */
-.banner .btn-ghost,
-.banner .btn-secondary {
-  color: var(--paper);
-  border-color: var(--ember);
+.callout--compact.warn .icon {
+  background: transparent;
+  color: var(--warn);
 }
-.banner.ember .btn-ghost,
-.banner.ember .btn-secondary {
-  color: var(--paper);
-  border-color: var(--ink);
-}
-.banner .btn-ghost:hover,
-.banner .btn-secondary:hover {
-  background: var(--ember);
-  color: var(--paper);
-  border-color: var(--ember);
-}
-.banner.ember .btn-ghost:hover,
-.banner.ember .btn-secondary:hover {
-  background: var(--ink);
-  color: var(--paper);
-  border-color: var(--ink);
+.callout--compact.err .icon {
+  background: transparent;
+  color: var(--err);
 }
 
 /*
- * .toast-stack — fixed container mounted once per shell. Holds up to
- * MAX_TOASTS children stacked vertically. `pointer-events:none` lets
- * clicks pass through gaps between toasts; each `.toast` re-enables
- * pointer events on itself so its close + action remain clickable.
+ * .hint — the lightweight inline status primitive. One-line
+ * status-colored text with an optional leading Lucide icon. For
+ * "Saved", "Copied", "Field too short" — the layer below .callout
+ * where a full block would be too heavy.
+ *
+ * Renders inline (not block), so it can sit at the end of a label
+ * row, beneath an input, or inside a card without forcing a layout
+ * region of its own.
+ */
+.hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--f-sans);
+  font-size: 12.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+.hint .hint-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.hint.success {
+  color: var(--ok);
+}
+.hint.warn {
+  color: var(--warn);
+}
+.hint.err {
+  color: var(--err);
+}
+
+/*
+ * .toast-stack — fixed bottom-right container mounted once per shell.
+ * `pointer-events:none` lets clicks pass through gaps between toasts;
+ * each `.toast` re-enables pointer events on itself.
+ *
+ * Position: bottom-right on desktop, bottom-center on narrow widths.
+ * Bottom rather than top so toasts never collide with modal close
+ * buttons or the topbar chrome, and so a sticky "system status" toast
+ * can sit there without ever pushing layout.
  */
 .toast-stack {
   position: fixed;
-  top: 16px;
+  bottom: 16px;
   right: 16px;
   display: flex;
   flex-direction: column;
@@ -1380,6 +1410,9 @@ body::before {
   z-index: 60;
   pointer-events: none;
   max-width: min(92vw, 420px);
+  /* Add the safe-area inset so the stack clears the iOS home indicator. */
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-right: env(safe-area-inset-right);
 }
 @media (max-width: 640px) {
   .toast-stack {
@@ -1389,28 +1422,57 @@ body::before {
   }
 }
 
+/*
+ * Toast surface — theme-aware. Light mode uses paper + ink (the same
+ * tokens as the rest of the chrome); dark mode flips automatically via
+ * the existing `:root[data-theme="dark"]` token redefinitions. The
+ * border-left accent stripe is the kind indicator.
+ */
 .toast {
+  position: relative;
   display: grid;
-  grid-template-columns: 24px 1fr auto;
+  grid-template-columns: 20px 1fr auto;
   gap: 12px;
   padding: 12px 14px;
-  background: var(--ink);
-  color: var(--ice);
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--steel);
   border-radius: var(--r-sm);
-  box-shadow: 0 12px 40px -16px rgba(14, 28, 43, 0.35);
+  box-shadow:
+    0 1px 2px rgba(14, 28, 43, 0.05),
+    0 12px 32px -12px rgba(14, 28, 43, 0.18);
   align-items: start;
   min-width: 280px;
   max-width: 420px;
   pointer-events: auto;
-  border-left: 3px solid var(--steel);
+  overflow: hidden;
+  /* Enter motion — slide in from bottom-right, settle. */
+  animation: toast-enter 0.22s cubic-bezier(0.2, 0.7, 0.2, 1);
 }
+
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 .toast .icon {
-  color: var(--frost);
+  color: var(--steel);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 auto;
+  /* Nudge optical-center: lucide stroke icons render slightly
+     low-of-baseline relative to the title text. */
+  margin-top: 1px;
 }
 .toast .body .title {
   font-family: var(--f-display);
@@ -1418,47 +1480,123 @@ body::before {
   font-size: 13px;
   letter-spacing: -0.01em;
   margin-bottom: 2px;
-  color: var(--paper);
+  color: var(--ink);
 }
 /* biome-ignore lint/style/noDescendingSpecificity: .toast .msg and .callout .body .msg never match the same element (a .msg can't be nested in both), so the cascade-order warning is a false positive */
 .toast .msg {
   font-size: 13px;
   line-height: 1.45;
+  color: var(--graphite);
+}
+.toast .action {
+  font-family: var(--f-sans);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--steel);
+  background: transparent;
+  border: 0;
+  padding: 4px 0;
+  margin-top: 4px;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: var(--rule);
+}
+.toast .action:hover {
+  color: var(--ink);
+  text-decoration-color: var(--ink);
 }
 .toast .x {
-  color: var(--frost);
+  color: var(--muted);
   cursor: pointer;
   background: transparent;
   border: none;
-  font-size: 18px;
   line-height: 1;
   padding: 2px 4px;
   border-radius: var(--r-xs);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 .toast .x:hover {
-  color: var(--paper);
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  background: var(--ice);
 }
 
-/* Variants — mirror the .callout palette so the two visual systems stay consistent */
+/*
+ * Progress bar — pinned to the toast's bottom edge. CSS animation
+ * width-fills from 100% → 0% over the toast's own duration (set via
+ * `--toast-duration` from the component). Pauses on hover so the user
+ * can finish reading. Sticky toasts (duration === null) hide it.
+ */
+.toast .progress {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--rule);
+  overflow: hidden;
+}
+.toast .progress::after {
+  content: "";
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--steel);
+  transform-origin: right center;
+  animation: toast-progress var(--toast-duration, 5000ms) linear forwards;
+}
+.toast:hover .progress::after {
+  animation-play-state: paused;
+}
+@keyframes toast-progress {
+  from {
+    transform: scaleX(1);
+  }
+  to {
+    transform: scaleX(0);
+  }
+}
+
+/* Variants — kind indicator is the border-left + icon color + the
+   matching progress fill. Backgrounds stay neutral so the surface
+   stays readable in both palettes; severity reads from the stripe. */
 .toast.success {
-  border-left-color: #3e7a5a;
+  border-left-color: var(--ok);
 }
 .toast.success .icon {
-  color: #8fc9a8;
+  color: var(--ok);
+}
+.toast.success .progress::after {
+  background: var(--ok);
+}
+.toast.success .action {
+  color: var(--ok);
 }
 .toast.warn {
-  border-left-color: var(--ember);
+  border-left-color: var(--warn);
 }
 .toast.warn .icon {
-  color: var(--ember);
+  color: var(--warn);
+}
+.toast.warn .progress::after {
+  background: var(--warn);
+}
+.toast.warn .action {
+  color: var(--warn);
 }
 .toast.err {
   border-left-color: var(--err);
-  background: #2a1815;
 }
 .toast.err .icon {
-  color: #e9a89a;
+  color: var(--err);
+}
+.toast.err .progress::after {
+  background: var(--err);
+}
+.toast.err .action {
+  color: var(--err);
 }
 
 /* ─────────────────────────── DATA DISPLAY ─────────────────────────── */
@@ -2089,22 +2227,19 @@ body::before {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   DUSK MODE
+   DUSK MODE — `<html data-theme="dark">`
    ─────────────────────────────────────────────────────────────────────
-   Applied wherever the `.app` shell is mounted. Token remap cascades
-   through every component that references `var(--*)` — no per-component
-   rewrites needed except the small deltas below whose *logic* (not just
-   color) depends on ground tone. Spec: branding-guide-v7.html §07.
+   Token remap cascades through every component that references
+   `var(--*)` — no per-component rewrites needed except the small
+   deltas below whose *logic* (not just color) depends on ground tone.
+   Spec: branding-guide-v7.html §07.
    ═══════════════════════════════════════════════════════════════════════ */
 
-body:has(.app)::before {
-  display: none;
-}
-body:has(.app) {
-  background: #182232;
-}
-
-.app {
+/* Dark theme — applied when `<html data-theme="dark">`. The token
+   redefinitions cascade to every descendant; component rules below
+   key off the same `[data-theme="dark"]` selector for the small
+   handful of cases where token-flipping alone isn't sufficient. */
+:root[data-theme="dark"] {
   /* Surfaces */
   --paper: #182232;
   --ice: #243347;
@@ -2129,122 +2264,115 @@ body:has(.app) {
   --ok: var(--steel);
   --warn: var(--ember);
   --err: var(--brick);
+  --err-bg: rgba(211, 112, 88, 0.08);
+  --rail-bg: #0b1420;
+}
 
-  background: var(--paper);
-  color: var(--ink);
+[data-theme="dark"] body {
+  background: #182232;
+}
+[data-theme="dark"] body::before {
+  display: none;
 }
 
 /* Component deltas — rules whose semantics don't survive a blind token flip. */
 
-.app .btn-primary {
+[data-theme="dark"] .btn-primary {
   background: var(--steel);
   color: #0e1c2b;
 }
-.app .btn-primary:hover {
+[data-theme="dark"] .btn-primary:hover {
   background: #a6c4df;
 }
-.app .btn-secondary {
+[data-theme="dark"] .btn-secondary {
   background: transparent;
   color: var(--ink);
   border-color: var(--ink);
 }
-.app .btn-secondary:hover {
+[data-theme="dark"] .btn-secondary:hover {
   background: var(--ice);
 }
-.app .btn-ghost:hover {
+[data-theme="dark"] .btn-ghost:hover {
   background: var(--ice);
 }
-.app .btn-accent {
+[data-theme="dark"] .btn-accent {
   background: var(--ember);
   color: #1a1208;
 }
-.app .btn-accent:hover {
+[data-theme="dark"] .btn-accent:hover {
   background: #e8b18d;
 }
-.app .btn-icon {
+[data-theme="dark"] .btn-icon {
   background: var(--paper);
   color: var(--ink);
   border-color: var(--rule-strong);
 }
-.app .btn-icon:hover {
+[data-theme="dark"] .btn-icon:hover {
   background: var(--ice);
 }
 
-.app .banner {
+[data-theme="dark"] .codeblock {
   background: #0b1420;
   color: var(--ink);
 }
-.app .banner .badge {
-  border-color: var(--frost);
-  color: var(--ink);
-}
-.app .banner.ember {
-  background: #b8704a;
-  color: #f6f3ec;
-}
-
-.app .codeblock {
-  background: #0b1420;
-  color: var(--ink);
-}
-.app .codeblock .com {
+[data-theme="dark"] .codeblock .com {
   color: rgba(232, 226, 212, 0.45);
 }
 
-.app .avatar {
+[data-theme="dark"] .avatar {
   background: var(--ice);
   color: var(--steel);
   border-color: var(--rule);
 }
-.app .avatar.dark {
+[data-theme="dark"] .avatar.dark {
   background: #0b1420;
   color: var(--ink);
   border-color: #0b1420;
 }
 
-.app .select {
+[data-theme="dark"] .select {
   background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'><path d='M1 1l5 5 5-5' fill='none' stroke='%23E8E2D4' stroke-width='1.5'/></svg>");
 }
 
-.app .check .box {
+[data-theme="dark"] .check .box {
   border-color: var(--ink);
   background: var(--paper);
 }
-.app .check input:checked ~ .box,
-.app .check.is-checked .box {
+[data-theme="dark"] .check input:checked ~ .box,
+[data-theme="dark"] .check.is-checked .box {
   background: var(--steel);
   border-color: var(--steel);
 }
-.app .check .box::after {
+[data-theme="dark"] .check .box::after {
   border-left-color: #0e1c2b;
   border-bottom-color: #0e1c2b;
 }
 
-.app .radio .circle {
+[data-theme="dark"] .radio .circle {
   border-color: var(--ink);
   background: var(--paper);
 }
-.app .radio .circle::after {
+[data-theme="dark"] .radio .circle::after {
   background: var(--steel);
 }
 
-.app .toggle .track {
+[data-theme="dark"] .toggle .track {
   background: var(--frost);
 }
-.app .toggle input:checked ~ .track,
-.app .toggle.is-on .track {
+[data-theme="dark"] .toggle input:checked ~ .track,
+[data-theme="dark"] .toggle.is-on .track {
   background: var(--steel);
 }
-.app .toggle .track::after {
+[data-theme="dark"] .toggle .track::after {
   background: var(--ink);
 }
 
-.app .callout.err {
+[data-theme="dark"] .callout.err {
   background: rgba(211, 112, 88, 0.08);
 }
-.app .tbl tbody tr:hover {
+[data-theme="dark"] .tbl tbody tr:hover {
   background: rgba(138, 176, 208, 0.06);
 }
-.app .stat .stat-value {
+[data-theme="dark"] .stat .stat-value {
   color: var(--ink);
 }

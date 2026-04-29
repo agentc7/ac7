@@ -24,6 +24,7 @@ import type { FsEntry } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
 import { getClient } from '../lib/client.js';
 import { selectFiles } from '../lib/view.js';
+import { AlertCircle, X } from './icons/index.js';
 
 interface PanelState {
   mode: 'tree' | 'shared';
@@ -247,7 +248,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
       {current.error && (
         <div role="alert" class="callout err" style="margin-bottom:10px">
           <div class="icon" aria-hidden="true">
-            ◆
+            <AlertCircle size={16} />
           </div>
           <div class="body">
             <div class="msg">{current.error}</div>
@@ -260,7 +261,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
             aria-label="Dismiss"
             class="close"
           >
-            ×
+            <X size={14} aria-hidden="true" />
           </button>
         </div>
       )}

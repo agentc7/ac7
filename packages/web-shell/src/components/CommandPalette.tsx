@@ -20,7 +20,7 @@
  * the user is inside the authenticated app.
  */
 
-import type { JSX } from 'preact';
+import type { ComponentChildren, JSX } from 'preact';
 import { useEffect, useRef, useState } from 'preact/hooks';
 import {
   closePalette,
@@ -37,6 +37,7 @@ import {
   selectObjectiveCreate,
   selectObjectiveDetail,
 } from '../lib/view.js';
+import { AtSign, Hash, MessageCircle, Plus, Search, Target } from './icons/index.js';
 
 export function CommandPalette() {
   const open = paletteOpen.value;
@@ -113,8 +114,12 @@ export function CommandPalette() {
         style="background:var(--paper);border:1px solid var(--rule);border-radius:10px;box-shadow:0 20px 50px rgba(14,28,43,0.25);overflow:hidden;margin:0 16px"
       >
         <div style="display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--rule)">
-          <span aria-hidden="true" style="color:var(--muted);font-size:16px">
-            ⌕
+          <span
+            aria-hidden="true"
+            class="flex items-center justify-center flex-shrink-0"
+            style="color:var(--muted)"
+          >
+            <Search size={16} />
           </span>
           <input
             ref={inputRef}
@@ -153,7 +158,11 @@ export function CommandPalette() {
                 style="padding:8px 10px;background:transparent;border:none;text-align:left;cursor:pointer"
               >
                 <span class="flex items-center gap-2 min-w-0">
-                  <span aria-hidden="true" style="font-size:11px;color:var(--muted);min-width:18px">
+                  <span
+                    aria-hidden="true"
+                    class="flex items-center justify-center flex-shrink-0"
+                    style="color:var(--muted);width:18px;height:18px"
+                  >
                     {kindIcon(r.item.kind)}
                   </span>
                   <span
@@ -199,17 +208,17 @@ function activate(item: PaletteItem): void {
   }
 }
 
-function kindIcon(kind: PaletteItem['kind']): string {
+function kindIcon(kind: PaletteItem['kind']): ComponentChildren {
   switch (kind) {
     case 'member':
-      return '@';
+      return <AtSign size={13} />;
     case 'thread-channel':
-      return '#';
+      return <Hash size={13} />;
     case 'thread-dm':
-      return '→';
+      return <MessageCircle size={13} />;
     case 'objective':
-      return '▸';
+      return <Target size={13} />;
     case 'action':
-      return '+';
+      return <Plus size={13} />;
   }
 }

@@ -8,11 +8,12 @@
  *   │  ?   │       │              │              │
  *   └──────┴───────┴──────────────┴──────────────┘
  *
- * Up to four slots in the row below the header: an optional outer
+ * Four slots in the row below the header: an optional outer
  * `leftRail` (host-provided team switcher in multi-team contexts),
  * `nav` (mid-left), `main` (center), and an optional `drawer` on the
- * right. Banners render between the header and the content row and
- * are typically transient (disconnect warning, mount-error surface).
+ * right. System messages (disconnect warnings, mount errors, plan-cap
+ * hits, etc.) render through the toast stack at bottom-right —
+ * AppShell intentionally owns no layout-pushing banner region.
  *
  * This component is intentionally dumb about its contents. It owns
  * the flex/grid structure and the bleed-through of safe-area insets;
@@ -31,11 +32,9 @@ export interface AppShellProps {
   drawer?: ComponentChildren;
   /** Optional outer rail (e.g. multi-team switcher) rendered before nav. */
   leftRail?: ComponentChildren;
-  /** Banner area between the header and the content row. */
-  banner?: ComponentChildren;
 }
 
-export function AppShell({ header, nav, main, drawer, leftRail, banner }: AppShellProps) {
+export function AppShell({ header, nav, main, drawer, leftRail }: AppShellProps) {
   // The inner row is `position: relative` so the activity-inspector
   // overlay (below 1100) and the navcol drawer (below 900) anchor to
   // it instead of the viewport — the topbar stays fully visible above
@@ -73,7 +72,6 @@ export function AppShell({ header, nav, main, drawer, leftRail, banner }: AppShe
     <>
       {header}
       <main class="flex flex-col min-h-0 flex-1 overflow-hidden">
-        {banner}
         <div class="flex flex-1 min-h-0 overflow-hidden relative" style={`--rail-w:${railWidth}`}>
           {leftRail}
           {nav}

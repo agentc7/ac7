@@ -34,7 +34,7 @@
  */
 
 import type { Client } from '@agentc7/sdk/client';
-import { effect, signal } from '@preact/signals';
+import { effect } from '@preact/signals';
 import type { JSX } from 'preact';
 import { useEffect } from 'preact/hooks';
 import { AccountPanel } from './components/AccountPanel.js';
@@ -77,6 +77,7 @@ import { closePalette, togglePalette } from './lib/palette.js';
 import { initializePushState } from './lib/push.js';
 import { loadRoster, startRosterPolling } from './lib/roster.js';
 import { setRouterTeamSlug } from './lib/router.js';
+import { dismissToastsByTag, toast } from './lib/toast.js';
 import { initializeLastReadFromStore, markThreadRead } from './lib/unread.js';
 import {
   closeModalView,
@@ -129,13 +130,10 @@ export interface TeamShellProps {
 }
 
 /**
- * Non-fatal mount-time errors — briefing/history/roster/objectives
- * failures land here instead of triggering a silent sign-out. The
- * shell still renders; the banner surfaces what broke so the viewer
- * isn't left wondering why their dashboard is empty. Auto-clears on
- * successful refresh.
+ * Tag used by the mount-error toast so a re-bootstrap can clear or
+ * replace whatever was previously surfaced.
  */
-const mountError = signal<string | null>(null);
+const MOUNT_ERROR_TAG = 'mount-error';
 
 export function TeamShell(props: TeamShellProps): JSX.Element {
   // Wire props into module-level signals synchronously on every render
@@ -227,7 +225,16 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
         }
         recordFailure('channels', err);
       }
-      mountError.value = failures.length > 0 ? failures.join(' · ') : null;
+      if (failures.length > 0) {
+        toast.error({
+          tag: MOUNT_ERROR_TAG,
+          title: 'Some panels failed to load',
+          body: failures.join(' · '),
+          duration: null,
+        });
+      } else {
+        dismissToastsByTag(MOUNT_ERROR_TAG);
+      }
       disposeRoster = startRosterPolling();
       disposeSubscribe = startSubscribe({
         name: viewer,
@@ -304,47 +311,18 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  const mountErr = mountError.value;
-
   return (
     <>
       <AppShell
         header={<Header />}
         nav={<NavColumn viewer={viewer} />}
-        banner={
-          <>
-            <DisconnectedBanner />
-            {mountErr !== null && (
-              <div
-                role="alert"
-                class="callout warn flex-shrink-0"
-                style="border-radius:0;overflow-y:auto"
-              >
-                <div class="icon" aria-hidden="true">
-                  ◆
-                </div>
-                <div class="body">
-                  <div class="title">Some panels failed to load</div>
-                  <div class="msg">{mountErr}</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    mountError.value = null;
-                  }}
-                  aria-label="Dismiss"
-                  class="close"
-                >
-                  ×
-                </button>
-              </div>
-            )}
-          </>
-        }
         main={renderView(baseView, viewer)}
         drawer={inspectedAgent !== null ? <ActivityInspector agentName={inspectedAgent} /> : null}
         leftRail={props.leftRail}
       />
+      {/* Renderless bridge — emits sticky toasts when the live stream
+          drops or comes back with a backfill gap. */}
+      <DisconnectedBanner />
       {modal && (
         <RouteModal onClose={closeModalView} ariaLabel="Account settings" size="lg">
           <AccountPanel viewer={viewer} />
@@ -355,9 +333,9 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
   );
 }
 
-/** Test helper — reset the mount-error signal between cases. */
+/** Test helper — clear any sticky shell-emitted toasts between cases. */
 export function __resetTeamShellForTests(): void {
-  mountError.value = null;
+  dismissToastsByTag(MOUNT_ERROR_TAG);
 }
 
 /**

@@ -12,6 +12,7 @@
  */
 
 import { disablePush, enablePush, pushState } from '../lib/push.js';
+import { AlertTriangle } from './icons/index.js';
 
 export function NotificationToggle() {
   const state = pushState.value;
@@ -58,11 +59,12 @@ export function NotificationToggle() {
         onClick={() => {
           void enablePush();
         }}
-        class="badge ember"
-        style="cursor:pointer"
+        class="badge ember flex items-center"
+        style="cursor:pointer;gap:4px"
         title={state.message}
       >
-        ◆ Notif error
+        <AlertTriangle size={11} aria-hidden="true" />
+        Notif error
       </button>
     );
   }

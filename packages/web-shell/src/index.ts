@@ -13,7 +13,45 @@
  * paths are not a stable surface and may move without notice.
  */
 
+export { BrandMark, type BrandMarkProps } from './components/icons/BrandMark.js';
+export {
+  AlertCircle,
+  AlertTriangle,
+  AtSign,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsDown,
+  ChevronsUp,
+  ChevronUp,
+  Folder,
+  Hash,
+  Home,
+  Inbox,
+  Info,
+  LogOut,
+  Menu,
+  MessageCircle,
+  Monitor,
+  Moon,
+  PanelRight,
+  Paperclip,
+  Plus,
+  RefreshCw,
+  Search,
+  Send,
+  Settings,
+  Slash,
+  Sun,
+  Target,
+  Users,
+  Wand2,
+  WifiOff,
+  X,
+} from './components/icons/index.js';
 export { RouteModal, type RouteModalProps } from './components/RouteModal.js';
+export { Hint, type HintKind, type HintProps } from './components/ui/Hint.js';
 export { ToastContainer } from './components/ui/ToastContainer.js';
 export type { SignOutHandler, UnauthorizedHandler } from './lib/handlers.js';
 export type { Identity } from './lib/identity.js';
@@ -24,8 +62,18 @@ export {
   toggleInspector,
 } from './lib/inspector.js';
 export {
+  cycleThemeMode,
+  type EffectiveTheme,
+  effectiveTheme,
+  initTheme,
+  setThemeMode,
+  type ThemeMode,
+  themeMode,
+} from './lib/theme.js';
+export {
   clearAllToasts,
   dismissToast,
+  dismissToastsByTag,
   type Toast,
   type ToastAction,
   type ToastKind,
