@@ -4,6 +4,15 @@ on:
   push:
     tags:
       - 'v*'
+  # Manual rehearsal — runs the entire pipeline without publishing or
+  # creating a GitHub Release. Use it to verify a release would
+  # succeed before actually cutting the tag.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to stamp during rehearsal (no effect on real tag pushes)'
+        type: string
+        default: '0.0.0-rehearsal'
 
 concurrency:
   group: release-${{ github.ref }}
@@ -15,6 +24,10 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      # Required for npm publish --provenance: the `id-token` is what
+      # the npm registry consumes to attach a signed attestation
+      # linking the published tarball to this exact GitHub commit.
+      id-token: write
     steps:
       - uses: actions/checkout@v6
         with:
@@ -30,13 +43,16 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Stamp version from tag
+      - name: Stamp version
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
-          echo "Stamping version $TAG_VERSION from tag $GITHUB_REF_NAME"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+          else
+            TAG_VERSION="${{ inputs.version }}"
+          fi
+          echo "Stamping version $TAG_VERSION (event: ${{ github.event_name }})"
           node -e "
             const fs = require('fs');
-            const glob = require('path');
             const files = [
               'package.json',
               ...fs.readdirSync('packages', {withFileTypes:true}).filter(d=>d.isDirectory()).map(d=>'packages/'+d.name+'/package.json'),
@@ -58,12 +74,27 @@ jobs:
 
       - run: pnpm test
 
+      # Pack every publishable workspace package and verify each one
+      # ships the files its `exports` / `main` / `types` / `bin` map
+      # promises. Catches the class of bug where someone removes a
+      # path from `files` (or moves a file out of `src`) and only
+      # finds out post-publish.
+      - name: Verify pack contents
+        run: node scripts/verify-pack-contents.mjs
+
       - name: Publish to npm
-        run: pnpm -r publish --access public --no-git-checks
+        if: github.event_name == 'push'
+        run: pnpm -r publish --access public --no-git-checks --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      - name: Rehearsal summary
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          echo "::notice::Dry run complete. Pipeline passed; no packages were published and no GitHub Release was created."
+
       - name: Create GitHub Release with auto-generated notes
+        if: github.event_name == 'push'
         uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
