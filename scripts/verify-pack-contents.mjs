@@ -118,7 +118,7 @@ function main() {
     process.stdout.write(`  ${name}: `);
     let tgzName;
     try {
-      execSync('pnpm pack --pack-destination ' + PACK_DIR, {
+      execSync(`pnpm pack --pack-destination ${PACK_DIR}`, {
         cwd: dir,
         stdio: 'pipe',
       });
