@@ -1617,22 +1617,29 @@ export function createApp(options: AppOptions): CreatedApp {
 
           logger.info('ws subscribe opened', { targetName, by: member.name });
 
-          // Comms check — push a message through the normal channel so
-          // the agent's first turn includes it in context. If the agent
-          // has active objectives, the runner's context watchdog will
-          // detect whether they're still in the LLM context after this
-          // exchange and re-push them if not.
-          if (objectives) {
+          // Session-online notice — pushed only to runner-authenticated
+          // subscribers so the agent's first turn carries enough
+          // context to decide whether to resume something or stand by.
+          // Excluded from web UI sessions (they get presence + the
+          // dashboard, no channel push needed) and from JWT-auth
+          // subscribers (federated; the runner-context-restoration use
+          // case doesn't apply). The auth plane is the only signal we
+          // have that a subscriber is the runner — `tokenId !== null`
+          // means opaque-bearer auth, which is the runner's auth path.
+          //
+          // The message used to be titled "comms check," which agents
+          // read as "respond to verify you're alive" and dutifully
+          // started messaging teammates. The reframed version is
+          // explicit that it's a system notice, not a ping.
+          const tokenId = c.get('tokenId');
+          if (objectives && tokenId !== null) {
             const active = [
               ...objectives.list({ assignee: member.name, status: 'active' }),
               ...objectives.list({ assignee: member.name, status: 'blocked' }),
             ];
-            const body =
-              active.length > 0
-                ? `${member.name} online. ${active.length} active objective(s) on your plate.`
-                : `${member.name} online. No active objectives.`;
+            const notice = composeSessionOnlineMessage(member.name, active.length);
             void broker.push(
-              { to: member.name, body, title: 'comms check', level: 'info' },
+              { to: member.name, body: notice.body, title: notice.title, level: 'info' },
               { from: 'ac7' },
             );
           }
@@ -2987,6 +2994,47 @@ function grantAttachmentsTo(
  */
 function toViewer(member: LoadedMember): ViewerContext {
   return { name: member.name, permissions: member.permissions };
+}
+
+/**
+ * Compose the "ac7 session online" notice the broker pushes to a
+ * runner the moment its WS subscribe lands. The agent reads this on
+ * its first turn and uses it to decide whether to resume work,
+ * acknowledge new direction, or stand by — without treating it as a
+ * teammate message that demands a reply.
+ *
+ * The wording deliberately avoids:
+ *   - "comms check" / "ping" / "are you there" — historical title;
+ *     agents interpreted it as a probe and started DMing teammates
+ *     to "test" the chat surface.
+ *   - "you're online" framed as something the AGENT needs to confirm.
+ *
+ * And explicitly carries:
+ *   - "system notice" framing so the agent knows it's machine-emitted.
+ *   - "no acknowledgement required" so the agent doesn't generate a
+ *     reply turn just to say "got it".
+ *   - The current plate count, so the agent has enough context to
+ *     decide whether `objectives_list` is worth a tool call right now.
+ *
+ * Pure: takes the member name and the count of active+blocked
+ * objectives, returns body/title. Tested directly.
+ */
+export function composeSessionOnlineMessage(
+  memberName: string,
+  activeObjectiveCount: number,
+): { title: string; body: string } {
+  const plate =
+    activeObjectiveCount > 0
+      ? `You have ${activeObjectiveCount} active objective(s) on your plate — call \`objectives_list\` to see them.`
+      : 'No active objectives are assigned to you right now.';
+  const body =
+    `Connected to ac7 as ${memberName}. ${plate} ` +
+    'This is a system notice marking the start of a runtime session — no acknowledgement is required. ' +
+    'Resume any in-progress work, address open objectives, or stand by for new direction as appropriate.';
+  return {
+    title: 'ac7 session online',
+    body,
+  };
 }
 
 /** Project a LoadedMember into the public `Member` wire shape. */
