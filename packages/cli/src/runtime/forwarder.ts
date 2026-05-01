@@ -26,7 +26,23 @@ export interface ForwarderNotificationSink {
 const BACKOFF_START_MS = 1_000;
 const BACKOFF_MAX_MS = 30_000;
 
-export type ThreadType = 'primary' | 'dm';
+/**
+ * How an incoming message was routed, from the agent's point of view:
+ *
+ *   `primary` — broadcast to the team channel (`general`).
+ *   `dm`      — direct message addressed to this agent.
+ *   `channel` — posted into a non-general channel that this agent is a
+ *               member of. The channel id is preserved in the
+ *               `channel` meta key so the agent can scope replies via
+ *               `channels_post`.
+ *
+ * The classification is computed in `forwardMessage` from the broker's
+ * authoritative state, NOT trusted from the sender's payload — see
+ * `RESERVED_META_KEYS`.
+ */
+export type ThreadType = 'primary' | 'dm' | 'channel';
+
+const CHANNEL_THREAD_PREFIX = 'chan:';
 
 export interface ForwarderOptions {
   server: ForwarderNotificationSink;
@@ -152,7 +168,17 @@ async function forwardMessage(
   message: Message,
   log: (msg: string, ctx?: Record<string, unknown>) => void,
 ): Promise<void> {
-  const thread: ThreadType = message.to === null ? 'primary' : 'dm';
+  // Detect channel-routed messages. The broker fans out a non-general
+  // channel post as a per-recipient targeted push (each copy has
+  // `to: <recipient-name>`), but the original `data.thread =
+  // 'chan:<id>'` survives the fanout — that's our authoritative
+  // channel marker. Without this branch a channel post would be
+  // misclassified as `dm`, indistinguishable to the agent from a
+  // direct message addressed to it personally.
+  const channelId = extractChannelId(message);
+  const thread: ThreadType =
+    channelId !== null ? 'channel' : message.to === null ? 'primary' : 'dm';
+
   // `ts` is formatted for agent consumption — a fixed-width human
   // datetime like `04/15/26 14:23:45 UTC`. Parseable, unambiguous
   // about timezone, precise to the second, and doesn't require the
@@ -168,7 +194,11 @@ async function forwardMessage(
   };
   if (message.from) meta.from = message.from;
   if (message.title) meta.title = message.title;
-  if (message.to) meta.target = message.to;
+  // `target` only makes sense for true DMs. On channel posts the
+  // per-recipient `to` stamp is the agent itself, so surfacing it
+  // would be misleading ("from=director, target=me" reads like a DM).
+  if (thread === 'dm' && message.to) meta.target = message.to;
+  if (channelId !== null) meta.channel = channelId;
 
   if (typeof message.data === 'object' && message.data !== null) {
     for (const [k, v] of Object.entries(message.data)) {
@@ -200,6 +230,24 @@ async function forwardMessage(
       error: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+/**
+ * Extract the channel id from a message tagged for a non-general
+ * channel. Returns `null` for DMs, broadcasts to general, and
+ * channel-tagged messages pointing at `general` (which the broker
+ * treats as the implicit-broadcast channel and we report as
+ * `thread='primary'`). The channel id is stable + opaque (the slug
+ * is mutable and decoupled from existing message references — see
+ * `Channel` in @agentc7/sdk/types).
+ */
+function extractChannelId(message: Message): string | null {
+  if (typeof message.data !== 'object' || message.data === null) return null;
+  const tag = (message.data as Record<string, unknown>).thread;
+  if (typeof tag !== 'string' || !tag.startsWith(CHANNEL_THREAD_PREFIX)) return null;
+  const id = tag.slice(CHANNEL_THREAD_PREFIX.length);
+  if (id.length === 0 || id === 'general') return null;
+  return id;
 }
 
 /**

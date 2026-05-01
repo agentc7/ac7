@@ -2,10 +2,12 @@
  * Tool definitions and handlers for the link's MCP server face.
  *
  * Chat tools (dynamic descriptions composed from the briefing):
- *   - roster    — list teammates
- *   - broadcast — send to the team channel
- *   - send      — DM a teammate by name
- *   - recent    — fetch recent team-chat / DM history
+ *   - roster         — list teammates
+ *   - broadcast      — send to the general team channel
+ *   - send           — DM a teammate by name
+ *   - channels_list  — list named channels visible to this agent
+ *   - channels_post  — post into a specific named channel by slug
+ *   - recent         — fetch recent team-chat / DM / channel history
  *
  * Objective tools (descriptions composed from briefing + live open
  * objectives set so the sticky context stays fresh across compaction):
@@ -61,11 +63,13 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
     {
       name: 'broadcast',
       description:
-        `Broadcast a message to the ${team.name} team channel. All teammates see it in ` +
-        `real time. Use this for team-wide announcements, status updates, and individual-contributor ` +
-        `directives. You go by ${identity}. Teammates: ${teammateList}. Optionally attach ` +
-        `files from your home (\`/${name}/...\`); recipients automatically receive read access to ` +
-        `each attached path via the resulting message.`,
+        `Broadcast a message to the ${team.name} team's general channel. Every teammate ` +
+        `sees it in real time. Use this for team-wide announcements, status updates, and ` +
+        `individual-contributor directives. For posts that should only reach a specific ` +
+        `named channel's members, use \`channels_post\` instead — \`broadcast\` always goes ` +
+        `to general. You go by ${identity}. Teammates: ${teammateList}. Optionally attach ` +
+        `files from your home (\`/${name}/...\`); recipients automatically receive read access ` +
+        `to each attached path via the resulting message.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -115,19 +119,71 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
       },
     },
     {
+      name: 'channels_list',
+      description:
+        `List named channels you have access to on team ${team.name}. Returns each ` +
+        `channel's slug, member count, and whether you're an admin or a regular member. ` +
+        `\`general\` is implicit and always included — it's the team-wide channel that ` +
+        `\`broadcast\` writes into. To post into any other channel use \`channels_post\`; ` +
+        `to read scrollback use \`recent\` with \`channel=<slug>\`. You can only see ` +
+        `channels you've been added to (or that are public to the whole team).`,
+      inputSchema: { type: 'object', properties: {} },
+    },
+    {
+      name: 'channels_post',
+      description:
+        `Post a message into a specific named channel on ${team.name}. Only members of ` +
+        `that channel receive it; non-members do not. Use this for scoped conversations — ` +
+        `e.g., a #frontend channel for frontend work — instead of broadcasting to the whole ` +
+        `team. You must already be a member of the channel; ask a director to add you if ` +
+        `not. You go by ${identity}. Optionally attach files from your home; channel members ` +
+        `receive read access to each attached path. To find available channels run ` +
+        `\`channels_list\`. To post to the team-wide general channel use \`broadcast\`.`,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          channel: {
+            type: 'string',
+            description: 'Channel slug (e.g. "frontend", "ops"). Must be a channel you belong to.',
+          },
+          body: { type: 'string', description: 'The message body.' },
+          title: { type: 'string', description: 'Optional short title / subject line.' },
+          level: {
+            type: 'string',
+            enum: [...LEVELS],
+            description: "Optional severity; defaults to 'info'.",
+          },
+          attachments: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Optional list of file paths to attach. Each must already exist and be readable to you.',
+          },
+        },
+        required: ['channel', 'body'],
+      },
+    },
+    {
       name: 'recent',
       description:
-        `Fetch recent messages from the ${team.name} team channel or a specific DM ` +
-        `thread. You go by ${identity}. Team directive: ${team.directive}. Omit ` +
-        `\`with\` for team-channel scrollback; pass \`with=NAME\` for DMs. Returns ` +
-        `messages newest-first up to ${DEFAULT_RECENT_LIMIT} by default (max ${MAX_RECENT_LIMIT}).`,
+        `Fetch recent messages from the ${team.name} team's general channel, a specific ` +
+        `DM thread, or a named channel. You go by ${identity}. Team directive: ` +
+        `${team.directive}. Pass exactly one of: \`with=NAME\` for DMs with that teammate, ` +
+        `\`channel=SLUG\` for a named channel's scrollback, or no scope arg for the general ` +
+        `team channel. Returns messages newest-first up to ${DEFAULT_RECENT_LIMIT} by ` +
+        `default (max ${MAX_RECENT_LIMIT}).`,
       inputSchema: {
         type: 'object',
         properties: {
           with: {
             type: 'string',
             description:
-              'Optional teammate name — narrows to DMs with that teammate instead of team chat.',
+              'Optional teammate name — narrows to DMs with that teammate. Mutually exclusive with `channel`.',
+          },
+          channel: {
+            type: 'string',
+            description:
+              'Optional channel slug — narrows to messages tagged for that channel. Mutually exclusive with `with`.',
           },
           limit: {
             type: 'number',
@@ -588,6 +644,10 @@ export async function handleToolCall(
         return await handleBroadcast(args, brokerClient);
       case 'send':
         return await handleSend(args, brokerClient);
+      case 'channels_list':
+        return await handleChannelsList(brokerClient, briefing);
+      case 'channels_post':
+        return await handleChannelsPost(args, brokerClient);
       case 'recent':
         return await handleRecent(args, brokerClient, briefing);
       case 'objectives_list':
@@ -755,20 +815,138 @@ async function handleRecent(
   briefing: BriefingResponse,
 ): Promise<CallToolResult> {
   const withOther = typeof args.with === 'string' ? args.with : undefined;
+  const channelSlug = typeof args.channel === 'string' ? args.channel : undefined;
+  if (withOther && channelSlug) {
+    return errorResult('recent: pass `with` OR `channel`, not both');
+  }
   const limitRaw = typeof args.limit === 'number' ? args.limit : DEFAULT_RECENT_LIMIT;
   const limit = Math.min(Math.max(Math.floor(limitRaw), 1), MAX_RECENT_LIMIT);
-  const messages = await brokerClient.history({ with: withOther, limit });
+
+  // Channel scoping needs slug → id resolution. The history endpoint
+  // matches on the immutable channel id (slugs are renameable and
+  // existing messages keep referencing the original id).
+  let channelId: string | undefined;
+  if (channelSlug) {
+    try {
+      const ch = await brokerClient.getChannel(channelSlug);
+      channelId = ch.channel.id;
+    } catch (err) {
+      const ce = err as ClientError;
+      if (ce?.name === 'ClientError' && ce.status === 404) {
+        return errorResult(
+          `recent: no channel '${channelSlug}'. Use \`channels_list\` to see available channels.`,
+        );
+      }
+      throw err;
+    }
+  }
+
+  const messages = await brokerClient.history({
+    ...(withOther ? { with: withOther } : {}),
+    ...(channelId ? { channel: channelId } : {}),
+    limit,
+  });
 
   if (messages.length === 0) {
-    const scope = withOther ? `DM with ${withOther}` : `${briefing.team.name} team channel`;
+    const scope = withOther
+      ? `DM with ${withOther}`
+      : channelSlug
+        ? `channel #${channelSlug}`
+        : `${briefing.team.name} team channel`;
     return textResult(`recent: no messages in ${scope}`);
   }
 
   const header = withOther
     ? `recent DMs with ${withOther} (${messages.length}):`
-    : `recent ${briefing.team.name} team chat (${messages.length}):`;
+    : channelSlug
+      ? `recent #${channelSlug} (${messages.length}):`
+      : `recent ${briefing.team.name} team chat (${messages.length}):`;
   const lines = messages.map((m) => formatRecentLine(m));
   return textResult(`${header}\n${lines.join('\n')}`);
+}
+
+async function handleChannelsList(
+  brokerClient: BrokerClient,
+  briefing: BriefingResponse,
+): Promise<CallToolResult> {
+  const channels = await brokerClient.listChannels();
+  if (channels.length === 0) {
+    return textResult(`team ${briefing.team.name}: no channels defined.`);
+  }
+  // Show joined channels first, then any visible non-joined ones, so
+  // the agent's "what can I post into right now" is at the top.
+  const joined = channels.filter((c) => c.joined);
+  const others = channels.filter((c) => !c.joined);
+  const fmt = (c: (typeof channels)[number]): string => {
+    const role = c.myRole ? ` [${c.myRole}]` : '';
+    const archived = c.archivedAt !== null ? ' (archived)' : '';
+    return `- #${c.slug}${role}${archived}  members=${c.memberCount}`;
+  };
+  const sections: string[] = [];
+  if (joined.length > 0) {
+    sections.push(`channels you belong to (${joined.length}):\n${joined.map(fmt).join('\n')}`);
+  }
+  if (others.length > 0) {
+    sections.push(
+      `other visible channels (${others.length}, post requires joining first):\n` +
+        others.map(fmt).join('\n'),
+    );
+  }
+  return textResult(sections.join('\n\n'));
+}
+
+async function handleChannelsPost(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const slug = typeof args.channel === 'string' ? args.channel : '';
+  const body = typeof args.body === 'string' ? args.body : '';
+  if (!slug) return errorResult('channels_post: `channel` is required (the channel slug)');
+  if (!body) return errorResult('channels_post: `body` is required');
+  const levelResult = parseLevel(args.level);
+  if (levelResult.error) return errorResult(`channels_post: ${levelResult.error}`);
+  const title = typeof args.title === 'string' ? args.title : null;
+  const attachments = await resolveAttachmentPaths(args.attachments, brokerClient);
+  if ('error' in attachments) return errorResult(`channels_post: ${attachments.error}`);
+
+  // Resolve slug → id. The push routing on the server side keys on
+  // `data.thread = 'chan:<id>'`, not slug, so renames don't break
+  // mid-conversation references. The server also enforces that the
+  // sender is a member of the channel; we surface a friendlier error
+  // up front by checking the client-side membership flag, but the
+  // 403 is the source of truth.
+  let channelId: string;
+  try {
+    const ch = await brokerClient.getChannel(slug);
+    channelId = ch.channel.id;
+    if (!ch.channel.joined) {
+      return errorResult(
+        `channels_post: you are not a member of #${slug}. Ask a director to add you, or use \`broadcast\` for the general channel.`,
+      );
+    }
+  } catch (err) {
+    const ce = err as ClientError;
+    if (ce?.name === 'ClientError' && ce.status === 404) {
+      return errorResult(
+        `channels_post: no channel '${slug}'. Use \`channels_list\` to see available channels.`,
+      );
+    }
+    throw err;
+  }
+
+  const result = await brokerClient.push({
+    body,
+    title,
+    level: levelResult.level,
+    data: { thread: `chan:${channelId}` },
+    ...(attachments.list.length > 0 ? { attachments: attachments.list } : {}),
+  });
+  const attachmentSummary =
+    attachments.list.length > 0 ? ` attachments=${attachments.list.length}` : '';
+  return textResult(
+    `posted to #${slug}: live=${result.delivery.live} ` +
+      `targets=${result.delivery.targets} msg=${result.message.id}${attachmentSummary}`,
+  );
 }
 
 // ── Objectives handlers ────────────────────────────────────────────

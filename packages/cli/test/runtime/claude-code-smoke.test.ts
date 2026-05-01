@@ -165,11 +165,13 @@ async function waitFor(predicate, timeoutMs = 5000) {
     expect(restored).toEqual(originalMcp);
 
     // Fake claude wrote a transcript — assert the bridge served it
-    // a real tools/list response with our 13-tool surface.
+    // a real tools/list response with the agent's tool surface.
     const transcript = JSON.parse(readFileSync(transcriptPath, 'utf8'));
     expect(transcript.initialized).toBe(true);
     expect(transcript.toolNames).toEqual([
       'broadcast',
+      'channels_list',
+      'channels_post',
       'fs_ls',
       'fs_mkdir',
       'fs_mv',
