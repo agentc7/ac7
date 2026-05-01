@@ -48,6 +48,7 @@ import { createInterface } from 'node:readline';
 import { Client as BrokerClient } from '@agentc7/sdk/client';
 import type { BriefingResponse, Objective } from '@agentc7/sdk/types';
 import { CLI_VERSION } from '../version.js';
+import { startBusyReporter } from './busy-reporter.js';
 import type { ForwarderNotificationSink } from './forwarder.js';
 import { runForwarder } from './forwarder.js';
 import {
@@ -346,6 +347,17 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
     for (const obj of briefing.openObjectives) {
       traceHost.noteObjectiveOpen(obj.id);
     }
+    // "Agent is working" reporter — subscribes to the trace host's
+    // busy signal and POSTs `/presence/busy` on transitions, plus a
+    // heartbeat while busy so the server TTL stays fresh. Skipped
+    // when tracing is off (the busy signal needs MITM-captured
+    // traffic to drive it).
+    startBusyReporter({
+      brokerClient,
+      busy: traceHost.busy,
+      signal: abortController.signal,
+      log,
+    });
   }
 
   // SSE forwarder: subscribe to the broker for this slot's name,

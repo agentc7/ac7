@@ -156,4 +156,78 @@ describe('Http1Reassembler', () => {
     expect(exchanges[0]?.request.method).toBe('UNKNOWN');
     expect(exchanges[0]?.response?.status).toBe(200);
   });
+
+  // ─── onRequestStart hook (drives the runner's busy presence) ──────
+
+  it('fires onRequestStart when a request is parsed, before the response arrives', () => {
+    const starts: Array<{ sessionId: number; startedAt: number }> = [];
+    const exchanges: Http1Exchange[] = [];
+    const r = new Http1Reassembler({
+      onRequestStart: (info) => starts.push(info),
+      onExchange: (e) => exchanges.push(e),
+      log: () => {},
+    });
+
+    r.ingest(chunk(7, 'client_to_upstream', buildRequest('{"q":1}'), 1_000));
+    expect(starts).toHaveLength(1);
+    expect(starts[0]?.sessionId).toBe(7);
+    expect(starts[0]?.startedAt).toBe(1_000);
+    expect(exchanges).toHaveLength(0); // response not yet seen
+
+    r.ingest(chunk(7, 'upstream_to_client', buildResponse('{}'), 2_000));
+    expect(starts).toHaveLength(1); // exactly one start per request
+    expect(exchanges).toHaveLength(1);
+  });
+
+  it('fires onRequestStart once per pipelined request', () => {
+    const starts: Array<{ sessionId: number; startedAt: number }> = [];
+    const r = new Http1Reassembler({
+      onRequestStart: (info) => starts.push(info),
+      onExchange: () => {},
+      log: () => {},
+    });
+
+    const req1 = buildRequest('{"i":1}');
+    const req2 = buildRequest('{"i":2}');
+    r.ingest(chunk(1, 'client_to_upstream', req1 + req2));
+    expect(starts).toHaveLength(2);
+  });
+
+  it('still fires onRequestStart for streaming requests that close without a response', () => {
+    // Pairs 1:1 with the request-only `onExchange` flushed from
+    // closeSession — every start eventually reconciles with an
+    // exchange, which is the invariant the trace host's busy
+    // counter relies on.
+    const starts: Array<{ sessionId: number; startedAt: number }> = [];
+    const exchanges: Http1Exchange[] = [];
+    const r = new Http1Reassembler({
+      onRequestStart: (info) => starts.push(info),
+      onExchange: (e) => exchanges.push(e),
+      log: () => {},
+    });
+
+    r.ingest(chunk(1, 'client_to_upstream', buildRequest('{"stream":true}')));
+    expect(starts).toHaveLength(1);
+    expect(exchanges).toHaveLength(0);
+
+    r.closeSession(1);
+    expect(exchanges).toHaveLength(1);
+    expect(exchanges[0]?.response).toBeNull();
+    expect(starts).toHaveLength(1); // start count unchanged
+  });
+
+  it('isolates a throwing onRequestStart from request parsing', () => {
+    const exchanges: Http1Exchange[] = [];
+    const r = new Http1Reassembler({
+      onRequestStart: () => {
+        throw new Error('boom');
+      },
+      onExchange: (e) => exchanges.push(e),
+      log: () => {},
+    });
+
+    r.ingest(chunk(1, 'client_to_upstream', buildRequest('{}')));
+    r.ingest(chunk(1, 'upstream_to_client', buildResponse('{}')));
+    expect(exchanges).toHaveLength(1);
+  });
 });

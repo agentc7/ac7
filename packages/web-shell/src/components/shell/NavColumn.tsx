@@ -40,7 +40,6 @@ import {
   messagesByThread,
 } from '../../lib/messages.js';
 import { objectives } from '../../lib/objectives.js';
-import { privilegeTag, summarizePermissions } from '../../lib/permissions.js';
 import { roster } from '../../lib/roster.js';
 import { currentTeam } from '../../lib/team.js';
 import { lastReadByThread, unreadCount } from '../../lib/unread.js';
@@ -86,7 +85,13 @@ export function NavColumn({ viewer }: NavColumnProps) {
   const teammates = teammatesSource.filter((t) => t.name !== viewer);
 
   const onlineByName = new Map<string, number>();
-  if (r) for (const a of r.connected) onlineByName.set(a.name, a.connected);
+  const busyByName = new Map<string, boolean>();
+  if (r) {
+    for (const a of r.connected) {
+      onlineByName.set(a.name, a.connected);
+      if (a.busy) busyByName.set(a.name, true);
+    }
+  }
 
   const homeActive = v.kind === 'overview';
   const inboxActive = v.kind === 'inbox';
@@ -226,11 +231,10 @@ export function NavColumn({ viewer }: NavColumnProps) {
         {teammates.map((t) => {
           const connected = onlineByName.get(t.name) ?? 0;
           const online = connected > 0;
+          const busy = busyByName.get(t.name) === true;
           const active = v.kind === 'thread' && v.key === dmThreadKey(t.name);
           const unread = unreadCount(dmThreadKey(t.name), viewer, lastRead, msgMap);
-          const auth = privilegeTag(
-            summarizePermissions(t.permissions, b?.team.permissionPresets ?? {}),
-          );
+          const stateLabel = busy ? 'working' : online ? 'online' : 'offline';
           return (
             <li key={t.name}>
               <button
@@ -238,10 +242,10 @@ export function NavColumn({ viewer }: NavColumnProps) {
                 onClick={() => selectDmWith(t.name)}
                 aria-label={
                   unread > 0
-                    ? `Message ${t.name} (${online ? 'online' : 'offline'}, ${unread} unread)`
-                    : `Message ${t.name} (${online ? 'online' : 'offline'})`
+                    ? `Message ${t.name} (${stateLabel}, ${unread} unread)`
+                    : `Message ${t.name} (${stateLabel})`
                 }
-                title={`${t.name} · ${online ? 'online' : 'offline'} · ${t.role.title}`}
+                title={`${t.name} · ${stateLabel} · ${t.role.title}`}
                 class={`navitem w-full${active ? ' active' : ''}`}
                 style={`text-align:left;font-weight:${active ? 700 : 500}`}
               >
@@ -252,13 +256,17 @@ export function NavColumn({ viewer }: NavColumnProps) {
                 >
                   {t.name}
                 </span>
-                {auth !== null && (
+                {busy && (
+                  // Working spinner — replaces the old privilegeTag
+                  // letter. Surfaces the runner's in-flight LLM-call
+                  // count > 0 from `Presence.busy` on the roster.
                   <span
-                    style={`font-family:var(--f-mono);font-size:9.5px;letter-spacing:.08em;color:${active ? 'var(--steel)' : 'var(--muted)'};font-weight:600`}
-                    aria-hidden="true"
-                  >
-                    {auth}
-                  </span>
+                    class="spinner sm"
+                    aria-label="working"
+                    aria-hidden="false"
+                    role="status"
+                    style="flex-shrink:0"
+                  />
                 )}
                 {unread > 0 && !active && <UnreadBadge count={unread} />}
               </button>

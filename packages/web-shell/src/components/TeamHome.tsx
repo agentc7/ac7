@@ -81,6 +81,7 @@ export function TeamHome({ viewer }: TeamHomeProps) {
           {r.teammates.map((t, idx) => {
             const conn = connectedByName.get(t.name);
             const online = (conn?.connected ?? 0) > 0;
+            const busy = conn?.busy === true;
             const isSelf = t.name === viewer;
             const isLast = idx === r.teammates.length - 1;
             const rowBorder = isLast ? '' : 'border-bottom:1px solid var(--rule);';
@@ -136,9 +137,13 @@ export function TeamHome({ viewer }: TeamHomeProps) {
                     class="flex items-center gap-2 flex-shrink-0"
                     style="font-family:var(--f-mono);font-size:11.5px;letter-spacing:.08em;text-transform:uppercase"
                   >
-                    <span class={`dot${online ? ' ok' : ' muted'}`} aria-hidden="true" />
-                    <span style={`color:var(--${online ? 'steel' : 'muted'})`}>
-                      {online ? 'ONLINE' : 'OFFLINE'}
+                    {busy ? (
+                      <span class="spinner sm" aria-hidden="true" />
+                    ) : (
+                      <span class={`dot${online ? ' ok' : ' muted'}`} aria-hidden="true" />
+                    )}
+                    <span style={`color:var(--${busy || online ? 'steel' : 'muted'})`}>
+                      {busy ? 'WORKING' : online ? 'ONLINE' : 'OFFLINE'}
                     </span>
                   </span>
                 </button>

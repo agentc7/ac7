@@ -28,6 +28,7 @@ import {
   ActivityKindSchema,
   AddChannelMemberRequestSchema,
   ApproveEnrollmentRequestSchema,
+  BusyReportSchema,
   CancelObjectiveRequestSchema,
   CompleteObjectiveRequestSchema,
   CreateChannelRequestSchema,
@@ -73,6 +74,7 @@ import { type Context, Hono } from 'hono';
 import { deleteCookie, setCookie } from 'hono/cookie';
 import { type AuthBindings, createAuthMiddleware } from './auth.js';
 import { composeBriefing } from './briefing.js';
+import { type BusyTracker, createBusyTracker } from './busy-tracker.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
 import { type FilesystemStore, FsError, type ViewerContext } from './files/index.js';
@@ -274,6 +276,7 @@ const API_PATH_PREFIXES = [
   PATHS.enrollPending,
   PATHS.enrollApprove,
   PATHS.enrollReject,
+  PATHS.presenceBusy,
   '/agents',
   '/fs',
 ] as const;
@@ -327,6 +330,12 @@ export function createApp(options: AppOptions): CreatedApp {
     HARD_CAP_MAX_FILE_SIZE,
   );
   const now = options.now ?? Date.now;
+  // Per-member "agent is working" tracker. Filled by `POST /presence/busy`,
+  // read on roster GETs, and decayed via TTL so a runner that crashes
+  // mid-call doesn't leave the member stuck "working" forever. Local
+  // helper, not exposed externally — it's behavioral state of the
+  // running broker, not config or persisted truth.
+  const busyTracker: BusyTracker = createBusyTracker(now);
   const app = new Hono<AppBindings>();
   // WebSocket upgrade helper, bound to this app. Used by `/subscribe`
   // and `/members/:name/activity/stream`. The returned
@@ -647,10 +656,46 @@ export function createApp(options: AppOptions): CreatedApp {
   });
 
   app.get(PATHS.roster, auth, (c) => {
+    // Decorate the live presence list with each member's busy state.
+    // The busy field defaults to absent (falsy) for members the
+    // tracker has no recent report for; older clients ignore it and
+    // see the same shape they always have.
+    const presences = broker
+      .listPresences()
+      .map((p) => (busyTracker.isBusy(p.name) ? { ...p, busy: true } : p));
     return c.json({
       teammates: teammatesFromMembers(members),
-      connected: broker.listPresences(),
+      connected: presences,
     });
+  });
+
+  /**
+   * Runner-driven presence report: bumps the busy bit for the
+   * authenticated member. Bearer-only — humans on the web UI never
+   * report this; the runner is the only thing that knows.
+   *
+   * Body: `{ busy: bool }`. Response is 204 No Content.
+   *
+   * The tracker is internally TTL'd so a runner that drops mid-call
+   * still gets cleared after BUSY_TTL_MS. Runners are expected to
+   * heartbeat (re-post `busy: true`) every ~10s while still working
+   * so the TTL stays fresh; on transition to idle they post `false`
+   * once and drop the entry.
+   */
+  app.post(PATHS.presenceBusy, auth, async (c) => {
+    const tokenId = c.get('tokenId');
+    if (tokenId === null) {
+      // Cookie + JWT subscribers don't have a runner context to report.
+      return c.json({ error: 'presence/busy is runner-only (bearer auth required)' }, 403);
+    }
+    const member = c.get('member');
+    const raw = await c.req.json().catch(() => null);
+    const parsed = BusyReportSchema.safeParse(raw);
+    if (!parsed.success) {
+      return c.json({ error: 'invalid busy report', details: parsed.error.issues }, 400);
+    }
+    busyTracker.report(member.name, parsed.data.busy);
+    return c.body(null, 204);
   });
 
   app.post(PATHS.push, auth, async (c) => {
@@ -2110,6 +2155,7 @@ export function createApp(options: AppOptions): CreatedApp {
     // would catch this anyway (member not found → 401), but
     // proactive deletion keeps the table clean.
     const revoked = tokens.revokeAllForMember(parsedName.data);
+    busyTracker.forget(parsedName.data);
     persistMembers();
     logger.info('member deleted', {
       name: parsedName.data,
