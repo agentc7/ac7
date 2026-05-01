@@ -115,6 +115,49 @@ async function shouldUsePty(): Promise<boolean> {
 }
 
 /**
+ * Decide which flags to auto-inject into the claude invocation, given
+ * the user's forwarded args and the briefing prose to pin into the
+ * system prompt. Three flags are candidates:
+ *
+ *   --dangerously-skip-permissions
+ *   --dangerously-load-development-channels server:ac7
+ *   --append-system-prompt <briefing>
+ *
+ * Each is injected unless the user already passed it (or, for the
+ * append-system-prompt case, the briefing is empty — which the runner
+ * treats as "nothing to pin"). The user's args are kept verbatim and
+ * placed AFTER our injected flags so the user-supplied tail wins on
+ * any surface that resolves last-flag-wins.
+ *
+ * `summary` is the human-readable banner we print to stderr; it
+ * shortens the briefing prose to a char-count so a 1–8K paragraph
+ * doesn't drown the welcome banner.
+ */
+export function computeInjectedClaudeArgs(
+  userArgs: readonly string[],
+  briefingInstructions: string,
+): { injected: string[]; summary: string[]; final: string[] } {
+  const injected: string[] = [];
+  const summary: string[] = [];
+  const userPassedSkipPerms = userArgs.includes('--dangerously-skip-permissions');
+  const userPassedDevChannels = userArgs.includes('--dangerously-load-development-channels');
+  const userPassedAppendSysPrompt = userArgs.includes('--append-system-prompt');
+  if (!userPassedSkipPerms) {
+    injected.push('--dangerously-skip-permissions');
+    summary.push('--dangerously-skip-permissions');
+  }
+  if (!userPassedDevChannels) {
+    injected.push('--dangerously-load-development-channels', 'server:ac7');
+    summary.push('--dangerously-load-development-channels server:ac7');
+  }
+  if (!userPassedAppendSysPrompt && briefingInstructions.length > 0) {
+    injected.push('--append-system-prompt', briefingInstructions);
+    summary.push(`--append-system-prompt <ac7 briefing, ${briefingInstructions.length} chars>`);
+  }
+  return { injected, summary, final: [...injected, ...userArgs] };
+}
+
+/**
  * Run a Claude Code session wrapped in a ac7 runner. Resolves with the
  * exit code of the claude subprocess (so the CLI entry can propagate
  * it via `process.exit`). Teardown is synchronous-best-effort so even
@@ -332,32 +375,11 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
   // passed any of them already, we de-dup so claude doesn't see them
   // twice. User-supplied args still end up on the command line, just
   // after ours.
-  const injectedArgs: string[] = [];
-  const injectedSummary: string[] = [];
-  const userPassedSkipPerms = input.claudeArgs.includes('--dangerously-skip-permissions');
-  const userPassedDevChannels = input.claudeArgs.includes(
-    '--dangerously-load-development-channels',
-  );
-  const userPassedAppendSysPrompt = input.claudeArgs.includes('--append-system-prompt');
-  if (!userPassedSkipPerms) {
-    injectedArgs.push('--dangerously-skip-permissions');
-    injectedSummary.push('--dangerously-skip-permissions');
-  }
-  if (!userPassedDevChannels) {
-    injectedArgs.push('--dangerously-load-development-channels', 'server:ac7');
-    injectedSummary.push('--dangerously-load-development-channels server:ac7');
-  }
-  if (!userPassedAppendSysPrompt && runner.briefing.instructions.length > 0) {
-    injectedArgs.push('--append-system-prompt', runner.briefing.instructions);
-    // Don't dump 1-8K of prose into the banner — show a summary line
-    // sized so individual-contributors notice it, with a deterministic char count
-    // so changes-after-rerun are visible to anyone diffing two stderr
-    // captures.
-    injectedSummary.push(
-      `--append-system-prompt <ac7 briefing, ${runner.briefing.instructions.length} chars>`,
-    );
-  }
-  const finalClaudeArgs = [...injectedArgs, ...input.claudeArgs];
+  const {
+    injected: injectedArgs,
+    summary: injectedSummary,
+    final: finalClaudeArgs,
+  } = computeInjectedClaudeArgs(input.claudeArgs, runner.briefing.instructions);
 
   // Human-readable posture banner on stderr — stdout belongs to claude.
   // The two auto-injected flags meaningfully relax claude's default

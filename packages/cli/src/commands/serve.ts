@@ -13,10 +13,11 @@
  * stay consistent.
  */
 
+import { dirname } from 'node:path';
 import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 
 // Type-only import: compiles away, never loaded at runtime.
-import type { RunningServer, TeamConfig } from '@agentc7/server';
+import type { RunningServer, RunServerOptions, TeamConfig } from '@agentc7/server';
 import { UsageError } from './errors.js';
 
 export { UsageError };
@@ -26,6 +27,48 @@ export interface ServeCommandInput {
   port?: number;
   host?: string;
   dbPath?: string;
+}
+
+/**
+ * Translate `ac7 serve` inputs + a loaded TeamConfig into the options
+ * bag that `runServer` expects. Pure — no I/O — so the seam between
+ * the CLI and the server is unit-testable.
+ *
+ * Threading every relevant TeamConfig field through is critical: the
+ * server's `runServer` makes the `persistMembers` hook (the one that
+ * rewrites the on-disk team config after every member mutation) only
+ * when `configPath` is supplied. Drop `configPath` and every member-
+ * mutation endpoint short-circuits with 501 — including the
+ * "create-new-member" branch of `/enroll/approve`, which is the path
+ * the web UI's enrollment-approval flow hits. The same goes for
+ * `https`, `webPush`, and `jwt`: missing fields silently disable the
+ * corresponding feature, so we forward whatever the team config has.
+ */
+export function buildServeRunOptions(args: {
+  config: TeamConfig;
+  configPath: string;
+  port: number;
+  host: string;
+  dbPath: string;
+  onListen: RunServerOptions['onListen'];
+}): RunServerOptions {
+  return {
+    members: args.config.store,
+    team: args.config.team,
+    https: args.config.https,
+    ...(args.config.webPush !== null ? { webPush: args.config.webPush } : {}),
+    ...(args.config.jwt !== null ? { jwt: args.config.jwt } : {}),
+    configPath: args.configPath,
+    configDir: dirname(args.configPath),
+    port: args.port,
+    host: args.host,
+    dbPath: args.dbPath,
+    ...(args.config.files?.root !== undefined ? { filesRoot: args.config.files.root } : {}),
+    ...(args.config.files?.maxFileSize !== undefined
+      ? { maxFileSize: args.config.files.maxFileSize }
+      : {}),
+    onListen: args.onListen,
+  };
 }
 
 export async function runServeCommand(
@@ -44,25 +87,25 @@ export async function runServeCommand(
 
   const config = await loadOrCreateTeamConfig(server, configPath, stdout);
 
-  const running = await server.runServer({
-    members: config.store,
-    team: config.team,
-    port,
-    host,
-    dbPath,
-    ...(config.files?.root !== undefined ? { filesRoot: config.files.root } : {}),
-    ...(config.files?.maxFileSize !== undefined ? { maxFileSize: config.files.maxFileSize } : {}),
-    onListen: (info) => {
-      stdout(
-        `ac7-server listening on http://${info.address}:${info.port}\n` +
-          `  team:      ${config.team.name}\n` +
-          `  directive: ${config.team.directive}\n` +
-          `  config:    ${configPath}\n` +
-          `  db:        ${dbPath}\n` +
-          `  members:   ${config.store.size()} (${config.store.names().join(', ')})`,
-      );
-    },
-  });
+  const running = await server.runServer(
+    buildServeRunOptions({
+      config,
+      configPath,
+      port,
+      host,
+      dbPath,
+      onListen: (info) => {
+        stdout(
+          `ac7-server listening on ${info.protocol}://${info.address}:${info.port}\n` +
+            `  team:      ${config.team.name}\n` +
+            `  directive: ${config.team.directive}\n` +
+            `  config:    ${configPath}\n` +
+            `  db:        ${dbPath}\n` +
+            `  members:   ${config.store.size()} (${config.store.names().join(', ')})`,
+        );
+      },
+    }),
+  );
 
   return running;
 }

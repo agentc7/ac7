@@ -74,6 +74,16 @@ export async function runForwarder(opts: ForwarderOptions): Promise<void> {
       // back to `offline`.
       presence?.setOnline();
       for await (const message of stream) {
+        log('broker message received', {
+          msgId: message.id,
+          from: message.from,
+          to: message.to,
+          level: message.level,
+          dataKind:
+            typeof message.data === 'object' && message.data !== null
+              ? ((message.data as Record<string, unknown>).kind ?? null)
+              : null,
+        });
         const isObjectiveEvent =
           typeof message.data === 'object' &&
           message.data !== null &&

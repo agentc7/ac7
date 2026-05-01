@@ -192,6 +192,121 @@ describe('POST /members', () => {
   });
 });
 
+describe('PATCH /members/:name', () => {
+  it('updates role title and description', async () => {
+    const { app, persistMembers } = makeApp();
+    const res = await app.request('/members/scout', {
+      method: 'PATCH',
+      headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        role: { title: 'senior engineer', description: 'leads scouting' },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Member;
+    expect(body.role.title).toBe('senior engineer');
+    expect(body.role.description).toBe('leads scouting');
+    expect(persistMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it('updates instructions', async () => {
+    const { app, persistMembers } = makeApp();
+    const res = await app.request('/members/scout', {
+      method: 'PATCH',
+      headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instructions: 'pin this guidance into the system prompt' }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Member;
+    expect(body.instructions).toBe('pin this guidance into the system prompt');
+    expect(persistMembers).toHaveBeenCalledTimes(1);
+  });
+
+  it('updates permissions via preset names', async () => {
+    const { app } = makeApp();
+    const res = await app.request('/members/scout', {
+      method: 'PATCH',
+      headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissions: ['operator'] }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as Member;
+    expect(body.permissions).toContain('objectives.create');
+    expect(body.permissions).toContain('objectives.cancel');
+  });
+
+  it('rejects callers without members.manage', async () => {
+    const { app, persistMembers } = makeApp();
+    const res = await app.request('/members/scout', {
+      method: 'PATCH',
+      headers: { ...authed(OPERATOR_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instructions: 'no go' }),
+    });
+    expect(res.status).toBe(403);
+    expect(persistMembers).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown preset name with 400', async () => {
+    const { app, persistMembers } = makeApp();
+    const res = await app.request('/members/scout', {
+      method: 'PATCH',
+      headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissions: ['ghost-preset'] }),
+    });
+    expect(res.status).toBe(400);
+    expect(persistMembers).not.toHaveBeenCalled();
+  });
+
+  it('returns 404 for an unknown member', async () => {
+    const { app, persistMembers } = makeApp();
+    const res = await app.request('/members/ghost', {
+      method: 'PATCH',
+      headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ instructions: 'x' }),
+    });
+    expect(res.status).toBe(404);
+    expect(persistMembers).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 on a malformed payload', async () => {
+    const { app } = makeApp();
+    const res = await app.request('/members/scout', {
+      method: 'PATCH',
+      headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ role: { title: 123 } }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('refuses to strip members.manage from the last admin (409)', async () => {
+    const { app, persistMembers } = makeApp();
+    const res = await app.request('/members/alice', {
+      method: 'PATCH',
+      headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissions: [] }),
+    });
+    expect(res.status).toBe(409);
+    expect(persistMembers).not.toHaveBeenCalled();
+  });
+
+  it('allows stripping members.manage when another admin exists', async () => {
+    const { app } = makeApp();
+    // Promote bob to admin first.
+    await app.request('/members/bob', {
+      method: 'PATCH',
+      headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissions: ['admin'] }),
+    });
+    // Now safely demote alice.
+    const res = await app.request('/members/alice', {
+      method: 'PATCH',
+      headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissions: [] }),
+    });
+    expect(res.status).toBe(200);
+  });
+});
+
 describe('DELETE /members/:name', () => {
   it('refuses to delete the last admin', async () => {
     const { app } = makeApp();
@@ -200,5 +315,55 @@ describe('DELETE /members/:name', () => {
       headers: authed(ADMIN_TOKEN),
     });
     expect(res.status).toBe(409);
+  });
+
+  it('returns 404 for an unknown member', async () => {
+    const { app, persistMembers } = makeApp();
+    const res = await app.request('/members/ghost', {
+      method: 'DELETE',
+      headers: authed(ADMIN_TOKEN),
+    });
+    expect(res.status).toBe(404);
+    expect(persistMembers).not.toHaveBeenCalled();
+  });
+
+  it('rejects callers without members.manage', async () => {
+    const { app, persistMembers } = makeApp();
+    const res = await app.request('/members/scout', {
+      method: 'DELETE',
+      headers: authed(OPERATOR_TOKEN),
+    });
+    expect(res.status).toBe(403);
+    expect(persistMembers).not.toHaveBeenCalled();
+  });
+
+  it('deletes a non-admin and revokes their tokens (cascade)', async () => {
+    const { app, persistMembers, tokens } = makeApp();
+    expect(tokens.listForMember('scout').length).toBe(1);
+    const res = await app.request('/members/scout', {
+      method: 'DELETE',
+      headers: authed(ADMIN_TOKEN),
+    });
+    expect(res.status).toBe(204);
+    expect(persistMembers).toHaveBeenCalledTimes(1);
+    expect(tokens.listForMember('scout')).toEqual([]);
+    // Their old bearer token is now unusable end-to-end.
+    const followup = await app.request('/roster', { headers: authed(AGENT_TOKEN) });
+    expect(followup.status).toBe(401);
+  });
+
+  it('lets a non-last admin be deleted', async () => {
+    const { app } = makeApp();
+    // Promote bob to admin so alice → admin → 2 admins.
+    await app.request('/members/bob', {
+      method: 'PATCH',
+      headers: { ...authed(ADMIN_TOKEN), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissions: ['admin'] }),
+    });
+    const res = await app.request('/members/bob', {
+      method: 'DELETE',
+      headers: authed(ADMIN_TOKEN),
+    });
+    expect(res.status).toBe(204);
   });
 });
