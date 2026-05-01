@@ -27,6 +27,7 @@ import type { Client as BrokerClient } from '@agentc7/sdk/client';
 import type { ActivityEvent, TraceEntry } from '@agentc7/sdk/types';
 import { ActivityUploader } from './activity-uploader.js';
 import { extractEntries, type HttpExchange } from './anthropic.js';
+import { type BusySignal, createBusySignal } from './busy.js';
 import { type Http1Exchange, Http1Reassembler } from './http1-reassembler.js';
 import { type CertPool, createCertPool, createTraceCa, type TraceCa } from './mitm/ca.js';
 import { type ProxyRelay, startProxyRelay } from './proxy.js';
@@ -66,6 +67,13 @@ export interface TraceHost {
   readonly certPool: CertPool;
   /** Path on disk where the CA cert PEM is written, for NODE_EXTRA_CA_CERTS. */
   readonly caCertPath: string;
+  /**
+   * "Agent is working" signal driven by in-flight upstream HTTP
+   * requests captured through the MITM proxy. The runner subscribes
+   * to this and reports the boolean state to the broker so the web UI
+   * can render a spinner next to the agent's name.
+   */
+  readonly busy: BusySignal;
   /**
    * Env vars to merge into the agent child's environment (see the
    * comment on the implementation for the full list). Returns a
@@ -109,13 +117,30 @@ export async function startTraceHost(options: TraceHostOptions): Promise<TraceHo
     log,
   });
 
+  // "Agent is working" signal — bumped on each in-flight HTTP
+  // request that lands in the reassembler, dropped when the
+  // matching response (or session-close request-only flush)
+  // completes the exchange. Pending → finish handles are stored by
+  // sessionId+startedAt so we can decrement at exchange time.
+  const busy = createBusySignal();
+  const pendingHandles = new Map<string, { finish: () => void }>();
+  const handleKey = (sessionId: number, startedAt: number): string => `${sessionId}:${startedAt}`;
+
   // Incremental HTTP/1.1 reassembler — turns plaintext proxy
   // chunks into completed request/response exchanges. Each
   // exchange is translated to an activity event and handed to
   // the uploader.
   const reassembler = new Http1Reassembler({
     log,
+    onRequestStart: ({ sessionId, startedAt }) => {
+      pendingHandles.set(handleKey(sessionId, startedAt), busy.start());
+    },
     onExchange: (exchange) => {
+      const handle = pendingHandles.get(handleKey(exchange.sessionId, exchange.startedAt));
+      if (handle) {
+        handle.finish();
+        pendingHandles.delete(handleKey(exchange.sessionId, exchange.startedAt));
+      }
       const event = exchangeToActivity(exchange);
       if (event) uploader.enqueue(event);
     },
@@ -141,6 +166,7 @@ export async function startTraceHost(options: TraceHostOptions): Promise<TraceHo
     ca,
     certPool,
     caCertPath,
+    busy,
     envVars(existingEnv: NodeJS.ProcessEnv = {}): Record<string, string> {
       const existingNoProxy = existingEnv.NO_PROXY ?? existingEnv.no_proxy ?? '';
       const noProxyHosts = ['localhost', '127.0.0.1', '::1'];

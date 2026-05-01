@@ -278,6 +278,52 @@ describe('<Sidebar />', () => {
     expect(offlineBtn.querySelector('.dot.muted')).toBeTruthy();
   });
 
+  it('renders a working spinner when a teammate is busy', () => {
+    // Helper sets connected counts; busy comes from a custom roster.
+    roster.value = {
+      teammates: [
+        {
+          name: 'director-1',
+          role: { title: 'director', description: '' },
+          permissions: ['members.manage'],
+        },
+        { name: 'build-bot', role: { title: 'engineer', description: '' }, permissions: [] },
+        { name: 'test-agent-1', role: { title: 'watcher', description: '' }, permissions: [] },
+      ],
+      connected: [
+        {
+          name: 'build-bot',
+          connected: 1,
+          createdAt: 0,
+          lastSeen: 0,
+          role: null,
+          busy: true,
+        },
+        {
+          name: 'test-agent-1',
+          connected: 1,
+          createdAt: 0,
+          lastSeen: 0,
+          role: null,
+        },
+      ],
+    };
+    render(<Sidebar viewer="director-1" />);
+    const busyBtn = screen.getByLabelText(/Message build-bot \(working\)/i);
+    expect(busyBtn).toBeTruthy();
+    expect(busyBtn.querySelector('.spinner')).toBeTruthy();
+    // The non-busy online teammate stays a dot, no spinner.
+    const idleBtn = screen.getByLabelText(/Message test-agent-1 \(online\)/i);
+    expect(idleBtn.querySelector('.spinner')).toBeNull();
+  });
+
+  it('omits the spinner when busy is absent or false', () => {
+    setRoster({ 'build-bot': 1 });
+    render(<Sidebar viewer="director-1" />);
+    const onlineBtn = screen.getByLabelText(/Message build-bot \(online\)/i);
+    expect(onlineBtn.querySelector('.spinner')).toBeNull();
+  });
+
   it('falls back to briefing teammates when roster is still null (cold start)', () => {
     briefing.value = {
       name: 'director-1',

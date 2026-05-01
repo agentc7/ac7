@@ -122,6 +122,20 @@ export interface Presence {
   createdAt: number;
   lastSeen: number;
   role: Role | null;
+  /**
+   * `true` while the runner has at least one upstream HTTP request in
+   * flight (an active LLM call captured through the MITM proxy).
+   * Reported by the runner via `POST /presence/busy` and cleared by a
+   * server-side TTL when no heartbeat arrives, so a crashed runner
+   * doesn't leave the member stuck "working" forever. Optional —
+   * absent on members the server has no recent busy report for.
+   */
+  busy?: boolean;
+}
+
+/** Body for `POST /presence/busy`. */
+export interface BusyReport {
+  busy: boolean;
 }
 
 // ─────────────────────────── Messaging ────────────────────────────────

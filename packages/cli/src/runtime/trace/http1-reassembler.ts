@@ -49,6 +49,18 @@ export interface Http1ReassemblerOptions {
    */
   onExchange: (exchange: Http1Exchange) => void;
   /**
+   * Called the moment a request line + headers are fully parsed, BEFORE
+   * a matching response arrives. Pairs 1:1 with `onExchange` for the
+   * same logical request — every `onRequestStart` is followed by exactly
+   * one `onExchange` (either a paired exchange when the response lands,
+   * or a request-only exchange flushed from `closeSession`).
+   *
+   * Wired into the runner's "agent is working" presence: callers track
+   * the start/exchange delta to know whether an LLM call is currently
+   * in flight.
+   */
+  onRequestStart?: (info: { sessionId: number; startedAt: number }) => void;
+  /**
    * Log hook for parser errors and oversized buffers. Errors are recoverable —
    * the reassembler drops the affected session's buffers and keeps going.
    */
@@ -89,10 +101,12 @@ interface Session {
 export class Http1Reassembler {
   private readonly sessions = new Map<number, Session>();
   private readonly onExchange: (exchange: Http1Exchange) => void;
+  private readonly onRequestStart: (info: { sessionId: number; startedAt: number }) => void;
   private readonly log: (msg: string, ctx?: Record<string, unknown>) => void;
 
   constructor(options: Http1ReassemblerOptions) {
     this.onExchange = options.onExchange;
+    this.onRequestStart = options.onRequestStart ?? (() => {});
     this.log = options.log ?? (() => {});
   }
 
@@ -205,11 +219,23 @@ export class Http1Reassembler {
         session.clientBuf = session.clientBuf.subarray(result.consumed);
         continue;
       }
+      const startedAt = session.lastClientTs;
       session.pending.push({
         request: result.message,
-        startedAt: session.lastClientTs,
+        startedAt,
       });
       session.clientBuf = session.clientBuf.subarray(result.consumed);
+      // Fire the start hook AFTER advancing the buffer so the
+      // listener observes consistent state if it re-enters via a
+      // sync side effect (it shouldn't, but cheap insurance).
+      try {
+        this.onRequestStart({ sessionId: session.id, startedAt });
+      } catch (err) {
+        this.log('http1-reassembler: onRequestStart threw', {
+          sessionId: session.id,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
   }
 

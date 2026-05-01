@@ -124,6 +124,20 @@ export const PresenceSchema = z.object({
   createdAt: z.number(),
   lastSeen: z.number(),
   role: RoleSchema.nullable(),
+  // Optional, defaults to false. The server omits the field for
+  // members it has no busy report for; older clients that don't know
+  // about it ignore the absence and behave as before.
+  busy: z.boolean().optional(),
+});
+
+/**
+ * Body for `POST /presence/busy` — runner-side report of whether the
+ * agent is currently mid-LLM-call. The server keys this on the
+ * authenticated member and applies a TTL so stale state from a
+ * crashed runner clears itself.
+ */
+export const BusyReportSchema = z.object({
+  busy: z.boolean(),
 });
 
 export const DeliveryReportSchema = z.object({

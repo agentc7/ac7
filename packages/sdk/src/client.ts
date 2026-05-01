@@ -26,6 +26,7 @@ import {
   ApproveEnrollmentRequestSchema,
   ApproveEnrollmentResponseSchema,
   BriefingResponseSchema,
+  BusyReportSchema,
   ChannelSchema,
   CreateChannelRequestSchema,
   CreateMemberResponseSchema,
@@ -67,6 +68,7 @@ import type {
   ApproveEnrollmentRequest,
   ApproveEnrollmentResponse,
   BriefingResponse,
+  BusyReport,
   CancelObjectiveRequest,
   Channel,
   ChannelSummary,
@@ -838,6 +840,23 @@ export class Client {
       body: JSON.stringify(validated),
     });
     return PushResultSchema.parse(await this.json(resp));
+  }
+
+  /**
+   * Runner-driven presence: report whether this agent is currently
+   * mid-LLM-call. The server keys this on the authenticated member
+   * and applies a TTL so a runner that crashes mid-call doesn't leave
+   * the member stuck "working" forever. Callers should also re-post
+   * `busy: true` periodically while still working so the TTL stays
+   * fresh, then `busy: false` when the count returns to zero.
+   */
+  async setBusy(report: BusyReport): Promise<void> {
+    BusyReportSchema.parse(report);
+    await this.request(PATHS.presenceBusy, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(report),
+    });
   }
 
   // ─────────────────────────── Filesystem ─────────────────────────

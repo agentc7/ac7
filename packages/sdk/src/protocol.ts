@@ -63,6 +63,11 @@ export const PATHS = {
    * response without each consumer hard-coding it.
    */
   enrollVerify: '/enroll',
+  // Runner-driven presence reports. Today only `presenceBusy`: the
+  // runner POSTs `{busy: bool}` whenever the trace host's in-flight
+  // request count crosses 0/1, plus a heartbeat while the agent is
+  // still working so the server's TTL doesn't lapse mid-call.
+  presenceBusy: '/presence/busy',
   // The helpers below compose `:id` / `:name` paths at runtime
   // rather than templating here, since `PATHS` is keyed by
   // identifier not URL.
