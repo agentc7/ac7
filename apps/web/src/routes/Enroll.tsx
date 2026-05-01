@@ -288,29 +288,41 @@ export function Enroll(): JSX.Element {
   }
   if (!state.permissions.includes('members.manage')) {
     return (
-      <main class="min-h-screen flex items-center justify-center" style="padding:24px">
-        <section class="card elev" style="max-width:480px;padding:32px;text-align:center">
-          <div
-            class="font-display"
-            style="font-size:22px;font-weight:700;color:var(--ink);margin-bottom:8px"
-          >
-            Approval requires admin
-          </div>
-          <p style="color:var(--muted);font-size:14px;margin-bottom:20px">
-            Your account doesn't have <code>members.manage</code>. Ask an admin to approve the
-            enrollment, or sign in as an admin.
-          </p>
-          <button type="button" class="btn btn-ghost" onClick={() => void logout()}>
-            Sign out
-          </button>
-        </section>
-      </main>
+      <div class="app h-full flex flex-col">
+        <main
+          class="flex items-center justify-center"
+          style="flex:1;min-height:0;overflow-y:auto;padding:24px"
+        >
+          <section class="card elev" style="max-width:480px;padding:32px;text-align:center">
+            <div
+              class="font-display"
+              style="font-size:22px;font-weight:700;color:var(--ink);margin-bottom:8px"
+            >
+              Approval requires admin
+            </div>
+            <p style="color:var(--muted);font-size:14px;margin-bottom:20px">
+              Your account doesn't have <code>members.manage</code>. Ask an admin to approve the
+              enrollment, or sign in as an admin.
+            </p>
+            <button type="button" class="btn btn-ghost" onClick={() => void logout()}>
+              Sign out
+            </button>
+          </section>
+        </main>
+      </div>
     );
   }
 
+  // The body has `overflow: hidden; position: fixed` (see
+  // theme.css:101) so the document itself never scrolls — every
+  // route owns its own scroll container. Here, `<main>` is the
+  // scroller: `flex:1 min-height:0` lets it fill the column inside
+  // `.app`, and `overflow-y:auto` exposes the scrollbar when the
+  // approval form (especially the "create new member" branch with
+  // its permissions grid) grows past the viewport.
   return (
     <div class="app h-full flex flex-col">
-      <main class="min-h-screen" style="padding:32px max(1rem, 5vw)">
+      <main style="flex:1;min-height:0;overflow-y:auto;padding:32px max(1rem, 5vw)">
         <header style="max-width:720px;margin:0 auto 24px">
           <div
             class="eyebrow"
