@@ -48,7 +48,8 @@ import { createInterface } from 'node:readline';
 import { Client as BrokerClient } from '@agentc7/sdk/client';
 import type { BriefingResponse, Objective } from '@agentc7/sdk/types';
 import { CLI_VERSION } from '../version.js';
-import { type ForwarderNotificationSink, runForwarder } from './forwarder.js';
+import type { ForwarderNotificationSink } from './forwarder.js';
+import { runForwarder } from './forwarder.js';
 import {
   defaultSocketPath,
   encodeFrame,
@@ -114,6 +115,20 @@ export interface RunnerOptions {
    * else who wants to subscribe.
    */
   presence?: Presence;
+  /**
+   * Override the notification sink the forwarder writes broker SSE
+   * events into. Default: a bridge-IPC shim that wraps each event as
+   * an `mcp_notification` frame and pushes it to the connected MCP
+   * bridge — this is what claude-code uses (the bridge re-emits the
+   * notification to claude over its stdio MCP transport).
+   *
+   * The codex runner overrides this with a sink that converts each
+   * event into a `turn/start` or `turn/steer` JSON-RPC dispatch
+   * against the `codex app-server`. Keeps the forwarder + tools
+   * dispatch identical across runners — only the outbound notification
+   * transport differs per agent framework.
+   */
+  notificationSink?: ForwarderNotificationSink;
 }
 
 export interface RunnerHandle {
@@ -340,15 +355,19 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   // live inside the link — the bridge side converts incoming
   // notification frames into real MCP notifications on the agent's
   // stdio transport.
-  const forwarderPromise = runForwarder({
-    server: forwarderShim((method, params) => {
+  const sink: ForwarderNotificationSink =
+    options.notificationSink ??
+    forwarderShim((method, params) => {
       if (activeBridge === null) {
         // No bridge attached — drop. Messages still land in server
         // history; agent reads them via `recent` when it reconnects.
         return;
       }
       activeBridge.sendNotification({ kind: 'mcp_notification', method, params });
-    }),
+    });
+
+  const forwarderPromise = runForwarder({
+    server: sink,
     brokerClient,
     name: briefing.name,
     signal: abortController.signal,

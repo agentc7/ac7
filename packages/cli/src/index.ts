@@ -26,6 +26,7 @@ import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 import { parseDataFlag, parseSubcommandArgs } from './args.js';
 import { findAuthEntry } from './commands/auth-config.js';
 import { runClaudeCodeCommand } from './commands/claude-code.js';
+import { runCodexCommand } from './commands/codex.js';
 import { runConnectCommand } from './commands/connect.js';
 import { formatReport, runDoctor } from './commands/doctor.js';
 import { runEnrollCommand } from './commands/enroll.js';
@@ -54,6 +55,7 @@ usage:
   ac7 quickstart  [--skip-browser] [--assignee <name>]   seed a demo objective + open the web UI
   ac7 telemetry   enable|disable|preview|rotate|status       opt-in, zero-PII, off-by-default install telemetry
   ac7 claude-code [--no-trace] [--doctor] [--skip-doctor] [--unsafe-tls] [-- <claude args>...]   spawn claude-code wrapped in a ac7 runner
+  ac7 codex       [--no-trace] [--cwd <dir>] [--model <name>]   spawn OpenAI Codex CLI as a headless agent member of a ac7 team
   ac7 push        --body <text> (--agent <id> | --broadcast) [--title <t>] [--level <lvl>] [--data key=value]...
   ac7 roster      [--reveal-token --member <name> [--config-path <path>]]
                                     list teammates (no flags) or rotate+print a user's token (alias over 'ac7 rotate')
@@ -87,14 +89,29 @@ function getBoolean(values: Record<string, unknown>, key: string): boolean {
 }
 
 function makeClient(values: Record<string, unknown>): Client {
-  const url =
-    getString(values, 'url') ?? process.env[ENV.url] ?? `http://127.0.0.1:${DEFAULT_PORT}`;
-  // Token resolution order: explicit flag → env var → saved auth.json
-  // entry for this URL. The saved-entry path closes the loop with
-  // `ac7 connect`: once an operator has approved a device, the token
-  // is on disk and `ac7 push` / `ac7 roster` / `ac7 claude-code`
-  // pick it up without touching env vars.
-  let token = getString(values, 'token') ?? process.env[ENV.token];
+  const { url, token } = resolveAuth({
+    url: getString(values, 'url'),
+    token: getString(values, 'token'),
+  });
+  return new Client({ url, token });
+}
+
+/**
+ * Three-step token resolution: explicit flag → env var → saved
+ * auth.json entry for this URL. Used by every verb that needs to
+ * authenticate to the broker — including the runner verbs (`ac7
+ * claude-code`, `ac7 codex`), so `ac7 connect` actually closes the
+ * loop and the runner picks up the saved token without touching env
+ * vars. Returns `null` for `token` only if the caller explicitly
+ * opted out of failing (none currently); the normal path fails the
+ * process with a clear message if no source provides a token.
+ */
+function resolveAuth(input: { url?: string; token?: string }): {
+  url: string;
+  token: string;
+} {
+  const url = input.url ?? process.env[ENV.url] ?? `http://127.0.0.1:${DEFAULT_PORT}`;
+  let token = input.token ?? process.env[ENV.token];
   if (!token) {
     const saved = findAuthEntry(url);
     if (saved) token = saved.token;
@@ -102,7 +119,7 @@ function makeClient(values: Record<string, unknown>): Client {
   if (!token) {
     fail(`--token or ${ENV.token} is required (or run \`ac7 connect\` to enroll this device).`);
   }
-  return new Client({ url, token });
+  return { url, token };
 }
 
 async function main(): Promise<void> {
@@ -161,6 +178,9 @@ async function main(): Promise<void> {
       return;
     case 'claude-code':
       await handleClaudeCode(rest);
+      return;
+    case 'codex':
+      await handleCodex(rest);
       return;
     default:
       process.stderr.write(USAGE);
@@ -673,7 +693,89 @@ async function handleClaudeCode(args: string[]): Promise<void> {
   }
 
   try {
-    const code = await runClaudeCodeCommand({ url, token, claudeArgs, noTrace, unsafeTls });
+    const resolved = resolveAuth({ url, token });
+    const code = await runClaudeCodeCommand({
+      url: resolved.url,
+      token: resolved.token,
+      claudeArgs,
+      noTrace,
+      unsafeTls,
+    });
+    process.exit(code);
+  } catch (err) {
+    if (err instanceof UsageError) fail(err.message, 2);
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * `ac7 codex` — spawn OpenAI Codex CLI as a headless team member.
+ *
+ * No interactive TUI: codex runs as `codex app-server` (a JSON-RPC
+ * daemon) under our control. The director communicates with the
+ * agent through the broker (chat / DMs / objectives / `ac7 push`).
+ * Channel events arrive at codex as `turn/start` (when idle) or
+ * `turn/steer` (mid-turn) — the structural equivalent of claude-code's
+ * `notifications/claude/channel` ambient injection.
+ *
+ * Args (everything is optional):
+ *   --no-trace           disable the MITM trace host
+ *   --cwd <dir>          working directory for codex (default: cwd)
+ *   --model <name>       override the codex model (default: codex picks)
+ *   --url / --token      same as the other ac7 verbs
+ */
+async function handleCodex(args: string[]): Promise<void> {
+  let url: string | undefined;
+  let token: string | undefined;
+  let cwd: string | undefined;
+  let model: string | undefined;
+  let noTrace = false;
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === undefined) continue;
+    if (arg === '-h' || arg === '--help') {
+      process.stdout.write(USAGE);
+      return;
+    }
+    if (arg === '--no-trace') {
+      noTrace = true;
+      continue;
+    }
+    if (arg === '--url' || arg === '--token' || arg === '--cwd' || arg === '--model') {
+      const next = args[i + 1];
+      if (next === undefined) {
+        fail(`${arg} requires a value`, 2);
+      }
+      switch (arg) {
+        case '--url':
+          url = next as string;
+          break;
+        case '--token':
+          token = next as string;
+          break;
+        case '--cwd':
+          cwd = next as string;
+          break;
+        case '--model':
+          model = next as string;
+          break;
+      }
+      i++;
+      continue;
+    }
+    fail(`ac7 codex: unknown arg: ${arg}`, 2);
+  }
+
+  try {
+    const resolved = resolveAuth({ url, token });
+    const code = await runCodexCommand({
+      url: resolved.url,
+      token: resolved.token,
+      cwd,
+      model,
+      noTrace,
+    });
     process.exit(code);
   } catch (err) {
     if (err instanceof UsageError) fail(err.message, 2);

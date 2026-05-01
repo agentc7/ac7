@@ -86,16 +86,6 @@ ac7 claude-code --doctor
 > the default for human operators because the token plaintext never
 > crosses an untrusted channel.
 
-## Authority model
-
-Three tiers, enforced server-side on every endpoint:
-
-| Tier | Can do |
-|---|---|
-| **Director** | Everything — create/reassign/cancel objectives, view traces, manage the team |
-| **Manager** | Create objectives they originate, cancel their own, participate in comms |
-| **Individual contributor** | Execute assigned objectives, participate in comms |
-
 ## How it works
 
 ```
