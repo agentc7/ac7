@@ -205,6 +205,10 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
   // refreshes from SSE events, read on every `defineTools` invocation
   // so tool descriptions reflect the current plate.
   let openObjectives: Objective[] = briefing.openObjectives;
+  const currentBriefing = (): BriefingResponse => ({
+    ...briefing,
+    openObjectives,
+  });
 
   // At most one active bridge connection at a time. When a second
   // bridge connects, the older one gets dropped (default) or the
@@ -267,7 +271,7 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
 
     const conn = createBridgeConnection(socket, {
       handleRequest: async (frame) => {
-        return handleMcpRequest(frame, briefing, brokerClient);
+        return handleMcpRequest(frame, currentBriefing(), brokerClient);
       },
       onClose: () => {
         if (activeBridge === conn) activeBridge = null;
@@ -337,6 +341,11 @@ export async function startRunner(options: RunnerOptions): Promise<RunnerHandle>
         }
       }
       openObjectives = next;
+      activeBridge?.sendNotification({
+        kind: 'mcp_notification',
+        method: 'notifications/tools/list_changed',
+        params: {},
+      });
     },
   });
 

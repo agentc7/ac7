@@ -39,6 +39,7 @@ import {
   FAKE_BROKER_TEAM_NAME,
   FAKE_BROKER_TOKEN,
   type FakeBroker,
+  fakeBrokerObjectives,
   startFakeBroker,
 } from './fake-broker.js';
 
@@ -374,5 +375,56 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     expect(params.meta.ts).not.toBe('0');
     expect(params.meta.ts_ms).toBe('1700000002000');
     expect(params.meta.legit_field).toBe('ok');
+  });
+
+  it('refreshes tool descriptions after a newly assigned objective without restart', async () => {
+    const sub = await broker.waitForSubscriber(AGENT_ID);
+    const objective = {
+      id: 'obj-refresh-1',
+      title: 'Patch live objective refresh',
+      body: '',
+      outcome: 'New objectives appear in tools without restarting the agent.',
+      status: 'active',
+      assignee: AGENT_ID,
+      originator: 'lea',
+      watchers: [],
+      createdAt: 1_700_000_004_000,
+      updatedAt: 1_700_000_004_000,
+      completedAt: null,
+      result: null,
+      blockReason: null,
+      attachments: [],
+    };
+    fakeBrokerObjectives.push(objective);
+    try {
+      sub.write({
+        id: 'msg-objective-assigned-refresh',
+        ts: 1_700_000_004_000,
+        to: AGENT_ID,
+        from: 'lea',
+        title: null,
+        body: '[objective assigned] obj-refresh-1',
+        level: 'info',
+        data: {
+          kind: 'objective',
+          objective_id: objective.id,
+          objective_status: objective.status,
+          assignee: AGENT_ID,
+        },
+      });
+
+      await waitForMessage((m) => m.method === 'notifications/tools/list_changed');
+
+      send({ jsonrpc: '2.0', id: 5, method: 'tools/list', params: {} });
+      const response = await waitForMessage((m) => m.id === 5);
+      const result = response.result as {
+        tools: Array<{ name: string; description: string }>;
+      };
+      const listTool = result.tools.find((t) => t.name === 'objectives_list');
+      expect(listTool?.description).toContain(objective.id);
+      expect(listTool?.description).toContain(objective.outcome);
+    } finally {
+      fakeBrokerObjectives.splice(0, fakeBrokerObjectives.length);
+    }
   });
 });

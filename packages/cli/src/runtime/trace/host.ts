@@ -175,7 +175,6 @@ export async function startTraceHost(options: TraceHostOptions): Promise<TraceHo
         : noProxyHosts.join(',');
       const env: Record<string, string> = {
         HTTPS_PROXY: proxy.proxyUrl,
-        HTTP_PROXY: proxy.proxyUrl,
         ALL_PROXY: proxy.proxyUrl,
         NO_PROXY: mergedNoProxy,
         NODE_USE_ENV_PROXY: '1',

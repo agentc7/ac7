@@ -117,6 +117,13 @@ export function encodeFrame(frame: IpcFrame): Buffer {
  */
 export function parseFrame(line: string): IpcFrame | null {
   if (line.length === 0) return null;
+  const bytes = Buffer.byteLength(line, 'utf8');
+  if (bytes > MAX_FRAME_BYTES) {
+    return {
+      kind: 'error',
+      message: `ipc: inbound frame ${bytes}B exceeds ${MAX_FRAME_BYTES}B limit`,
+    };
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(line);

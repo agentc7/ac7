@@ -61,7 +61,7 @@ describe('TraceHost', () => {
     }
   });
 
-  it('envVars includes HTTPS_PROXY, CA cert path, and NO_PROXY loopback bypass', async () => {
+  it('envVars includes HTTPS proxying, CA cert path, and NO_PROXY loopback bypass', async () => {
     const caCertPath = join(tmpDir, 'env-ca.pem');
     const host = await startTraceHost({
       log: () => {},
@@ -72,7 +72,10 @@ describe('TraceHost', () => {
     try {
       const env = host.envVars({});
       expect(env.HTTPS_PROXY).toBe(host.proxy.proxyUrl);
-      expect(env.HTTP_PROXY).toBe(host.proxy.proxyUrl);
+      // TraceHost's proxy implements CONNECT for TLS traffic. Plain
+      // HTTP uses absolute-form proxy requests, so leave it unproxied
+      // instead of routing it to a CONNECT-only listener.
+      expect(env.HTTP_PROXY).toBeUndefined();
       expect(env.ALL_PROXY).toBe(host.proxy.proxyUrl);
       expect(env.HTTPS_PROXY?.startsWith('http://')).toBe(true);
       expect(env.NODE_USE_ENV_PROXY).toBe('1');

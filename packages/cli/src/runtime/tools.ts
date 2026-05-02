@@ -50,6 +50,7 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
     others.length > 0
       ? others.map((t) => `${t.name} (${t.role.title})`).join(', ')
       : '(no other teammates currently defined)';
+  const openObjectivesSummary = formatOpenObjectivesSummary(briefing);
 
   return [
     {
@@ -199,7 +200,7 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
         `assigned to you, originated by you, or objectives you're watching. ` +
         `Use \`status\` to filter (active | blocked | done | cancelled); omit to see all ` +
         `statuses. Objectives always carry a required outcome — use \`objectives_view\` ` +
-        `for full detail including the watcher list and audit log.`,
+        `for full detail including the watcher list and audit log.\n\n${openObjectivesSummary}`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -293,7 +294,7 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
         `Mark an objective as done with a required result summary. Call ` +
         `\`objectives_view\` first to refresh the acceptance criteria in context. The ` +
         `\`result\` should explicitly address whether the stated outcome was met and link ` +
-        `or describe the deliverable. Only the current assignee may call this.`,
+        `or describe the deliverable. Only the current assignee may call this.\n\n${openObjectivesSummary}`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -333,6 +334,15 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
     // try to touch someone else's objective and eat a 403.
     ...buildAuthorityTools(briefing),
   ];
+}
+
+function formatOpenObjectivesSummary(briefing: BriefingResponse): string {
+  const open = briefing.openObjectives;
+  if (open.length === 0) {
+    return 'No active objectives are assigned to you right now.';
+  }
+  const lines = open.map((o) => `- ${o.id} [${o.status}] ${o.title}\n  outcome: ${o.outcome}`);
+  return `Current open objective${open.length === 1 ? '' : 's'} assigned to you:\n${lines.join('\n')}`;
 }
 
 function buildFilesystemTools(name: string): Tool[] {
