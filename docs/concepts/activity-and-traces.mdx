@@ -1,0 +1,225 @@
+---
+title: Activity and traces
+description: The append-only stream of what each agent does — objective markers, LLM exchanges, opaque HTTP — and how directors view per-objective traces as time-range slices.
+section: Concepts
+order: 70
+---
+
+# Activity and traces
+
+ac7 maintains one **append-only activity stream** per member.
+Everything the runner observes about the agent's work — every
+LLM exchange, every opaque HTTP call, every objective lifecycle
+boundary — lands in that stream as a typed event with a
+timestamp.
+
+There's no separate "traces" table. A "trace" in the web UI is a
+**time-range view** over the activity stream, scoped to one
+objective's `objective_open` → `objective_close` window. Same
+storage, same wire shape; the UI just slices.
+
+## What lives in the stream
+
+Four event kinds:
+
+| Kind | Producer | Carries |
+|---|---|---|
+| `objective_open` | runner objectives tracker | `{ objectiveId }` |
+| `objective_close` | runner objectives tracker | `{ objectiveId, result: 'done' \| 'cancelled' \| 'reassigned' \| 'runner_shutdown' }` |
+| `llm_exchange` | runner trace host (MITM parser) | typed Anthropic Messages entry: model, system, messages, tools, usage, stopReason |
+| `opaque_http` | runner trace host (MITM parser) | host, method, url, status, headers, body previews |
+
+The schema:
+
+```typescript
+type ActivityEvent =
+  | { kind: 'objective_open'; ts: number; objectiveId: string }
+  | { kind: 'objective_close'; ts: number; objectiveId: string; result: ... }
+  | { kind: 'llm_exchange'; ts: number; duration: number; entry: AnthropicMessagesEntry }
+  | { kind: 'opaque_http'; ts: number; duration: number; entry: OpaqueHttpEntry };
+```
+
+Each row stored on the broker side adds `id` (server-assigned) and
+`memberName`:
+
+```typescript
+interface ActivityRow {
+  id: number;
+  memberName: string;
+  event: ActivityEvent;
+  createdAt: number;
+}
+```
+
+## How events get there
+
+The runner's **trace host** is a loopback HTTP CONNECT proxy with
+MITM TLS termination. The agent's HTTPS traffic flows through it:
+
+```
+agent ── HTTPS ── proxy ── HTTPS ── upstream API
+                    │
+                    ▼ (plaintext on the wire)
+            HTTP/1.1 reassembler
+                    │
+                    ▼
+       extractEntries (anthropic.ts):
+         POST /v1/messages → AnthropicMessagesEntry
+         everything else   → OpaqueHttpEntry
+                    │
+                    ▼
+            redactJson (redact.ts):
+         strip Authorization / x-api-key / cookie
+         scrub sk-ant-* / sk-* / AKIA* / ghp_* / xox*
+                    │
+                    ▼
+        ActivityUploader (batched):
+         flush every 50 events / 64 KB / 500ms
+         exponential backoff retry on broker unreachability
+                    │
+                    ▼
+         POST /members/<name>/activity
+```
+
+`objective_open` and `objective_close` markers come from the
+runner's objectives tracker rather than the trace pipeline:
+
+- `objective_open` fires when the agent's open objective set
+  gains an id (initial briefing, new assignment, reassignment-in).
+- `objective_close` fires when an id leaves the set (completed,
+  cancelled, reassigned-out). The `result` field is a hint —
+  `done` is the default, but the broker's audit log has the
+  authoritative terminal state.
+
+Both markers flow through the same `ActivityUploader` as
+`llm_exchange` and `opaque_http`, so directors who care about
+exact transition order can join on `ts`.
+
+## Per-objective traces
+
+The web UI's TracePanel renders the trace for one objective by
+querying:
+
+```
+GET /members/<assignee>/activity
+    ?from=<objective.createdAt>
+    &to=<objective.completedAt ?? now>
+    &kind=llm_exchange
+```
+
+That returns every Anthropic exchange between the objective's
+open and close markers, rendered with:
+
+- Model name
+- Token usage: `in=N out=M cache_read=K cache_creation=L`
+- The system prompt (collapsible)
+- Each request/response message expanded into text blocks +
+  tool_use + tool_result entries inline
+
+Reassignment shifts the trace cleanly. The old assignee's
+`objective_close` (with `result: 'reassigned'`) closes their
+window; the new assignee's `objective_open` opens theirs. Each
+section renders against its own assignee.
+
+## What's redacted
+
+Redaction happens at parse time, before events leave the runner.
+The runner's `redactJson` walker:
+
+| Strips | Header names |
+|---|---|
+| `Authorization`, `x-api-key`, `x-anthropic-api-key`, `cookie`, `set-cookie`, `proxy-authorization` | from request + response headers |
+
+| Scrubs | Patterns in string values (replaces with `[REDACTED]`) |
+|---|---|
+| Anthropic API keys | `sk-ant-...` |
+| OpenAI keys | `sk-...` (with prefix length checks to avoid false positives) |
+| AWS access keys | `AKIA...` |
+| GitHub tokens | `ghp_...`, `github_pat_...` |
+| Slack tokens | `xoxb-...`, `xoxp-...`, `xoxa-...`, `xoxr-...`, `xoxs-...` |
+
+The broker never sees plaintext. Even if a secret slips past the
+patterns, the next layer of defense is the access control on the
+endpoint.
+
+## Who can read what
+
+| Endpoint | Auth |
+|---|---|
+| `POST /members/:name/activity` | Self only — runners can only upload for themselves |
+| `GET /members/:name/activity` | Self OR `activity.read` |
+| `GET /members/:name/activity/stream` | Self OR `activity.read` (live SSE) |
+
+Self-read is always allowed regardless of permissions — every
+member can review their own captures. Cross-member reads gate on
+`activity.read`. There's no "watcher" surface: being a watcher on
+an objective doesn't grant trace access; that's a separate
+permission.
+
+The TracePanel in the web UI is gated client-side too — it only
+mounts when `briefing.permissions.includes('activity.read')` —
+but the server is the real boundary; client gating is a UX
+optimization.
+
+## Storage and retention
+
+Activity is the heaviest-write path in the broker. A single
+active agent can produce ~5 MB / hour in `llm_exchange` rows;
+ten concurrent agents over a 24h day push ~7 GB / day / team.
+
+Two operational controls keep it bounded:
+
+### Dedicated activity DB
+
+The activity store runs on its own SQLite file
+(`<dbPath>-activity.db` by default, override via
+`$AC7_ACTIVITY_DB_PATH`). Separate from the main broker DB so
+trace bursts don't stall chat / objective / auth writes — both
+DBs use WAL + `busy_timeout=5000` + `wal_autocheckpoint=1000`.
+
+### `ac7 prune-traces`
+
+```bash
+ac7 prune-traces --older-than 30d
+```
+
+Deletes every activity row with `event.ts` older than the cutoff.
+Prompts before destroying anything unless `--yes` is passed.
+Accepted duration shapes: `30d`, `7d`, `24h`, `60m`, `3600s`,
+`500ms`. Typical cadence: daily cron at 30–90 day retention,
+depending on audit requirements.
+
+The prune works whether the broker is online or offline. With
+WAL, online prune doesn't block live writes for long.
+
+## Limitations
+
+- **HTTP/1.1 only.** HTTP/2 agents (`h2` ALPN-negotiated) produce
+  no `llm_exchange` entries — the proxy doesn't speak HPACK yet.
+  In practice the Anthropic SDK defaults to HTTP/1.1 for
+  `/v1/messages`, so this is rarely hit.
+- **Anthropic parser only.** OpenAI / Gemini / Mistral land as
+  `opaque_http`. Codex traces today fall in this bucket — adding
+  typed parsers is a follow-up.
+- **Uploader queue cap.** The uploader caps in-flight at 1000
+  events / 1 MB and evicts oldest-first under sustained broker
+  unreachability. Events dropped here won't appear later.
+- **Cert pinning.** If an agent ships hard-pinned upstream certs,
+  the MITM leaf won't match and the handshake fails. Claude Code
+  v2 doesn't currently pin; if that changes we'd need to
+  intercept at a different layer.
+
+## Source of truth
+
+- `packages/sdk/src/types.ts` — `ActivityEvent`, `ActivityRow`,
+  `AnthropicMessagesEntry`, `OpaqueHttpEntry`
+- `packages/sdk/src/schemas.ts` — `ActivityEventSchema`,
+  `TraceEntrySchema`
+- `packages/core/src/activity-store.ts` — server-side append +
+  query
+- `packages/cli/src/runtime/trace/host.ts` — runner trace host
+  (proxy + reassembler + uploader)
+- `apps/server/src/member-activity.ts` — server-side endpoints
+
+For the full trace pipeline + setup story see
+[tracing](/docs/tracing).

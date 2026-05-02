@@ -1,0 +1,347 @@
+---
+title: Config files
+description: Every file ac7 reads or writes — team config, auth cache, MCP backup, telemetry state, KEK, and the ephemeral codex home — with their shapes, paths, and lifecycles.
+section: Reference
+order: 50
+---
+
+# Config files
+
+This page lists every file ac7 reads or writes, in order of where
+operators encounter them. All ac7-owned files are written at
+`0o600` in directories created at `0o700`.
+
+## ac7.json — team config
+
+The authoritative source of team state that doesn't live in the
+broker's SQLite.
+
+| | |
+|---|---|
+| **Created by** | `ac7 setup` (interactive wizard) or `ac7 serve` (drops into the wizard if missing on a TTY) |
+| **Read by** | `ac7 serve`, `ac7 setup`, `ac7 member`, `ac7 enroll`, `ac7 rotate`, `ac7 quickstart` |
+| **Written by** | `ac7 setup`, `ac7 member`, `ac7 enroll`, `ac7 rotate`, broker on every member mutation through `/members/*` |
+| **Default path** | `./ac7.json` |
+| **Override** | `--config-path` flag, `$AC7_CONFIG_PATH` |
+| **Mode** | `0o600` |
+
+### Shape
+
+```json
+{
+  "team": {
+    "name": "platform-eng",
+    "directive": "Ship the v2 ingest pipeline by Q3",
+    "brief": "Multi-paragraph context...",
+    "permissionPresets": {
+      "admin": ["team.manage", "members.manage", "objectives.create",
+                "objectives.cancel", "objectives.reassign",
+                "objectives.watch", "activity.read"],
+      "operator": ["objectives.create", "objectives.cancel"]
+    }
+  },
+  "store": {
+    "members": [
+      {
+        "name": "alice",
+        "role": { "title": "director", "description": "..." },
+        "instructions": "Personal directive prose...",
+        "rawPermissions": ["admin"],
+        "permissions": ["team.manage", "members.manage", "..."],
+        "tokenHash": "sha256:<hex>",
+        "totpSecret": { "v": 1, "ct": "<base64>", "iv": "..." }
+      }
+    ]
+  },
+  "https": {
+    "port": 8718,
+    "cert": "/path/to/fullchain.pem",
+    "key": "/path/to/privkey.pem"
+  },
+  "webPush": {
+    "vapidPublicKey": "<base64url>",
+    "vapidPrivateKey": { "v": 1, "ct": "<base64>", "iv": "..." }
+  },
+  "jwt": {
+    "issuer": "https://app.example.com",
+    "audience": "team:<uuid>",
+    "jwksUrl": "https://app.example.com/.well-known/jwks.json"
+  },
+  "files": {
+    "root": "/var/lib/ac7-files",
+    "maxFileSize": 26843545
+  }
+}
+```
+
+Notes:
+
+- `permissionPresets` are reusable bundles members can reference
+  by name. The server resolves preset names → leaf permissions at
+  load time; what reaches `permissions` is always the flat leaf
+  list. Member entries store both `rawPermissions` (what the user
+  typed) and `permissions` (resolved).
+- `tokenHash` is `sha256:<hex>` of the bearer plaintext. The
+  plaintext itself is never persisted. Multi-token mode (added by
+  `ac7 connect`) stores additional rows in the broker's SQLite,
+  not in this file.
+- `totpSecret` and `webPush.vapidPrivateKey` are AES-256-GCM
+  encrypted under the team's KEK. Schema-versioned via the `v`
+  field for future rotation.
+- `https`, `webPush`, `jwt`, `files` are all optional. Absent
+  blocks silently disable the corresponding feature.
+- The first-run wizard auto-migrates plaintext fields it finds to
+  hashed/encrypted form on first boot (the migration count is
+  reported on startup).
+
+### Default path resolution
+
+When `--config-path` and `$AC7_CONFIG_PATH` are both unset, the
+default depends on platform-specific helpers in `@agentc7/server`.
+Always run with an explicit `--config-path` in production
+deployments to avoid surprises.
+
+## ac7.json.kek — KEK file
+
+The Key Encryption Key that wraps secrets in `ac7.json`.
+
+| | |
+|---|---|
+| **Created by** | server module (`resolveKek`) on first boot if missing |
+| **Read by** | every command that loads `ac7.json` (setup, serve, member, enroll, rotate, quickstart) |
+| **Default path** | `<config>.kek` (alongside `ac7.json`) |
+| **Override** | `$AC7_KEK` env var (32-byte base64 of the key) |
+| **Mode** | `0o600` |
+
+The KEK is 32 raw bytes encoded base64 at rest (or injected via
+env var). It encrypts:
+
+- Each member's `totpSecret`
+- The team's `webPush.vapidPrivateKey`
+- The `pending_enrollments` row's bearer plaintext (between
+  approval and the device-side poll)
+
+If you lose the KEK, those fields can't be decrypted; you have to
+re-enroll TOTP for every member and regenerate the VAPID keypair.
+The bearer token hashes survive (they're already SHA-256). For
+production deployments where this matters, inject `$AC7_KEK` from
+a secrets manager rather than relying on the auto-generated file.
+
+## auth.json — client-side bearer cache
+
+Where `ac7 connect` stashes the bearer token after a successful
+device-code enrollment.
+
+| | |
+|---|---|
+| **Created by** | `ac7 connect` on approval |
+| **Read by** | every CLI command's auth resolver (after `--token` and `$AC7_TOKEN`) |
+| **Override** | `$AC7_AUTH_CONFIG_PATH` |
+| **Mode** | `0o600` |
+
+| OS | Path |
+|---|---|
+| Linux/BSD | `$XDG_CONFIG_HOME/ac7/auth.json` (default `~/.config/ac7/auth.json`) |
+| macOS | `~/Library/Application Support/ac7/auth.json` |
+| Windows | `%APPDATA%\ac7\auth.json` |
+
+### Shape
+
+```json
+{
+  "schema": 1,
+  "entries": [
+    {
+      "url": "https://broker.example.com",
+      "token": "ac7_...",
+      "savedAt": 1714255200000
+    },
+    {
+      "url": "http://127.0.0.1:8717",
+      "token": "ac7_...",
+      "savedAt": 1714250000000
+    }
+  ]
+}
+```
+
+One entry per broker URL; the most recent write for a given URL
+wins. Lookup is exact-match on URL — no trailing-slash
+normalization, no scheme upgrade. If you ran `ac7 connect` against
+`https://broker.example.com` and then ran `ac7 push --url https://broker.example.com/`,
+the trailing slash means we won't find the saved entry. Use the
+URL form you connected with.
+
+The CLI does NOT persist `tokenId`, `label`, or `member name` here
+— less metadata on disk = less to leak if the file is
+exfiltrated. The corresponding metadata lives server-side and can
+be queried via `GET /members/:name/tokens`.
+
+## .mcp.json — claude-code's MCP server registry
+
+The file claude-code reads to discover its MCP servers. The runner
+backs it up and rewrites it on every `ac7 claude-code` invocation.
+
+| | |
+|---|---|
+| **Path** | `<cwd>/.mcp.json` (where you invoke `ac7 claude-code`) |
+| **Read by** | claude-code itself |
+| **Backed up by** | the runner — saves a copy to `$TMPDIR/<pid>-mcp-<nonce>.json` before rewriting |
+| **Restored by** | the runner — on every exit path (normal, SIGINT, SIGTERM, uncaughtException) |
+
+### What the runner writes
+
+The runner adds (or replaces) a `ac7` entry under `mcpServers`,
+preserving everything else:
+
+```json
+{
+  "mcpServers": {
+    "your-other-server": { ... },
+    "ac7": {
+      "command": "/path/to/node",
+      "args": ["/path/to/cli/dist/index.js", "mcp-bridge"],
+      "env": {
+        "AC7_RUNNER_SOCKET": "/tmp/.ac7-runner-12345.sock"
+      }
+    }
+  }
+}
+```
+
+`command` is auto-detected from `process.execPath` (the node
+binary running the cli); `args` is auto-detected from
+`process.argv[1]` (the cli's own entry script). This means claude
+spawns the same cli that spawned it — no `$PATH` lookup, works
+identically for global npm install, pnpm script, or development
+checkout.
+
+### Restore lifecycle
+
+The pre-run `.mcp.json` (if any) is backed up byte-for-byte. On
+exit, the runner restores the backup atomically. If no `.mcp.json`
+existed before the run, the runner deletes the one it created.
+Both paths are idempotent — double-firing on SIGINT →
+process.exit() is safe.
+
+The `uncaughtException` and `unhandledRejection` handlers also
+trigger a restore as a last-ditch safety net for crashes.
+
+## CODEX_HOME — ephemeral codex config
+
+A temporary directory the codex runner creates per invocation to
+contain codex's view of the world.
+
+| | |
+|---|---|
+| **Path** | `~/.cache/agentc7/codex/ac7-codex-<random>/` (XDG-aware) |
+| **Created by** | `ac7 codex` on startup |
+| **Removed by** | `ac7 codex` on every exit path |
+| **Override parent** | `$XDG_CACHE_HOME` |
+
+### Layout
+
+```
+~/.cache/agentc7/codex/ac7-codex-<random>/
+├── auth.json        ← symlink to ~/.codex/auth.json
+└── config.toml      ← runner-written
+```
+
+The `auth.json` symlink ensures OAuth refreshes from the real
+codex login persist; the symlink is removed on cleanup but the
+real file isn't.
+
+The `config.toml` we generate:
+
+```toml
+# Auto-generated by ac7 codex runner — do not edit.
+# Lifetime: this entire CODEX_HOME directory is ephemeral.
+
+[mcp_servers.ac7]
+command = "/path/to/node"
+args = ["/path/to/cli/dist/index.js", "mcp-bridge"]
+enabled = true
+default_tools_approval_mode = "approve"
+
+[mcp_servers.ac7.env]
+AC7_RUNNER_SOCKET = "/tmp/.ac7-runner-12345.sock"
+```
+
+Why `~/.cache/agentc7/codex/` and not `$TMPDIR`: codex refuses to
+install helper binaries (apply-patch, etc.) under tmpfs and emits
+a warning that disables them. Cache directories don't trigger
+that.
+
+## telemetry.json — opt-in install telemetry state
+
+| | |
+|---|---|
+| **Created by** | `ac7 telemetry enable` |
+| **Read/written by** | `ac7 telemetry` (every subverb) |
+| **Override** | `$AC7_TELEMETRY_PATH` |
+| **Mode** | `0o600` |
+
+| OS | Path |
+|---|---|
+| Linux/BSD | `$XDG_CONFIG_HOME/ac7/telemetry.json` |
+| macOS | `~/Library/Application Support/ac7/telemetry.json` |
+| Windows | `%APPDATA%\ac7\telemetry.json` |
+
+### Shape
+
+```json
+{
+  "enabled": true,
+  "installId": "<22-char base64url, 128 bits of randomness>",
+  "enabledAt": "2026-04-15T14:23:45.000Z",
+  "bootEventSent": false,
+  "missionEventSent": false
+}
+```
+
+`bootEventSent` and `missionEventSent` are one-shot flags — at
+most one boot event and one directive-complete event per
+enable-session. `ac7 telemetry rotate` mints a fresh `installId`
+and resets both flags so the new id can fire its own pair.
+
+See [operations/telemetry](/docs/operations/telemetry) for the
+full posture and what each event contains.
+
+## Session logs
+
+Not config exactly, but it's where to look for runner diagnostics.
+
+`ac7 claude-code` and `ac7 codex` each write a structured-JSON log
+under:
+
+```
+~/.cache/agentc7/session-claude-code-<pid>.log
+~/.cache/agentc7/session-codex-<pid>.log
+```
+
+Path is printed on startup so you can `tail -f` it for live
+diagnostics. Each line is one event — runner state changes, IPC
+frames, MCP requests / tool calls, trace uploads, broker errors.
+
+The log path moves out of the way when you provide your own
+`log` callback (embedders / tests). The default behavior is
+chosen so claude's TUI can own stderr without runner output
+corrupting its frame.
+
+## SQLite databases (server)
+
+For completeness — not config files, but the broker's persistent
+state lives here.
+
+| File | Contents |
+|---|---|
+| `ac7.db` | tokens (multi-token), messages (event log), sessions, channels, members extra state, file metadata |
+| `ac7-activity.db` | activity stream — `objective_open` / `objective_close` markers, `llm_exchange` typed entries, `opaque_http` records |
+
+Both default to `:memory:` for ergonomics; set `$AC7_DB_PATH` (and
+optionally `$AC7_ACTIVITY_DB_PATH`) for real deployments. Both use
+WAL mode + `busy_timeout=5000` + `wal_autocheckpoint=1000` — see
+`apps/server/src/db.ts`.
+
+`ac7 prune-traces --older-than <duration>` is the maintenance
+command for the activity DB.
