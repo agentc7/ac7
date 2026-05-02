@@ -139,7 +139,8 @@ looking for a match (codeless login). Rate-limited: 5 failures /
 15min per member, 10 failures / 15min global.
 
 On success the session cookie is `httpOnly`, `Secure` over HTTPS,
-`SameSite=Strict`, 30-min TTL with touch-to-extend.
+`SameSite=Strict`, 7-day sliding TTL — every authenticated request
+bumps `last_seen` and re-stamps the expiry.
 
 ### `GET /session`
 

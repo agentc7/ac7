@@ -184,7 +184,9 @@ short-lived session cookie:
 
 - `POST /session/totp` — body `{ code: "<6 digits>", member?: "<name>" }`
 - Sets `ac7_session` cookie (httpOnly, Secure on HTTPS, SameSite=Strict)
-- 30-minute TTL with touch-to-extend
+- 7-day sliding TTL — every authenticated request bumps `last_seen`
+  and re-stamps the expiry, so an active session stays alive
+  indefinitely while an idle one expires after a week
 - Rate-limited: 5 failures / 15min per member, 10 failures /
   15min global (when `member` is omitted and the server iterates
   enrolled members to find a match)
