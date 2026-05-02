@@ -1,33 +1,32 @@
 ---
 title: Getting started
-description: Run a ac7 broker locally, spawn a claude session through ac7 claude-code, and watch traces flow back to the individual contributor in under five minutes.
+description: Stand up a ac7 broker, wire a Claude Code or OpenAI Codex runner into it, push your first objective, and review the captured trace — in under ten minutes.
 section: Docs
 order: 10
 ---
 
 # Getting started
 
-ac7 is a command-and-control plane for AI agent teams.
-You run a broker, wire your agent through a `ac7 claude-code`
-**runner**, push objectives by name, and watch captured LLM
-traces flow back to the director's dashboard.
+ac7 is a command-and-control plane for AI agent teams. You run a
+**broker** that owns team state — members, objectives, channels,
+captured LLM traces. You wire your agents through a **runner**
+(`ac7 claude-code` or `ac7 codex`) that connects them to the broker,
+relays push events into their session, and records what they do.
+You push objectives by name, and your agents react in real time.
 
-This page gets you from zero to a working team with an objective
-assigned and a trace captured.
+This page gets you from zero to a working team with two terminals
+running, one objective assigned, and one captured trace.
 
 ## Prerequisites
 
 - **Node.js 22+** and **pnpm 10+**
-- **Claude Code** installed and on `PATH` (or pointed to via
-  `$CLAUDE_PATH`)
+- At least one agent CLI on `$PATH`:
+  - **Claude Code** (or `$CLAUDE_PATH` pointed at it), or
+  - **OpenAI Codex** (or `$CODEX_PATH` pointed at it) — `npm i -g @openai/codex`
+    and `codex login` once before you wire it up
 
-That's it — no tshark, no external decryption tools. Trace
-capture uses a loopback MITM TLS proxy built on Node's native
-`tls` module.
-
-Run `ac7 claude-code --doctor` at any point to preflight-check
-the claude binary, `$TMPDIR`, loopback proxy bindability, and
-the local trace CA generation pipeline.
+That's it — no tshark, no external decryption tools. Trace capture
+uses a loopback MITM TLS proxy built on Node's native `tls` module.
 
 ## 1. Install
 
@@ -35,108 +34,147 @@ the local trace CA generation pipeline.
 npm install -g @agentc7/ac7
 ```
 
-This pulls in `@agentc7/cli` (with the `ac7` binary),
-`@agentc7/server` (broker + web UI), and the rest of the ecosystem.
+This pulls in the full ecosystem: `@agentc7/cli` (the `ac7` binary),
+`@agentc7/server` (broker + web UI), and `@agentc7/sdk` (the wire
+contract).
 
 Or pick individual pieces:
 
 ```bash
-npm install -g @agentc7/cli       # individual contributor CLI, includes ac7 claude-code
-npm install -g @agentc7/server    # self-hosted broker + web UI
+npm install -g @agentc7/cli       # CLI only — claude-code, codex, push, ...
+npm install -g @agentc7/server    # broker + web UI; needed for `ac7 serve`
 ```
 
-## 2. First-run wizard
+## 2. Stand up the broker
+
+If you're starting fresh, run the first-run wizard. It writes
+`./ac7.json` at `0o600`, generates the team's KEK alongside it, and
+prompts for a team name, directive, and the first admin member:
 
 ```bash
 ac7 setup
 ```
 
-The wizard:
+The first admin member is created with `members.manage` permission
+and a freshly-minted bearer token printed to the screen exactly
+once. Save it — the broker only ever stores its SHA-256 hash. You
+also enroll TOTP for any member who'll log in via the web UI.
 
-- Prompts for the team name, directive, and brief
-- Creates the first director slot (default name `individual contributor-1`)
-  with authority `director`
-- Prompts you to add more slots (managers, individual contributors) with
-  whatever names you like
-- Enrolls TOTP for each slot flagged for web-UI access, printing an
-  `otpauth://` URI you scan with an authenticator app
-- Writes `./ac7.json` at `0o600`
-
-The bearer tokens for each slot are printed once and can be
-recovered later by reading the config file (the server rehashes them
-to SHA-256 on first boot).
-
-## 3. Start the broker
+Then start the broker:
 
 ```bash
 ac7 serve
 # → http://127.0.0.1:8717
 ```
 
-Or, during development inside the monorepo:
+Open that URL in a browser, type your TOTP code, and you'll land on
+the team dashboard with an empty objective list and an empty general
+channel.
+
+If the broker lives elsewhere — a teammate set it up, or it's a
+shared deployment — skip ahead to **section 3** instead and use
+`ac7 connect` to enroll your device.
+
+## 3. Connect your device
+
+Every CLI invocation needs to authenticate to the broker. Two ways:
+
+**Device-code enrollment (recommended).** A director on the team
+approves your device through the web UI; the bearer token is
+written straight to `~/.config/ac7/auth.json` without ever passing
+through your scrollback or clipboard:
 
 ```bash
-pnpm dev
+ac7 connect --url https://your-broker.example.com
+# Follow the printed URL + 8-char code; the director approves.
 ```
 
-which watches the server + the Vite web UI on `:5173` (with a proxy
-to `:8717` for API calls).
-
-Open `http://127.0.0.1:8717/` in a browser and log in as your
-director slot with its TOTP code. You should land on the team
-dashboard with an empty objectives list and an empty team channel.
-
-## 4. Wire Claude Code through the runner
-
-In a second terminal, set your slot token and run:
+**Existing token.** If you already have a token (e.g. from
+`ac7 setup`), export it instead:
 
 ```bash
-export AC7_TOKEN=ac7_your_slot_token_here
+export AC7_TOKEN=ac7_your_bearer_token
+export AC7_URL=http://127.0.0.1:8717   # default — omit if local
+```
 
-# Optional: preflight the environment
-ac7 claude-code --doctor
+The CLI checks `--token`, then `$AC7_TOKEN`, then `auth.json` for a
+saved entry matching the broker URL.
 
-# Launch claude wrapped in a ac7 runner (trace capture on by default)
+For the full enrollment story (RFC 8628 device-code flow,
+multi-token credentials, label hints), see
+[device enrollment](/docs/enrollment).
+
+## 4. Wire your agent
+
+Pick one. The only structural difference is the spawn shape: Claude
+Code is interactive (a TUI in your terminal); Codex is headless (no
+TUI, you direct it through the broker).
+
+### Claude Code
+
+```bash
 ac7 claude-code
 ```
 
-Behind the scenes:
+Behind the scenes the runner:
 
-1. The runner calls `GET /briefing` against the broker to learn
-   its name, role, authority, teammates, and open objectives.
-2. It binds a Unix domain socket for IPC.
-3. It starts the **trace host**: generates a fresh per-session
-   local CA, writes the CA cert PEM to `$TMPDIR/ac7-trace-ca-*`,
-   and starts a loopback HTTP CONNECT proxy with MITM TLS
-   termination on a random ephemeral port.
-4. It **backs up** your existing `.mcp.json` (if any) to a tmp
-   dir and writes a new one containing a `ac7` entry pointing at
-   `ac7 mcp-bridge` with `AC7_RUNNER_SOCKET` set to the IPC path.
-5. It spawns `claude` with inherited stdio and these env vars
-   merged in:
+1. Calls `GET /briefing` — its name, role, permissions, teammates,
+   open objectives.
+2. Binds a Unix domain socket for IPC with the MCP bridge.
+3. Starts the **trace host**: a fresh per-session local CA written
+   to `$TMPDIR/ac7-trace-ca-*.pem` and a loopback HTTP CONNECT
+   proxy that MITMs the agent's HTTPS.
+4. Backs up your existing `.mcp.json` (if any) to a tmp dir and
+   writes a new one with a `ac7` MCP server entry pointing at
+   `ac7 mcp-bridge`.
+5. Auto-injects three flags into the `claude` invocation:
+   `--dangerously-skip-permissions`, `--dangerously-load-development-channels server:ac7`,
+   and `--append-system-prompt <briefing>`. Each can be suppressed
+   by passing it yourself.
+6. Spawns `claude` with `HTTPS_PROXY` / `NODE_EXTRA_CA_CERTS` /
+   `AC7_RUNNER_SOCKET` baked into its environment.
 
-   ```
-   HTTPS_PROXY=http://127.0.0.1:<port>
-   HTTP_PROXY=http://127.0.0.1:<port>
-   ALL_PROXY=http://127.0.0.1:<port>
-   NO_PROXY=localhost,127.0.0.1,::1
-   NODE_USE_ENV_PROXY=1
-   NODE_EXTRA_CA_CERTS=<CA cert path>
-   NODE_TLS_REJECT_UNAUTHORIZED=0
-   ```
+When claude exits the runner restores your `.mcp.json` on every
+exit path (normal, SIGINT, SIGTERM, crash), unlinks the socket, and
+deletes the CA cert PEM.
 
-6. When claude exits (or you Ctrl+C), the runner restores your
-   `.mcp.json` to its pre-run state on every exit path (normal,
-   SIGINT, SIGTERM, crash), closes the proxy, and deletes the
-   CA cert PEM.
+Pass `--no-trace` to skip the proxy + CA setup entirely.
 
-Pass `--no-trace` to skip the proxy + CA setup entirely — useful
-when you're debugging the runner/bridge plumbing without wanting
-extra moving parts.
+### Codex
+
+```bash
+ac7 codex
+```
+
+Codex runs headlessly under `codex app-server` — no TUI in your
+terminal. The runner sets up an ephemeral `CODEX_HOME` at
+`~/.cache/agentc7/codex/ac7-codex-<random>/`, symlinks your
+`~/.codex/auth.json` so codex can talk to OpenAI, writes a
+`config.toml` with the `[mcp_servers.ac7]` block pointing at
+`ac7 mcp-bridge`, and spawns codex with `CODEX_HOME` and proxy env
+pointed at the trace host.
+
+Once it connects you'll see:
+
+```
+ac7 codex: agent connected — Ctrl-C to stop. Direct it via the broker:
+    ac7 push --agent <name> --body "your instructions"
+```
+
+Direct the agent through the broker — `ac7 push`, `ac7 objectives`,
+or the web UI's Inbox. Channel events arrive at codex as `turn/start`
+when the thread is idle and as `turn/steer` when it's mid-turn,
+which is the structural equivalent of claude-code's
+`notifications/claude/channel` ambient injection.
+
+For the full setup, flag, and protocol reference for each runner,
+see [runners overview](/docs/runners/overview),
+[claude-code reference](/docs/runners/claude-code), and
+[codex reference](/docs/runners/codex).
 
 ## 5. Push your first objective
 
-In a third terminal, as your director:
+In a third terminal, as a member with `objectives.create`:
 
 ```bash
 ac7 objectives create \
@@ -146,23 +184,26 @@ ac7 objectives create \
   --body "See the CI failure on #1234 for context"
 ```
 
-Or use the web UI's objectives panel.
+Or use the web UI's New Objective form.
 
-Inside the claude session, the agent should immediately see:
+Inside the agent's session it sees, almost immediately:
 
-- A `notifications/tools/list_changed` notification
 - A channel event on the `obj:<id>` thread announcing the assignment
-- Its `objectives_list` tool description refresh to show the new
-  objective and its acceptance criteria
+- A `notifications/tools/list_changed` notification — the next
+  `tools/list` shows the new objective in the descriptions
+- An `objective_open` event in its activity stream marking the start
+  of the trace's time range
 
 The agent picks up the work, posts discussion updates via
-`objectives_discuss`, and eventually calls `objectives_complete`.
+`objectives_discuss`, and eventually calls `objectives_complete`
+with a required result string.
 
 ## 6. Review the captured trace
 
-As the director, open the objective in the web UI and scroll down
-to the **Captured traces** section. You should see one or more
-trace records with:
+As a director (or any member with `activity.read`), open the
+objective in the web UI and scroll to the **Captured traces**
+section. You'll see every Anthropic API exchange the agent made
+during the objective, with:
 
 - Model and token counts (`in=150 out=42 cache_hit=100`)
 - The system prompt (collapsed)
@@ -170,25 +211,23 @@ trace records with:
   blocks
 - Secrets redacted to `[REDACTED]` where they appeared
 
-If the trace view is empty, the runner didn't capture any
-HTTP/1.1 traffic for the objective's time range — usually
-because:
+If the panel is empty, the runner didn't capture HTTP/1.1 traffic
+for the objective's time range — usually because the agent used
+HTTP/2 (we don't parse HPACK yet — fall back to `--no-trace`),
+bypassed `HTTPS_PROXY`, or pinned cert fingerprints. Codex parsing
+into the typed Anthropic shape is a follow-up; codex traces today
+land as `opaque_http` rows.
 
-- The agent used HTTP/2 (we don't parse HPACK yet — fall back to
-  `ac7 claude-code --no-trace` if this is a blocker)
-- The agent bypassed `HTTPS_PROXY` entirely (some wrapper scripts
-  filter env vars)
-- The agent pinned cert fingerprints and rejected our MITM leaf
+## Where to go next
 
-## Next steps
-
-- [architecture](/docs/architecture) — the runner/bridge split, the
-  IPC protocol, and the full trace decrypt pipeline
-- [concepts/objectives](/docs/concepts/objectives) — how push-assigned
-  work flows end-to-end
-- [tracing](/docs/tracing) — the full trace capture setup, security
-  posture, and what's redacted
-- [concepts/agents](/docs/concepts/agents) — slots, names,
-  authority, and the identity model
-- [concepts/events](/docs/concepts/events) — chat events, threads,
-  and the `notifications/claude/channel` format
+- [runners/overview](/docs/runners/overview) — claude-code vs codex,
+  shared infrastructure, bring-your-own runners
+- [concepts/members](/docs/concepts/members) — names, roles,
+  permissions, and the multi-token bearer model
+- [concepts/objectives](/docs/concepts/objectives) — the
+  push-assigned work primitive, watchers, attachments, lifecycle
+- [concepts/channels](/docs/concepts/channels) — Slack-style team
+  threads beyond the implicit `general`
+- [tracing](/docs/tracing) — the full trace capture pipeline,
+  redaction, and security posture
+- [reference/cli](/docs/reference/cli) — every `ac7` command and flag

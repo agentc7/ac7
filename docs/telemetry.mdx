@@ -1,0 +1,230 @@
+---
+title: Install telemetry
+description: ac7's opt-in, zero-PII install telemetry — what gets sent, when it's sent, and how to enable / disable / preview / rotate / verify it from the CLI.
+section: Guides
+order: 50
+---
+
+# Install telemetry
+
+ac7 ships with optional install telemetry. **Off by default**;
+opt in via `ac7 telemetry enable`. The mechanism is designed to
+be the most honest possible telemetry: silence by default,
+precise when enabled, auditable at every step.
+
+## What gets sent
+
+```typescript
+{
+  schema: 1,
+  event: "boot" | "directive-complete",
+  installId: "<22-char base64url, 128 bits of randomness>",
+  ac7Version: "0.0.4",
+  nodeVersion: "v22.x",
+  platform: "linux" | "darwin" | "win32" | ...,
+  arch: "x64" | "arm64" | ...,
+  deployMode: "localhost" | "lan" | "public" | "unknown"
+}
+```
+
+`deployMode` is coarse — it answers "is this a developer
+running on their laptop, on a LAN box, or behind a public
+HTTPS endpoint" without revealing the hostname. No IPs, no
+usernames, no objective content, no message content, no team
+names, no member names.
+
+## Design invariants
+
+1. **Off by default.** ac7's brand promise is data-local.
+   Telemetry must be opted into explicitly; no implicit
+   activation from any other flow.
+2. **Zero PII.** The payload above is the entire payload.
+   Source IP is stripped at the edge.
+3. **Two events max per enable-session.** One `boot` event on
+   first `ac7 serve` boot after enable; one `directive-complete`
+   event on first successful objective completion after enable.
+   No periodic beacon. No call-home-on-every-run.
+4. **Full transparency.** `ac7 telemetry preview` prints the
+   exact bytes that would be sent. No hidden fields. No encoded
+   blob. The source is public (Apache-2.0) and the monthly
+   aggregate rollup is published at `telemetry.ac7.dev/rollup/`.
+5. **Rotatable.** `ac7 telemetry rotate` mints a fresh
+   install-id at any time without disabling — useful when you
+   want to reset correlation.
+
+## Subcommands
+
+```
+ac7 telemetry enable
+ac7 telemetry disable
+ac7 telemetry preview [--event boot|directive-complete] [--path <state>]
+ac7 telemetry rotate
+ac7 telemetry status
+```
+
+### enable
+
+```bash
+ac7 telemetry enable
+# > ac7 telemetry: enabled.
+# >   install-id: NX9GE0jBxDA0IDdmqe1qKQ
+# >   state file: ~/.config/ac7/telemetry.json
+# >   will send at most 2 events per enable-session (first boot, first directive complete).
+# >   `ac7 telemetry preview` shows the exact bytes that would be sent.
+```
+
+Mints an install id (or reuses the existing one) and resets the
+two one-shot send flags. If telemetry was already enabled, this
+is a no-op apart from the printed status.
+
+### disable
+
+```bash
+ac7 telemetry disable
+# > ac7 telemetry: disabled. No further events will be sent.
+```
+
+Flips the enabled flag off. The install id is retained on disk —
+re-enabling reuses the same id unless you also rotate. To break
+correlation, run `rotate` after `disable`.
+
+### preview
+
+```bash
+ac7 telemetry preview --event boot
+# > ac7 telemetry: the exact bytes that would be sent for this event:
+# >
+# >   POST https://telemetry.ac7.dev/v1/install
+# >   Content-Type: application/json
+# >
+# >   {
+# >     "schema": 1,
+# >     "event": "boot",
+# >     "installId": "NX9GE0jBxDA0IDdmqe1qKQ",
+# >     "ac7Version": "0.0.4",
+# >     "nodeVersion": "v22.4.0",
+# >     "platform": "linux",
+# >     "arch": "x64",
+# >     "deployMode": "unknown"
+# >   }
+```
+
+`--event` accepts `boot` (default) or `directive-complete`. No
+network call; this is purely a render of what would go on the
+wire. Run it before enabling to verify nothing surprising is in
+the payload for your environment.
+
+### rotate
+
+```bash
+ac7 telemetry rotate
+# > ac7 telemetry: install-id rotated.
+# >   old: NX9GE0jB...
+# >   new: ZbYtoJA-r3Ie4g7qbKXzkA
+# >   server cannot correlate past events to the new id.
+```
+
+Mints a fresh install id and resets the one-shot flags. The
+previous id is no longer correlatable — useful for periodic
+rotation, or to reset after sharing your install id while
+debugging.
+
+### status
+
+```bash
+ac7 telemetry status
+# > ac7 telemetry: ENABLED
+# >   install-id:       NX9GE0jBxDA0IDdmqe1qKQ
+# >   enabled at:       2026-04-15T14:23:45.000Z
+# >   boot event sent:  yes
+# >   directive event:  no
+# >   state file:       ~/.config/ac7/telemetry.json
+```
+
+Read-only summary. Useful for confirming current state at a
+glance.
+
+## State file
+
+Telemetry state lives at:
+
+| OS | Path |
+|---|---|
+| Linux/BSD | `$XDG_CONFIG_HOME/ac7/telemetry.json` |
+| macOS | `~/Library/Application Support/ac7/telemetry.json` |
+| Windows | `%APPDATA%\ac7\telemetry.json` |
+
+Override via `$AC7_TELEMETRY_PATH`. File mode is `0o600` in a
+`0o700` directory.
+
+Shape:
+
+```json
+{
+  "enabled": true,
+  "installId": "NX9GE0jBxDA0IDdmqe1qKQ",
+  "enabledAt": "2026-04-15T14:23:45.000Z",
+  "bootEventSent": false,
+  "missionEventSent": false
+}
+```
+
+(`missionEventSent` is the on-disk name for the `directive-complete`
+flag. Internal naming drift; the wire `event` field is canonical.)
+
+The two `*Sent` flags are one-shot per enable-session — once
+true, the corresponding event won't fire again until you
+`rotate` or `disable` + `enable`.
+
+## Endpoint and overrides
+
+The default upload target is
+`https://telemetry.ac7.dev/v1/install`. Override via
+`$AC7_TELEMETRY_ENDPOINT` — useful for `preview` in test
+environments and for future self-hosted-aggregator scenarios.
+
+The send path uses a 3-second timeout. Telemetry never blocks or
+errors the operator's flow — failed sends are silent and the
+event stays unsent (will retry on the next eligible boot or
+directive-complete).
+
+## When events fire
+
+Note: as of v0.0.4 the send path is exported but **not yet wired**
+into `ac7 serve` boot or the objective-complete path. The wiring
+will land in a follow-up PR; today this command surface lets you
+preview the mechanism but no real events fire automatically. The
+state file's one-shot flags are reset by `enable` / `rotate` so
+they'll be ready when the wiring lands.
+
+When wiring is complete:
+
+- **boot event** — fires once on `ac7 serve`'s first boot after
+  enable. Sets `bootEventSent: true`.
+- **directive-complete event** — fires once on the first
+  successful `objectives_complete` call after enable. Sets
+  `missionEventSent: true`.
+
+## What ac7 telemetry deliberately does NOT do
+
+- **No periodic heartbeat.** Two events per enable-session, max.
+- **No usage metrics.** Not "how many objectives created", not
+  "how many trace events captured", not "how many minutes of
+  agent runtime".
+- **No identifying info.** Not hostname, not username, not IP.
+  Source IP is stripped at the edge before any logging.
+- **No content.** Not chat bodies, not objective titles, not
+  trace contents, not team names.
+- **No third-party SDKs.** A bare `fetch()` POST. No Sentry,
+  Mixpanel, Segment, etc.
+- **No silent activation.** Every other flow (setup, serve,
+  claude-code, codex) leaves telemetry untouched.
+
+## Source of truth
+
+- `packages/cli/src/commands/telemetry.ts` — the entire surface
+- `TELEMETRY_SCHEMA_VERSION` — bump when the payload shape
+  changes; stays in the wire payload as `schema`
+- `DEFAULT_TELEMETRY_ENDPOINT` — the default upload URL
+
+If you don't want telemetry, do nothing. It's already off.

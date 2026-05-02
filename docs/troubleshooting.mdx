@@ -1,0 +1,333 @@
+---
+title: Troubleshooting
+description: Common errors when running ac7 — broker connection problems, missing binaries, doctor failures, port conflicts, .mcp.json restoration, empty traces, KEK trouble, and how to recover.
+section: Guides
+order: 60
+---
+
+# Troubleshooting
+
+## Broker reachability
+
+### `briefing failed against <url>: ECONNREFUSED`
+
+The runner couldn't reach the broker. The most common cause:
+
+```bash
+ac7 serve  # in a separate terminal
+```
+
+If the broker is meant to live elsewhere, check `--url` and
+`$AC7_URL`. The runner falls back to `http://127.0.0.1:8717` when
+neither is set.
+
+### `failed to reach broker at <url>: fetch failed`
+
+Network / DNS / TLS issue. Verify with:
+
+```bash
+curl <url>/healthz
+```
+
+For self-signed certs (LAN deployments) you'll need to use the
+broker's HTTPS port and either trust the cert in your system
+store or run with `NODE_TLS_REJECT_UNAUTHORIZED=0` set in the CLI's
+own env (this is **separate** from the runner's `--unsafe-tls`,
+which targets the agent child).
+
+### `--token or AC7_TOKEN is required`
+
+No bearer token resolved. Three sources, in order:
+
+1. `--token <secret>` flag
+2. `$AC7_TOKEN` env var
+3. Saved entry in `~/.config/ac7/auth.json` for the resolved URL
+
+Run `ac7 connect` to enroll the device, or pass the token
+explicitly. **If `auth.json` has an entry but the CLI doesn't
+find it**, the URL is probably mismatched — the lookup is
+exact-match (no trailing-slash normalization). Check what URL
+you connected with versus what URL you're using now.
+
+## --doctor failures
+
+### `[FAIL] claude binary — failed to locate claude binary`
+
+Either Claude Code isn't installed, or it's not on `$PATH`. Set
+`$CLAUDE_PATH` to the absolute path:
+
+```bash
+export CLAUDE_PATH=/path/to/claude
+```
+
+For codex, set `$CODEX_PATH` instead. Both runners check the env
+var first, then fall back to `which`.
+
+### `[FAIL] $TMPDIR writable`
+
+The runner writes its CA cert PEM to `$TMPDIR` at `0o600`. Common
+causes:
+
+- `$TMPDIR` is set to a path that doesn't exist
+- Filesystem mounted read-only
+- Permission issue on the directory
+
+Check with:
+
+```bash
+echo "$TMPDIR"
+ls -ld "$TMPDIR"
+```
+
+Typically just unset `$TMPDIR` (so it falls back to `/tmp`) or
+point it at a writable location.
+
+### `[FAIL] loopback proxy bindable`
+
+The runner couldn't `listen()` on `127.0.0.1:0`. Sandboxed
+environments without loopback networking trigger this — uncommon,
+some restrictive CI runners.
+
+If you can't get loopback bind to work, you can run with
+`--no-trace` to skip the proxy entirely. You lose trace capture
+but everything else works.
+
+### `[FAIL] trace CA + leaf cert generation`
+
+A node-forge / Node crypto runtime issue. Usually a Node version
+mismatch with native modules. Reinstall the CLI:
+
+```bash
+npm uninstall -g @agentc7/cli @agentc7/ac7
+npm install -g @agentc7/ac7
+```
+
+## Port conflicts
+
+### `EADDRINUSE: address already in use 0.0.0.0:8717`
+
+Something else is already on port 8717. Either find and kill it,
+or change ports:
+
+```bash
+ac7 serve --port 8718
+# or
+AC7_PORT=8718 ac7 serve
+```
+
+Then point your runners and CLI invocations at the new port:
+
+```bash
+ac7 claude-code --url http://127.0.0.1:8718
+# or
+export AC7_URL=http://127.0.0.1:8718
+```
+
+## `.mcp.json` problems
+
+### `.mcp.json` not restored after a crash
+
+The runner restores on every exit path including
+`uncaughtException` / `unhandledRejection`. If you find an
+unrestored copy after a hard crash (kill -9, OOM, system reboot
+mid-session), check the backup directory:
+
+```bash
+ls $TMPDIR/*-mcp-*.json
+```
+
+Each backup is named `<pid>-mcp-<nonce>.json`. Pick the right
+one (timestamp + cwd matching) and copy it back manually. If
+multiple exist from different runs, the most recent is usually
+the one you want.
+
+### `.mcp.json` has a stale `ac7` entry
+
+Same scenario — a previous runner died without cleaning up.
+Either replace it with the runner's restore (see above), or
+edit by hand to remove the `ac7` server entry. Other entries
+should be untouched.
+
+## Empty traces
+
+### `Captured traces` panel is empty for a completed objective
+
+Three common causes:
+
+1. **The agent used HTTP/2.** We don't parse HPACK yet, so HTTP/2
+   exchanges produce no `llm_exchange` events. The Anthropic SDK
+   defaults to HTTP/1.1 for `/v1/messages`, so claude-code is
+   usually fine — but a forced HTTP/2 binding will go uncaptured.
+   Workaround: use `--no-trace` and rely on the agent's own
+   logging.
+
+2. **The agent bypassed `HTTPS_PROXY`.** Some wrapper scripts
+   filter env vars; some agents have hard-coded proxy settings
+   that override env. Verify by checking the runner's session
+   log — successful proxy traffic shows up as
+   `trace: llm_exchange queued` lines.
+
+3. **The agent pinned cert fingerprints.** Our MITM leaf won't
+   match a pinned cert. Claude Code v2 doesn't currently pin;
+   if it does in the future you'll see TLS handshake failures
+   in the agent's stderr. There's no workaround at the runner
+   layer.
+
+### Codex traces show as `opaque_http` instead of `llm_exchange`
+
+This is expected today — the typed parser only recognizes
+Anthropic's `/v1/messages` shape. Adding an OpenAI parser is a
+follow-up. Codex traces are still captured; they just render as
+opaque records (host, method, URL, status, header / body
+previews) instead of typed exchanges.
+
+## Activity DB grows unbounded
+
+```bash
+ac7 prune-traces --older-than 30d
+```
+
+Deletes activity rows older than the cutoff. Set up a daily
+cron:
+
+```cron
+0 3 * * *  ac7 prune-traces --older-than 30d --yes
+```
+
+If the DB has already grown to many GB and you want to compact
+the file after deleting, run a manual `VACUUM` on the activity
+DB while the broker is offline:
+
+```bash
+sqlite3 ./ac7-activity.db 'VACUUM;'
+```
+
+WAL mode means online deletes don't shrink the file; vacuum
+does, but it takes an exclusive lock.
+
+## KEK and encrypted fields
+
+### `KekResolutionError: cannot decrypt totpSecret`
+
+The KEK file (`<config>.kek`) is missing or wrong, OR
+`$AC7_KEK` is set to the wrong key. Two recovery options:
+
+- **Restore the original KEK file** from backup if you have one.
+  Without it, encrypted fields can't be recovered.
+- **Reset the encrypted fields**: regenerate the VAPID keypair
+  (web push will need re-subscribing); re-enroll TOTP for every
+  member (`ac7 enroll --member <name>` for each).
+
+To avoid this in production, inject `$AC7_KEK` from a real
+secrets manager rather than relying on the auto-generated file.
+
+### Lost the team config but still have the KEK
+
+You can reconstruct the team from scratch (`ac7 setup`), but
+you'll need to re-issue every bearer token (the hashes are gone
+with the config) and re-enroll every TOTP. The KEK on its own
+isn't useful without the encrypted ciphertexts.
+
+## TOTP rate limits
+
+### `429 Too Many Requests` on /session/totp
+
+Per-member: 5 failures / 15 minutes. Global (codeless login,
+where the server iterates members to find a match): 10 failures
+/ 15 minutes.
+
+Wait the window out. If you're locked out and need to bypass:
+
+```bash
+ac7 enroll --member <name>
+```
+
+re-enrolls the member with a fresh secret. The bearer token in
+the team config is the recovery capability — whoever can read the
+config can re-enroll.
+
+## Token rotation
+
+### Suspecting a token leak
+
+```bash
+ac7 rotate --member <name>
+```
+
+Revokes **every** active token for the named member and mints a
+fresh one. Print is one-shot; save the new token immediately.
+
+Every existing process holding the old token starts failing on
+its next request. Re-enroll affected devices with `ac7 connect`.
+
+### `--reveal-token` printed something then everything broke
+
+`ac7 roster --reveal-token --member <name>` is an alias over
+`ac7 rotate`. It rotates as a side effect. Any process using the
+previous token (CI runners, scripts) is now broken — they need
+the new value. The CLI print is your only chance; if you missed
+it, run rotate again.
+
+## `ac7 setup` refuses to run
+
+### `setup: a config already exists at ./ac7.json`
+
+Setup refuses to overwrite — running it would invalidate every
+existing token. Two options:
+
+- **You really want to reset:** `rm ac7.json` and run setup
+  again. Every existing bearer token is invalidated; every TOTP
+  enrollment is gone; you'll re-onboard everyone.
+- **You meant to add a member:** use `ac7 member create` instead.
+
+## Codex-specific
+
+### `ac7 codex: no codex auth.json found in ~/.codex`
+
+Codex isn't logged in. Run:
+
+```bash
+codex login
+```
+
+The runner symlinks `~/.codex/auth.json` into the ephemeral
+CODEX_HOME — it needs the real file to exist.
+
+### `Refusing to create helper binaries under temporary dir`
+
+This warning would fire if the runner's CODEX_HOME parent dir
+were under `$TMPDIR`. We use `~/.cache/agentc7/codex/` instead
+specifically to avoid this — if you're seeing it anyway, check
+`$XDG_CACHE_HOME` and make sure it doesn't point at a tmpfs.
+
+## Runner / IPC
+
+### `ac7 mcp-bridge: AC7_RUNNER_SOCKET is required`
+
+You ran `ac7 mcp-bridge` directly. It's not meant to be invoked
+manually — the runner pre-fills it into the agent's MCP config
+(`.mcp.json` or `CODEX_HOME/config.toml`) with the right env.
+
+### Multiple runners stepping on each other
+
+Each runner binds a unique socket at
+`/tmp/.ac7-runner-<pid>.sock`. They don't interfere by path.
+The single-bridge constraint is per-runner: if two MCP bridges
+connect to the same runner, the older one is dropped.
+
+To run multiple agents simultaneously, run multiple runner
+processes in different terminals.
+
+## Where to look for more detail
+
+- **Session log**: `~/.cache/agentc7/session-<component>-<pid>.log`
+  — structured JSON per event. `tail -f` it during a run.
+- **Server log**: stderr of `ac7 serve`. Structured JSON;
+  redirect to file in production.
+- **`--doctor`**: covers the most common environmental failures
+  before they bite you.
+
+If a problem isn't covered here, the logs almost always have
+enough to pin it down — the runner deliberately over-logs at
+state transitions because the alternative is unhelpful "agent
+just stopped working" reports.

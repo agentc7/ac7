@@ -1,0 +1,174 @@
+---
+title: Environment variables
+description: Every environment variable ac7 reads — client side, server side, telemetry, and the runner-injected variables on the agent child.
+section: Reference
+order: 60
+---
+
+# Environment variables
+
+This page is the authoritative list. Variables are grouped by who
+reads them.
+
+## Client side (CLI commands)
+
+Read by every `ac7` subcommand that talks to a broker.
+
+| Name | Default | Purpose |
+|---|---|---|
+| `AC7_URL` | `http://127.0.0.1:8717` | Broker base URL. Overridden by `--url`. |
+| `AC7_TOKEN` | (none — required) | Bearer token. Overridden by `--token`. Falls back to `~/.config/ac7/auth.json` if neither is set. |
+| `AC7_AUTH_CONFIG_PATH` | platform-specific (see below) | Override the auth-config file path. |
+| `CLAUDE_PATH` | `which claude` | Path to the Claude Code binary. Used by `ac7 claude-code` and `--doctor`. |
+| `CODEX_PATH` | `which codex` | Path to the OpenAI Codex binary. Used by `ac7 codex`. |
+
+Auth-config path resolution (in absence of `AC7_AUTH_CONFIG_PATH`):
+
+| OS | Path |
+|---|---|
+| Linux/BSD | `$XDG_CONFIG_HOME/ac7/auth.json` (default `~/.config/ac7/auth.json`) |
+| macOS | `~/Library/Application Support/ac7/auth.json` |
+| Windows | `%APPDATA%\ac7\auth.json` |
+
+## Server side (broker)
+
+Read by `ac7 serve` and the embedded `@agentc7/server` package.
+
+| Name | Default | Purpose |
+|---|---|---|
+| `AC7_CONFIG_PATH` | platform-specific | Team config file (`ac7.json`) path. |
+| `AC7_PORT` | `8717` | Listen port. |
+| `AC7_HOST` | `127.0.0.1` | Bind address. |
+| `AC7_DB_PATH` | `:memory:` | SQLite path for tokens / messages / sessions. |
+| `AC7_ACTIVITY_DB_PATH` | `<dbPath>-activity.db` | SQLite path for the activity stream (per-member traces). |
+| `AC7_KEK` | auto-generated to `<config>.kek` | Key encryption key — 32-byte base64. Wraps TOTP secrets and the VAPID private key on disk. |
+
+When `AC7_KEK` is unset, the server generates a random KEK on first
+boot and writes it to `<config>.kek` at `0o600` next to the team
+config. Subsequent boots read from that file. Set the env var
+yourself if you'd rather inject the key from a secrets manager.
+
+`AC7_DB_PATH=:memory:` is the default for ergonomics — the
+broker comes up immediately and lets you push messages without
+persisting state across restarts. For real deployments set it to
+a file path; that's what enables enrollment, multi-token, sessions,
+and message history.
+
+The `AC7_ACTIVITY_DB_PATH` derivation: when the main DB is
+`./ac7.db`, the activity DB defaults to `./ac7-activity.db`. Same
+basename, `-activity` suffix before the extension. Override
+explicitly when you want to put traces on a separate disk for IO
+isolation.
+
+## Telemetry
+
+Read by `ac7 telemetry`.
+
+| Name | Default | Purpose |
+|---|---|---|
+| `AC7_TELEMETRY_PATH` | platform-specific | State file path (`telemetry.json`). |
+| `AC7_TELEMETRY_ENDPOINT` | `https://telemetry.ac7.dev/v1/install` | POST target. |
+
+State file path resolution:
+
+| OS | Path |
+|---|---|
+| Linux/BSD | `$XDG_CONFIG_HOME/ac7/telemetry.json` |
+| macOS | `~/Library/Application Support/ac7/telemetry.json` |
+| Windows | `%APPDATA%\ac7\telemetry.json` |
+
+Telemetry is opt-in only and off by default. See
+[operations/telemetry](/docs/operations/telemetry) for the full
+posture and what's collected.
+
+## Runner-injected on the agent child
+
+`ac7 claude-code` and `ac7 codex` set these on the spawned
+agent's environment. The agent process — claude or codex — sees
+them; you usually don't touch them yourself.
+
+### Common (both runners, when tracing is on)
+
+| Name | Value | Purpose |
+|---|---|---|
+| `HTTPS_PROXY` | `http://127.0.0.1:<ephemeral>` | Route HTTPS through the trace host's MITM proxy. |
+| `HTTP_PROXY` | `http://127.0.0.1:<ephemeral>` | Same, HTTP fallback. |
+| `ALL_PROXY` | `http://127.0.0.1:<ephemeral>` | Catch-all. |
+| `NO_PROXY` | `localhost,127.0.0.1,::1,<caller's value>` | Bypass list — preserves the caller's existing exemptions. |
+
+### claude-code only
+
+| Name | Value | Purpose |
+|---|---|---|
+| `NODE_USE_ENV_PROXY` | `1` | Tell Node's HTTP stack to honor `HTTPS_PROXY`. |
+| `NODE_EXTRA_CA_CERTS` | `$TMPDIR/ac7-trace-ca-<pid>-<nonce>.pem` | Trust our per-session CA on the agent's TLS validation. |
+| `NODE_OPTIONS` | `<existing> --loader <ac7 ssl-keylog loader>` | Append the SSL keylog loader; preserves any existing value. |
+| `SSLKEYLOGFILE` | runner-managed path | Drive the MITM keylog tailer. |
+| `NODE_TLS_REJECT_UNAUTHORIZED` | `0` | **Only when `--unsafe-tls` is set.** Disables all TLS validation in the agent process. Use only for packaged-binary Claude builds that ignore `NODE_EXTRA_CA_CERTS`. |
+| `AC7_RUNNER_SOCKET` | `/tmp/.ac7-runner-<pid>.sock` | The MCP bridge subprocess reads this to find the runner's IPC socket. |
+
+### codex only
+
+Codex's HTTP client is `reqwest`, not Node — different env vars do
+the same job:
+
+| Name | Value | Purpose |
+|---|---|---|
+| `CODEX_HOME` | `~/.cache/agentc7/codex/ac7-codex-<random>/` | Ephemeral codex config dir. Always set. |
+| `CODEX_CA_CERTIFICATE` | `$TMPDIR/ac7-trace-ca-<pid>-<nonce>.pem` | Custom CA cert PEM, reqwest-style. Canonical knob. |
+| `SSL_CERT_FILE` | same as `CODEX_CA_CERTIFICATE` | Fallback for codex's bundled-roots path. |
+
+`NODE_EXTRA_CA_CERTS` and `NODE_USE_ENV_PROXY` are deleted from the
+inherited env when spawning codex — they're Node-only and would
+confuse `reqwest`'s parsing.
+
+The MCP bridge env (`AC7_RUNNER_SOCKET`) is delivered via
+`config.toml`'s `[mcp_servers.ac7.env]` block rather than as a
+direct env var on codex itself; codex propagates it when it spawns
+the bridge subprocess.
+
+## When `--no-trace` is set
+
+The runner skips the trace host entirely, so none of the
+proxy / CA / keylog vars are injected. The agent gets only:
+
+- `AC7_RUNNER_SOCKET` (claude-code)
+- `CODEX_HOME` (codex)
+
+## XDG paths and per-OS overrides
+
+Several path-resolution helpers respect XDG conventions on Linux
+and platform-specific defaults elsewhere. Useful overrides:
+
+| Var | Effect |
+|---|---|
+| `XDG_CONFIG_HOME` | Linux/BSD only. Used by `auth.json` + `telemetry.json` resolution when no specific override is set. Defaults to `~/.config`. |
+| `XDG_CACHE_HOME` | Linux/BSD only. Used by ephemeral `CODEX_HOME` parent directory + session log paths. Defaults to `~/.cache`. |
+| `HOME` | Used as the fallback root for all path resolution. |
+| `APPDATA` | Windows-equivalent of `XDG_CONFIG_HOME` for `auth.json` + `telemetry.json`. |
+| `TMPDIR` | Used by `--doctor`'s writable check + the runner's CA cert PEM location. The IPC socket also lives here (`$TMPDIR/.ac7-runner-<pid>.sock`). |
+| `HOSTNAME` | Read by `ac7 connect` as the default `--label` hint. |
+| `TERM` | Forwarded to the pty when claude-code uses node-pty (default `xterm-256color`). |
+
+## Variables ac7 does NOT consume
+
+A few variables you might expect us to read but we don't:
+
+- `OPENAI_API_KEY` — codex's auth comes from `~/.codex/auth.json`,
+  which the runner symlinks into the ephemeral `CODEX_HOME`. We
+  don't set `OPENAI_API_KEY` ourselves.
+- `ANTHROPIC_API_KEY` — claude-code reads this directly. The
+  runner doesn't touch it.
+- Any GitHub / Slack / etc. integration tokens — there are no
+  third-party integrations baked in. The broker is the only HTTP
+  surface ac7 owns.
+
+## Source of truth
+
+The constant strings live at:
+
+- `packages/sdk/src/protocol.ts` (`ENV.url`, `ENV.token`, etc.)
+- `packages/cli/src/runtime/ipc.ts` (`RUNNER_SOCKET_ENV`)
+- `packages/cli/src/runtime/agents/codex/codex-home.ts`
+- `packages/cli/src/commands/telemetry.ts`
+- `packages/cli/src/commands/auth-config.ts`

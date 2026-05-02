@@ -1,6 +1,6 @@
 ---
 title: Objectives
-description: The push-assigned work primitive — four states, one assignee, required outcome, threaded discussion, and a streaming trace view over the agent's activity log.
+description: ac7's structured work primitive — push-assigned, single-assignee, outcome-required, four-state, with watchers, attachments, threaded discussion, and a streaming trace view.
 section: Concepts
 order: 30
 ---
@@ -14,24 +14,55 @@ execute.
 
 An objective is:
 
-- **Push-assigned** — a director or manager creates it and
-  atomically assigns it to exactly one slot. There's no unclaimed
-  queue and no claim verb; work starts the moment someone is named.
+- **Push-assigned** — a member with `objectives.create` creates
+  it and atomically assigns it to exactly one teammate. There's
+  no unclaimed queue and no claim verb; work starts the moment
+  someone is named.
 - **Outcome-required** — every objective has a non-empty `outcome`
-  field set at creation time. It's the tangible definition of done
-  and it appears in the agent's tool descriptions on every turn, so
-  the acceptance criteria are sticky across compaction.
+  field set at creation time. It's the tangible definition of
+  done, and it appears in the agent's tool descriptions on every
+  turn so the acceptance criteria are sticky across compaction.
 - **Four-state** — `active → blocked → done | cancelled`. `done`
   and `cancelled` are terminal; `active ↔ blocked` is the only
   round-trip. The store enforces every transition.
 - **Threaded** — each objective gets a discussion thread at
-  `obj:<id>`. Members are the originator, the assignee, all
-  directors, and explicit watchers. Discussion posts fan out via
-  the normal channel path.
+  `obj:<id>`. Members are the originator, the assignee, and any
+  explicit watchers. Discussion posts fan out via the normal
+  channel path.
 - **Audited** — every state change writes to an append-only
   `objective_events` table in the same transaction. Event kinds:
   `assigned | blocked | unblocked | completed | cancelled |
   reassigned | watcher_added | watcher_removed`.
+- **Attachable** — files in the virtual filesystem can be
+  attached at creation time. Thread members receive automatic
+  read grants via the `assigned` event fanout.
+
+## Schema
+
+```typescript
+interface Objective {
+  id: string;
+  title: string;                            // required
+  outcome: string;                          // required — defines "done"
+  body: string;                             // optional longer context
+  status: 'active' | 'blocked' | 'done' | 'cancelled';
+  assignee: string;                         // member name
+  originator: string;                       // member name
+  watchers: string[];                       // names explicitly added
+  createdAt: number;
+  updatedAt: number;
+  completedAt: number | null;               // set iff status === 'done'
+  result: string | null;                    // required on completion
+  blockReason: string | null;               // set while status === 'blocked'
+  attachments: Attachment[];                // file refs from the virtual fs
+}
+```
+
+`title` is short and specific. `outcome` is the contractual
+"what must be true for this to be done"; the runner pins it into
+the agent's `objectives_list` description so the acceptance
+criteria stay visible across context compaction. `body` is
+freeform context: links, repro steps, constraints, scoping notes.
 
 ## Creating an objective
 
@@ -45,116 +76,223 @@ ac7 objectives create \
   --body "See CI failure on #1234 for context"
 ```
 
-From the web UI: click "New objective" on the director dashboard.
+From an agent (when it has `objectives.create`):
 
-From an agent (only works for managers+): call the
-`objectives_create` MCP tool.
+```
+objectives_create
+  title: "Pull main and run smoke tests"
+  outcome: "Smoke tests green on latest main"
+  assignee: "builder"
+  body: "See CI failure on #1234 for context"
+  watchers: ["alice", "bob"]    # optional initial loop-in
+  attachments: ["/scout/captures/ci-log.txt"]  # optional
+```
 
-Authority check: the originator must be `manager` or `director`.
-IndividualContributors get 403 on create.
+From the web UI: New Objective panel.
+
+The originator is stamped as the caller — never the agent that
+wrote a tool description, never derivable from `data.*`.
+Authorization: `objectives.create`. The agent CLI tool is
+permission-gated server-side and (as a UX optimization) hidden
+from the tool list when the caller can't use it.
 
 ## Working an objective
 
-Once assigned, the agent sees:
+Once assigned, the agent sees, almost immediately:
 
-1. A new channel event on `obj:<id>` announcing the assignment
+1. A channel event on the `obj:<id>` thread announcing the
+   assignment, with the title + outcome.
 2. A `notifications/tools/list_changed` notification — the next
-   `tools/list` will show the new objective in the descriptions
-3. An `objective_open` event appended to the agent's streaming
-   activity log on the runner side, marking the start of the
-   time range that directors will later query as this
-   objective's trace (see [tracing](../tracing.mdx))
+   `tools/list` will show the new objective in
+   `objectives_list`'s description.
+3. An `objective_open` event appended to its activity stream,
+   marking the start of the time range that directors will later
+   query as this objective's trace (see
+   [activity & traces](/docs/concepts/activity-and-traces)).
 
-The agent drives the work using the objectives tools:
+The agent drives the work using the objective tools:
 
-- `objectives_list` — list open objectives assigned to the caller
-- `objectives_view` — full detail + event history for one objective
-- `objectives_update` — change status (`active ↔ blocked`) and/or
-  post a block reason
-- `objectives_discuss` — post a discussion message on the
-  `obj:<id>` thread
-- `objectives_complete` — transition to `done` with a required
-  `result` string (what was actually delivered)
-- `objectives_cancel` — transition to `cancelled` with optional
-  reason (originator-manager or director only)
+| Tool | Purpose |
+|---|---|
+| `objectives_list` | Agent's open plate (filterable by status) |
+| `objectives_view` | Full state + audit log for one objective |
+| `objectives_update` | Transition `active ↔ blocked` (+ blockReason) |
+| `objectives_discuss` | Post into the `obj:<id>` thread |
+| `objectives_complete` | Mark done with required `result` |
 
-Each of these is a normal MCP tool call that the bridge forwards to
-the runner, which makes the HTTP call against `/objectives/*`.
+For a director or member with `objectives.cancel` /
+`objectives.watch` / `members.manage`, the runner adds:
+
+| Tool | Purpose |
+|---|---|
+| `objectives_create` | Create + assign |
+| `objectives_cancel` | Terminal cancel (with reason) |
+| `objectives_watchers` | Add/remove names from the thread |
+| `objectives_reassign` | Move to a different assignee |
+
+For full input/output schemas see
+[reference/mcp-tools](/docs/reference/mcp-tools).
+
+## Watchers
+
+A watcher is a name explicitly added to an objective's discussion
+thread. Watchers:
+
+- Receive every lifecycle event on their SSE stream
+- Receive every discussion post on their SSE stream
+- Do NOT become the assignee and cannot complete the objective
+- Are subject to normal permission checks for everything else
+  (cancel / reassign / view traces all gate on the relevant
+  permission, not on watcher status)
+
+Two paths add watchers:
+
+- At creation time via the `watchers: string[]` field on
+  `objectives_create` / `POST /objectives`.
+- After creation via `objectives_watchers add` /
+  `PATCH /objectives/:id/watchers`.
+
+Watchers can be added by members with `objectives.watch` or by the
+originator (originator-bypass). Members with `members.manage`
+are implicit observers regardless and don't appear in `watchers`.
 
 ## Reassignment
 
-Directors can reassign an open objective to a different slot:
+Members with `members.manage` can reassign an open objective:
 
 ```bash
-ac7 objectives reassign --id obj-xxx --to scout --note "builder is tied up"
+ac7 objectives reassign obj-xxx --to scout --note "builder is tied up"
 ```
 
 Reassignment:
 
 - Appends a `reassigned` audit event
-- Fans out a channel event to both old and new assignees
-- Emits an `objective_close` event on the old assignee's activity
-  stream and an `objective_open` event on the new assignee's,
-  so the time-range trace view shifts cleanly to the new slot
+- Fans out a channel event to BOTH old and new assignees
+- Emits an `objective_close` (with `result: 'reassigned'`) on the
+  old assignee's activity stream and an `objective_open` on the
+  new assignee's
+- Trace time-range view shifts cleanly to the new assignee
 
-## Watchers
+The old assignee's captured LLM exchanges between the original
+assignment and the reassignment stay in their activity stream and
+are still queryable; the trace UI just renders them under the old
+assignee's section.
 
-A watcher is a name explicitly added to an objective's
-discussion thread. Watchers:
+## Blocking and unblocking
 
-- Receive every lifecycle event on their SSE stream
-- Receive every discussion post on their SSE stream
-- Do NOT become the assignee and cannot complete the objective
-- Do NOT automatically become directors — they still hit the
-  normal authority checks for trace viewing, reassignment, etc.
+`objectives_update --status blocked --block-reason <r>` transitions
+to `blocked` and pins the reason. The reason becomes part of the
+audit log via the `blocked` event payload.
 
-Add/remove watchers via `objectives_watchers` (director or
-originating manager only).
+`objectives_update --status active` clears the block. The
+`unblocked` event fires; `blockReason` is cleared.
 
-## Completing an objective
+Block / unblock can fire many times on a single objective. They're
+the round-trip arc — terminal states (done / cancelled) close
+the objective for good.
 
-Only the current assignee can complete an objective:
+## Completion
+
+Only the current assignee can complete:
 
 ```bash
-ac7 objectives complete --id obj-xxx --result "Smoke tests passing on main; root cause was flaky integration test, see PR #1245"
+ac7 objectives complete obj-xxx --result "Smoke tests passing on main; root cause was flaky integration test, see PR #1245"
 ```
 
-The `result` field is required and becomes part of the audit log.
-It's the "what was actually delivered" summary a director reads
-when reviewing the objective later.
+`result` is required and goes into the audit log as the
+"what was actually delivered" summary a director reads when
+reviewing later. Completion:
 
-Completion emits an `objective_close` event on the assignee's
-activity stream, sealing the time range for the trace view.
-Directors can review the full LLM trace for the work via the web
-UI's TracePanel on the objective detail page — it pulls
-`llm_exchange` events from the activity log bounded by the
-objective's `createdAt` / `completedAt` timestamps.
+- Transitions status to `done`
+- Sets `completedAt` to the current timestamp
+- Appends a `completed` event with `result` in the payload
+- Emits an `objective_close` (with `result: 'done'`) on the
+  assignee's activity stream, sealing the trace time range
+- Fans a channel event to thread members ("originator notified")
 
-## The discussion thread
+## Cancellation
 
-The `obj:<id>` thread is a first-class chat thread. Members see
-everything that happens on the objective as channel events — both
-lifecycle events (assigned/blocked/completed) and ordinary
-discussion posts.
+Terminal cancel — the objective will not resume. The originator
+can always cancel their own; members with `objectives.cancel` can
+cancel anyone's:
 
-The web UI renders the discussion thread inline on the objective
-detail page with a live composer for members. Agents reach it via
-the `objectives_discuss` tool.
+```bash
+ac7 objectives cancel obj-xxx --reason "priorities shifted"
+```
 
-Discussion posts do NOT appear in the lifecycle event log — those
-are two different streams. The lifecycle log is strictly auditable
-state transitions; discussion is freeform conversation.
+`cancelled` is a separate terminal state from `done` so director
+review can distinguish "we shipped it" from "we abandoned it" at
+a glance. Both seal the trace time range.
+
+## Discussion thread
+
+The `obj:<id>` thread is a first-class chat thread. Members see:
+
+- Lifecycle events (assigned, blocked, unblocked, completed,
+  cancelled, reassigned, watcher_added, watcher_removed) as
+  channel pushes
+- Discussion posts as ordinary messages
+
+Membership: originator + assignee + explicit watchers + members
+with `members.manage` (implicit observers).
+
+Discussion posts are routed via `data.thread = 'obj:<id>'` on
+the underlying push. The web UI renders the thread inline on the
+objective detail page with a live composer for members. Agents
+post via `objectives_discuss`.
+
+> Discussion posts are NOT in the lifecycle event log. The event
+> log is strictly auditable state transitions; discussion is
+> freeform conversation. Two parallel streams, both threaded
+> together in the UI.
+
+## Attachments
+
+Attachments are virtual filesystem path references the originator
+already has read access to:
+
+```typescript
+interface Attachment {
+  path: string;       // e.g. "/scout/captures/ci-log.txt"
+  name: string;       // basename
+  size: number;
+  mimeType: string;
+}
+```
+
+When attached at creation time, the broker validates each path
+and materializes per-thread-member read grants in the same
+transaction. The assignee, watchers, and members with
+`members.manage` all receive read access via `GET /fs/read/<path>`
+without any further action.
+
+Up to 64 attachments per objective. Attachments on discussion
+posts use the same grant-propagation mechanism — every thread
+member who receives the post also gets read access to each
+attached file.
 
 ## Why one primitive for everything
 
-Earlier drafts of ac7 had "tasks" and "objectives" and
-"directives" as separate primitives. We collapsed them into one
-primitive with a single lifecycle for a pragmatic reason: the
-director's dashboard is clearer with one list sorted by status,
-and agents don't need to learn three overlapping vocabularies.
+Earlier drafts of ac7 had "tasks" and "objectives" and "directives"
+as separate primitives. We collapsed them into one primitive with
+a single lifecycle for a pragmatic reason: the dashboard is
+clearer with one list sorted by status, and agents don't need to
+learn three overlapping vocabularies.
 
 The cost is that "quick one-shot asks" go through the same
-heavyweight path as "ship the payment service." The benefit is that
-every unit of assigned work has an outcome, a lifecycle, an audit
-log, and a captured trace — which is exactly what you need for
-director review later.
+heavyweight path as "ship the payment service." The benefit is
+that every unit of assigned work has an outcome, a lifecycle, an
+audit log, and a captured trace — which is exactly what you need
+for review later.
+
+For chat-shaped pushes that don't need a lifecycle, use direct
+messages or channel posts.
+
+## Source of truth
+
+- `packages/sdk/src/types.ts` — `Objective`, `ObjectiveEvent`,
+  `ObjectiveStatus`, `ObjectiveEventKind`
+- `packages/sdk/src/schemas.ts` — `ObjectiveSchema`,
+  `CreateObjectiveRequestSchema`, etc.
+- `apps/server/src/objectives.ts` — server-side store with
+  transactional event-log writes
