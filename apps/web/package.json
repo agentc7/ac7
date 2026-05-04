@@ -35,8 +35,8 @@
     "@agentc7/web-shell": "workspace:*",
     "@preact/signals": "^2.9.0",
     "preact": "^10.29.1",
-    "workbox-precaching": "^7.3.0",
-    "workbox-window": "^7.3.0"
+    "workbox-precaching": "^7.4.1",
+    "workbox-window": "^7.4.1"
   },
   "devDependencies": {
     "@preact/preset-vite": "^2.10.0",
