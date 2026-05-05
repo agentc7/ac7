@@ -18,38 +18,61 @@
  */
 
 import { resolve } from 'node:path';
+import { PATHS } from '@agentc7/sdk/protocol';
 import preact from '@preact/preset-vite';
 import unocss from 'unocss/vite';
 import { defineConfig, type PluginOption } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 
-// ac7 API paths that dev mode must proxy through to the real
-// server. Kept in sync with PATHS in packages/sdk/src/protocol.ts
-// and the /session/* + /push/* routes added in later phases. Port
-// matches `DEFAULT_PORT` (8717) from the SDK and the server's CLI
-// default so `pnpm dev` at the root "just works" with no env vars.
+// Dev-mode proxy target: the broker's default bind port. Matches
+// `DEFAULT_PORT` (8717) from the SDK so `pnpm dev` at the repo root
+// just works with no env vars.
 const PROXY_TARGET = 'http://127.0.0.1:8717';
-// Keep this in sync with PATHS in packages/sdk/src/protocol.ts. Each
-// entry is a prefix — Vite forwards anything matching `/<prefix>` (and
-// its subpaths). Adding a new top-level API surface to the broker
-// almost always means adding it here too, otherwise Vite serves the
-// SPA fallback (or 404s) instead of proxying through to :8717.
-const PROXIED_PATHS = [
-  '/healthz',
-  '/briefing',
-  '/roster',
-  '/push',
-  '/subscribe',
-  '/history',
-  '/session',
-  '/objectives',
-  '/members',
-  '/channels',
-  '/team',
-  '/enroll',
-  '/presence',
-  '/fs',
-];
+
+/**
+ * Paths whose top-level segment is *also* a SPA route — proxying the
+ * top-level prefix would steal that page from Vite. We forward only
+ * subpaths via a regex below, leaving the bare path for the SPA.
+ *
+ *   `/enroll`        → SPA page (the verify-code form an operator hits
+ *                      from a CLI deep link); see apps/web/src/App.tsx.
+ *   `/enroll/poll` etc → API endpoints (must reach the broker).
+ *
+ * Add to this set if you ever introduce another shared prefix.
+ */
+const SPA_SHARED_PREFIXES = new Set<string>(['/enroll']);
+
+/**
+ * Derive the dev-proxy rule set from `PATHS` so adding a new API
+ * surface to the broker requires no change here. We map every value
+ * to its top-level segment (`/team/presets` → `/team`), de-dupe, and
+ * proxy each to the broker. Top-level segments that conflict with a
+ * SPA route fall back to a subpath-only regex (`^/enroll/`) so the
+ * bare path is still served by Vite as the SPA.
+ */
+function deriveProxyRules(): Record<string, { target: string; changeOrigin: false; ws: true }> {
+  const topLevel = new Set<string>();
+  for (const value of Object.values(PATHS)) {
+    const seg = value.split('/')[1];
+    if (seg) topLevel.add(`/${seg}`);
+  }
+  const rules: Record<string, { target: string; changeOrigin: false; ws: true }> = {};
+  for (const prefix of topLevel) {
+    const key = SPA_SHARED_PREFIXES.has(prefix) ? `^${prefix}/` : prefix;
+    rules[key] = {
+      target: PROXY_TARGET,
+      // Session cookies are SameSite=Strict, so we preserve the
+      // browser-visible host; `changeOrigin: false` ensures the
+      // Origin header reaches Hono unchanged.
+      changeOrigin: false,
+      // `/subscribe` and `/members/:name/activity/stream` upgrade to
+      // WebSocket; `ws: true` on every rule is harmless for HTTP-only
+      // paths and required for upgrades.
+      ws: true,
+    };
+  }
+  return rules;
+}
 
 // `vite-plugin-pwa` ships with its own nested copy of Vite's types,
 // so its `Plugin<any>[]` return is a distinct-but-structurally-identical
@@ -120,22 +143,6 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // Proxy every known API path through to the Hono server.
-    // `/subscribe` and `/members/:name/activity/stream` upgrade to
-    // WebSocket, so `ws: true` is set on every proxied path —
-    // harmless for HTTP-only paths, required for upgrades.
-    proxy: Object.fromEntries(
-      PROXIED_PATHS.map((p) => [
-        p,
-        {
-          target: PROXY_TARGET,
-          changeOrigin: false,
-          // Session cookies are set with SameSite=Strict, so we need
-          // to preserve the host; `changeOrigin: false` ensures the
-          // Origin header reaches Hono unchanged.
-          ws: true,
-        },
-      ]),
-    ),
+    proxy: deriveProxyRules(),
   },
 });
