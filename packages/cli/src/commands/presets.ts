@@ -44,7 +44,11 @@ export async function runPresetsCommand(
   }
 }
 
-async function runList(args: string[], client: Client, stdout: (line: string) => void): Promise<void> {
+async function runList(
+  args: string[],
+  client: Client,
+  stdout: (line: string) => void,
+): Promise<void> {
   const { values } = parseArgs({
     args,
     options: { json: { type: 'boolean' } },
@@ -66,7 +70,11 @@ async function runList(args: string[], client: Client, stdout: (line: string) =>
   }
 }
 
-async function runSet(args: string[], client: Client, stdout: (line: string) => void): Promise<void> {
+async function runSet(
+  args: string[],
+  client: Client,
+  stdout: (line: string) => void,
+): Promise<void> {
   const { values } = parseArgs({
     args,
     options: {
@@ -98,7 +106,11 @@ async function runSet(args: string[], client: Client, stdout: (line: string) => 
   stdout(`preset '${result.name}' set: ${result.permissions.join(', ')}`);
 }
 
-async function runDelete(args: string[], client: Client, stdout: (line: string) => void): Promise<void> {
+async function runDelete(
+  args: string[],
+  client: Client,
+  stdout: (line: string) => void,
+): Promise<void> {
   const { values } = parseArgs({
     args,
     options: { name: { type: 'string' } },

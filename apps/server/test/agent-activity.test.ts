@@ -25,13 +25,13 @@ import { Broker, InMemoryEventLog } from '@agentc7/core';
 import { MEMBER_PATHS } from '@agentc7/sdk/protocol';
 import type { ActivityEvent, ListActivityResponse, Team } from '@agentc7/sdk/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { mockTeamStore } from './helpers/test-stores.js';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 const CMD_TOKEN = 'ac7_test_director';
 const ASSIGNEE_TOKEN = 'ac7_test_assignee';

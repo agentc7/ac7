@@ -116,7 +116,9 @@ function parseJsonArray(s: string, where: string): string[] {
   try {
     parsed = JSON.parse(s);
   } catch (err) {
-    throw new MemberLoadError(`${where}: corrupt JSON: ${err instanceof Error ? err.message : String(err)}`);
+    throw new MemberLoadError(
+      `${where}: corrupt JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
   if (!Array.isArray(parsed) || parsed.some((p) => typeof p !== 'string')) {
     throw new MemberLoadError(`${where}: expected a JSON array of strings`);
@@ -222,7 +224,10 @@ export class TeamStore {
    * Create or replace the team singleton. Validates name/directive/brief
    * lengths via the shared zod-derived helpers.
    */
-  setTeam(input: { name: string; directive: string; brief: string }, by: string | null = null): Team {
+  setTeam(
+    input: { name: string; directive: string; brief: string },
+    by: string | null = null,
+  ): Team {
     validateTeamName(input.name);
     validateTeamDirective(input.directive);
     validateTeamBrief(input.brief);
@@ -296,7 +301,11 @@ class SqliteMemberStore implements MemberStore {
   private readonly nextOrderStmt: StatementInstance;
   private readonly now: () => number;
 
-  constructor(db: DatabaseSyncInstance, teamStore: TeamStore, options: { now?: () => number } = {}) {
+  constructor(
+    db: DatabaseSyncInstance,
+    teamStore: TeamStore,
+    options: { now?: () => number } = {},
+  ) {
     this.db = db;
     this.teamStore = teamStore;
     this.now = options.now ?? Date.now;
@@ -362,8 +371,8 @@ class SqliteMemberStore implements MemberStore {
 
   size(): number {
     return (
-      (this.db.prepare('SELECT COUNT(*) AS c FROM members').get() as { c: number } | undefined)?.c ??
-      0
+      (this.db.prepare('SELECT COUNT(*) AS c FROM members').get() as { c: number } | undefined)
+        ?.c ?? 0
     );
   }
 

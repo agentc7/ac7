@@ -23,8 +23,7 @@ import { parseArgs } from 'node:util';
 import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 import type { Team } from '@agentc7/sdk/types';
 import { type DatabaseSyncInstance, openDatabase } from './db.js';
-import { encryptField } from './kek.js';
-import { KekResolutionError, resolveKek } from './kek.js';
+import { encryptField, KekResolutionError, resolveKek } from './kek.js';
 import { logger } from './logger.js';
 import {
   ConfigNotFoundError,
@@ -252,10 +251,7 @@ async function main(): Promise<void> {
   const { config: serverConfig, wizard } = await loadOrCreateServerConfig(configPath);
 
   // dbPath precedence: env override > config file > default.
-  const dbPath =
-    readEnv(ENV.dbPath) ??
-    serverConfig.dbPath ??
-    './ac7.db';
+  const dbPath = readEnv(ENV.dbPath) ?? serverConfig.dbPath ?? './ac7.db';
 
   // Open DB + DB-backed team and member stores. The team store
   // creates its tables on construction; the member store reuses them.

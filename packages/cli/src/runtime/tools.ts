@@ -379,7 +379,7 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
           name: { type: 'string', description: 'New team name (1–128 chars).' },
           directive: {
             type: 'string',
-            description: 'New short directive (1–512 chars). Set the team\'s overarching mission.',
+            description: "New short directive (1–512 chars). Set the team's overarching mission.",
           },
           brief: {
             type: 'string',
@@ -392,7 +392,7 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
     // ─── Permission presets ──────────────────────────────────────
     tools.push({
       name: 'presets_list',
-      description: 'List the team\'s permission presets — named bundles of leaf permissions.',
+      description: "List the team's permission presets — named bundles of leaf permissions.",
       inputSchema: { type: 'object', properties: {} },
     });
     tools.push({
@@ -467,8 +467,8 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
     tools.push({
       name: 'members_update',
       description:
-        'Update an existing member\'s role, instructions, or permissions. Changes to ' +
-        '`instructions` apply to that member\'s NEXT MCP session — the current session ' +
+        "Update an existing member's role, instructions, or permissions. Changes to " +
+        "`instructions` apply to that member's NEXT MCP session — the current session " +
         'continues to reflect the old briefing until the runner restarts.',
       inputSchema: {
         type: 'object',
@@ -1444,10 +1444,7 @@ async function handlePresetsSet(
   const name = typeof args.name === 'string' ? args.name : '';
   const permissions = Array.isArray(args.permissions) ? args.permissions : null;
   if (!name) return errorResult('presets_set: `name` is required');
-  if (
-    permissions === null ||
-    permissions.some((p) => typeof p !== 'string')
-  ) {
+  if (permissions === null || permissions.some((p) => typeof p !== 'string')) {
     return errorResult('presets_set: `permissions` must be an array of leaf strings');
   }
   const result = await brokerClient.setPreset(
@@ -1517,7 +1514,9 @@ async function handleMembersUpdate(
     patch.permissions = args.permissions.filter((p) => typeof p === 'string') as string[];
   }
   if (Object.keys(patch).length === 0) {
-    return errorResult('members_update: nothing to update (title, description, instructions, permissions)');
+    return errorResult(
+      'members_update: nothing to update (title, description, instructions, permissions)',
+    );
   }
   const member = await brokerClient.updateMember(name, patch);
   return textResult(

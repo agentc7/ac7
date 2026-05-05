@@ -46,12 +46,12 @@ import {
   ListChannelsResponseSchema,
   ListMembersResponseSchema,
   ListObjectivesResponseSchema,
-  PermissionPresetsSchema,
   ListPendingEnrollmentsResponseSchema,
   ListTokensResponseSchema,
   MemberSchema,
   MessageSchema,
   ObjectiveSchema,
+  PermissionPresetsSchema,
   PushPayloadSchema,
   PushResultSchema,
   PushSubscriptionResponseSchema,
@@ -59,8 +59,8 @@ import {
   RenameChannelRequestSchema,
   RosterResponseSchema,
   RotateTokenResponseSchema,
-  TeamSchema,
   SessionResponseSchema,
+  TeamSchema,
   UploadActivityResponseSchema,
   VapidPublicKeyResponseSchema,
 } from './schemas.js';
@@ -564,7 +564,10 @@ export class Client {
   }
 
   /** Upsert a permission preset. Requires `team.manage`. */
-  async setPreset(name: string, permissions: Permission[]): Promise<{ name: string; permissions: Permission[] }> {
+  async setPreset(
+    name: string,
+    permissions: Permission[],
+  ): Promise<{ name: string; permissions: Permission[] }> {
     const resp = await this.request(`${PATHS.teamPresets}/${encodeURIComponent(name)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },

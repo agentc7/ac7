@@ -16,8 +16,7 @@ import { UsageError } from '../src/commands/errors.js';
 function fakeClient(
   enrollImpl: () => Promise<{ totpSecret: string; totpUri: string }> = async () => ({
     totpSecret: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
-    totpUri:
-      'otpauth://totp/ac7:alice?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=ac7',
+    totpUri: 'otpauth://totp/ac7:alice?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=ac7',
   }),
 ): { client: Client; spy: ReturnType<typeof vi.fn> } {
   const spy = vi.fn(enrollImpl);
@@ -58,8 +57,8 @@ describe('runEnrollCommand', () => {
     const { client } = fakeClient(async () => {
       throw new Error('broker error 403: enroll-totp requires members.manage, or self');
     });
-    await expect(
-      runEnrollCommand({ user: 'alice' }, client, () => {}),
-    ).rejects.toThrow(/members\.manage/);
+    await expect(runEnrollCommand({ user: 'alice' }, client, () => {})).rejects.toThrow(
+      /members\.manage/,
+    );
   });
 });

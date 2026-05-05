@@ -22,7 +22,6 @@ import type {
   Team,
   TokenInfo,
 } from '@agentc7/sdk/types';
-import { mockTeamStore } from './helpers/test-stores.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
@@ -30,6 +29,7 @@ import { EnrollmentStore } from '../src/enrollments.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'ac7_enroll_admin_token';
 const NON_ADMIN_TOKEN = 'ac7_enroll_engineer_token';

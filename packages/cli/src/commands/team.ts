@@ -39,7 +39,11 @@ export async function runTeamCommand(
   }
 }
 
-async function runGet(args: string[], client: Client, stdout: (line: string) => void): Promise<void> {
+async function runGet(
+  args: string[],
+  client: Client,
+  stdout: (line: string) => void,
+): Promise<void> {
   const { values } = parseArgs({
     args,
     options: { json: { type: 'boolean' } },
@@ -62,7 +66,11 @@ async function runGet(args: string[], client: Client, stdout: (line: string) => 
   stdout(`presets   ${presetNames.length === 0 ? '(none)' : presetNames.join(', ')}`);
 }
 
-async function runSet(args: string[], client: Client, stdout: (line: string) => void): Promise<void> {
+async function runSet(
+  args: string[],
+  client: Client,
+  stdout: (line: string) => void,
+): Promise<void> {
   const { values } = parseArgs({
     args,
     options: {

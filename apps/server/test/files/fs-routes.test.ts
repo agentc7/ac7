@@ -13,13 +13,13 @@ import { join } from 'node:path';
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import type { FsEntry, Team } from '@agentc7/sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mockTeamStore } from '../helpers/test-stores.js';
 import { createApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
 import { createMemberStore } from '../../src/members.js';
 import { SessionStore } from '../../src/sessions.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
+import { mockTeamStore } from '../helpers/test-stores.js';
 
 const ALICE_TOKEN = 'ac7_test_alice_secret';
 const BOB_TOKEN = 'ac7_test_bob_secret';

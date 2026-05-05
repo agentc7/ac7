@@ -34,7 +34,6 @@ import { UsageError } from './commands/errors.js';
 import { runMemberCommand } from './commands/member.js';
 import { runObjectivesCommand } from './commands/objectives.js';
 import { runPresetsCommand } from './commands/presets.js';
-import { runTeamCommand } from './commands/team.js';
 import { runPruneTracesCommand } from './commands/prune-traces.js';
 import { type PushCommandInput, runPushCommand } from './commands/push.js';
 import { QuickstartError, runQuickstartCommand } from './commands/quickstart.js';
@@ -42,6 +41,7 @@ import { runRosterCommand } from './commands/roster.js';
 import { type RotateCommandInput, runRotateCommand } from './commands/rotate.js';
 import { runServeCommand } from './commands/serve.js';
 import { runSetupCommand } from './commands/setup.js';
+import { runTeamCommand } from './commands/team.js';
 import { runTelemetryCommand, type TelemetryEventKind } from './commands/telemetry.js';
 import { CLI_VERSION } from './version.js';
 

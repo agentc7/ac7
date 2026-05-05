@@ -584,7 +584,6 @@ export function generateMemberToken(): string {
   return `ac7_${randomBytes(32).toString('base64url')}`;
 }
 
-
 /**
  * Project the loaded members into a teammate list suitable for the
  * roster and briefing responses. Preserves config ordering. Drops
@@ -598,4 +597,3 @@ export function teammatesFromMembers(store: MemberStore): Teammate[] {
     permissions: m.permissions,
   }));
 }
-

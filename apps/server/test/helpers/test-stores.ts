@@ -7,10 +7,10 @@
 
 import type { Permission, PermissionPresets, Role, Team } from '@agentc7/sdk/types';
 import { type DatabaseSyncInstance, openDatabase } from '../../src/db.js';
-import { openTeamAndMembers } from '../../src/team-store.js';
-import type { TeamStore } from '../../src/team-store.js';
-import { TokenStore } from '../../src/tokens.js';
 import type { MemberStore } from '../../src/members.js';
+import type { TeamStore } from '../../src/team-store.js';
+import { openTeamAndMembers } from '../../src/team-store.js';
+import { TokenStore } from '../../src/tokens.js';
 
 /**
  * Lightweight `TeamStore` stand-in for tests that exercise `createApp`
@@ -22,13 +22,17 @@ import type { MemberStore } from '../../src/members.js';
  */
 export function mockTeamStore(team: Team): TeamStore {
   let current: Team = { ...team, permissionPresets: { ...team.permissionPresets } };
+  const snapshot = (): Team => ({
+    ...current,
+    permissionPresets: { ...current.permissionPresets },
+  });
   const store: Partial<TeamStore> = {
-    getTeam: () => ({ ...current, permissionPresets: { ...current.permissionPresets } }),
+    getTeam: snapshot,
     hasTeam: () => true,
     getPresets: () => ({ ...current.permissionPresets }),
     setTeam: (input) => {
       current = { ...current, name: input.name, directive: input.directive, brief: input.brief };
-      return store.getTeam!();
+      return snapshot();
     },
     updateTeam: (patch) => {
       current = {
@@ -37,7 +41,7 @@ export function mockTeamStore(team: Team): TeamStore {
         directive: patch.directive ?? current.directive,
         brief: patch.brief ?? current.brief,
       };
-      return store.getTeam!();
+      return snapshot();
     },
     setPreset: (name, leaves) => {
       const next: PermissionPresets = { ...current.permissionPresets, [name]: [...leaves] };

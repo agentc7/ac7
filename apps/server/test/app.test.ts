@@ -1,13 +1,13 @@
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import { PROTOCOL_HEADER } from '@agentc7/sdk/protocol';
 import type { BriefingResponse, Message, RosterResponse, Team } from '@agentc7/sdk/types';
-import { mockTeamStore } from './helpers/test-stores.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'ac7_test_operator_secret';
 const BOT_TOKEN = 'ac7_test_bot_secret';

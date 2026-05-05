@@ -12,8 +12,8 @@
 import type { Client } from '@agentc7/sdk/client';
 import type { Member } from '@agentc7/sdk/types';
 import { describe, expect, it, vi } from 'vitest';
-import { runMemberCommand } from '../../src/commands/member.js';
 import { UsageError } from '../../src/commands/errors.js';
+import { runMemberCommand } from '../../src/commands/member.js';
 
 interface FakeClient {
   listMembers: ReturnType<typeof vi.fn>;
@@ -119,11 +119,7 @@ describe('ac7 member create', () => {
   it('rejects an invalid --name', async () => {
     const { client } = fakeClient();
     await expect(
-      runMemberCommand(
-        ['create', '--name', 'has spaces', '--title', 'engineer'],
-        client,
-        () => {},
-      ),
+      runMemberCommand(['create', '--name', 'has spaces', '--title', 'engineer'], client, () => {}),
     ).rejects.toBeInstanceOf(UsageError);
   });
 });

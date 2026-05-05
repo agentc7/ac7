@@ -2056,11 +2056,7 @@ export function createApp(options: AppOptions): CreatedApp {
       // run it through resolvePermissions with an empty preset map so
       // preset-of-preset isn't a thing (intentional — keeps the
       // resolution graph flat and free of cycles).
-      const leaves = resolvePermissions(
-        body.permissions as string[],
-        {},
-        `preset '${presetName}'`,
-      );
+      const leaves = resolvePermissions(body.permissions as string[], {}, `preset '${presetName}'`);
       teamStore.setPreset(presetName, leaves, caller.name);
       logger.info('preset updated', {
         preset: presetName,

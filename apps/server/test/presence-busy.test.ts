@@ -14,13 +14,13 @@
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import type { RosterResponse, Team } from '@agentc7/sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mockTeamStore } from './helpers/test-stores.js';
 import { createApp } from '../src/app.js';
 import { BUSY_TTL_MS } from '../src/busy-tracker.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'ac7_busy_test_admin_token';
 const AGENT_TOKEN = 'ac7_busy_test_agent_token';

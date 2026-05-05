@@ -25,7 +25,6 @@ import type { AddressInfo } from 'node:net';
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import type { Message, Team } from '@agentc7/sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 import WebSocket from 'ws';
 import { composeSessionOnlineMessage, createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
@@ -34,6 +33,7 @@ import { createSqliteObjectivesStore } from '../src/objectives.js';
 import { type RunningServer, runServer } from '../src/run.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 
 // ─── unit: composeSessionOnlineMessage ──────────────────────────────
 

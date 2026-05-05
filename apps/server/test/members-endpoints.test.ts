@@ -10,12 +10,12 @@
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import type { Member, Team, Teammate } from '@agentc7/sdk/types';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { mockTeamStore } from './helpers/test-stores.js';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'ac7_members_test_admin_token';
 const OPERATOR_TOKEN = 'ac7_members_test_operator_token';

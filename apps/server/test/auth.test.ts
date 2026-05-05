@@ -13,7 +13,6 @@ import { Broker, InMemoryEventLog } from '@agentc7/core';
 import type { SessionResponse, Team } from '@agentc7/sdk/types';
 import { calculateJwkThumbprint, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { mockTeamStore } from './helpers/test-stores.js';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createJwtVerifier, type JwtConfig } from '../src/jwt.js';
@@ -21,6 +20,7 @@ import { createMemberStore } from '../src/members.js';
 import { SESSION_COOKIE_NAME, SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { currentCode, generateSecret, verifyCode } from '../src/totp.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'ac7_auth_test_operator_token';
 const BOT_TOKEN = 'ac7_auth_test_bot_token';

@@ -47,14 +47,14 @@ import {
   type MemberStore,
   type WebPushConfig,
 } from './members.js';
-import { updateServerConfigFile } from './server-config.js';
-import { openTeamAndMembers, type TeamStore } from './team-store.js';
 import { createSqliteObjectivesStore } from './objectives.js';
 import { dispatchPush } from './push/dispatch.js';
 import { PushSubscriptionStore } from './push/store.js';
 import { configureVapid, generateVapidKeys } from './push/vapid.js';
+import { updateServerConfigFile } from './server-config.js';
 import { SessionStore } from './sessions.js';
 import { SqliteEventLog } from './sqlite-event-log.js';
+import { openTeamAndMembers, type TeamStore } from './team-store.js';
 import { TokenStore } from './tokens.js';
 import { SERVER_VERSION } from './version.js';
 
@@ -105,23 +105,23 @@ export {
   type WebPushConfig,
 } from './members.js';
 export {
+  createSqliteObjectivesStore,
+  ObjectivesError,
+  type ObjectivesStore,
+} from './objectives.js';
+export {
   loadServerConfigFromFile,
   type ServerConfig,
   ServerConfigSchema,
-  writeServerConfigFile,
   updateServerConfigFile,
+  writeServerConfigFile,
 } from './server-config.js';
+export { SESSION_COOKIE_NAME, SESSION_TTL_MS, SessionStore } from './sessions.js';
 export {
   createSqliteMemberStore,
   openTeamAndMembers,
   type TeamStore,
 } from './team-store.js';
-export {
-  createSqliteObjectivesStore,
-  ObjectivesError,
-  type ObjectivesStore,
-} from './objectives.js';
-export { SESSION_COOKIE_NAME, SESSION_TTL_MS, SessionStore } from './sessions.js';
 export {
   generateBearerToken,
   hashRawToken,

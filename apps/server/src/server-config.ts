@@ -22,20 +22,28 @@
  * deployment plumbing only. Identity changes go through the API.
  */
 
-import { chmodSync, closeSync, fsyncSync, openSync, readFileSync, renameSync, writeSync } from 'node:fs';
+import {
+  chmodSync,
+  closeSync,
+  fsyncSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeSync,
+} from 'node:fs';
 import { dirname } from 'node:path';
 import { z } from 'zod';
 import {
   ConfigNotFoundError,
-  FilesConfigSchema,
   type FilesConfig,
-  HttpsConfigSchema,
+  FilesConfigSchema,
   type HttpsConfig,
-  JwtConfigSchema,
+  HttpsConfigSchema,
   type JwtConfig,
+  JwtConfigSchema,
   MemberLoadError,
-  WebPushConfigSchema,
   type WebPushConfig,
+  WebPushConfigSchema,
 } from './members.js';
 
 export const ServerConfigSchema = z.object({
@@ -86,7 +94,9 @@ export function loadServerConfigFromFile(path: string): ServerConfig {
   try {
     parsed = JSON.parse(raw);
   } catch (err) {
-    throw new MemberLoadError(`config file at ${path} is not valid JSON: ${(err as Error).message}`);
+    throw new MemberLoadError(
+      `config file at ${path} is not valid JSON: ${(err as Error).message}`,
+    );
   }
   const result = ServerConfigSchema.safeParse(parsed);
   if (!result.success) {

@@ -12,7 +12,6 @@ import { join } from 'node:path';
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import type { Team } from '@agentc7/sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { certExpiryMs, generateSelfSignedCert } from '../src/https/cert.js';
@@ -22,6 +21,7 @@ import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'ac7_https_test_operator_token';
 

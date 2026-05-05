@@ -23,7 +23,6 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@agentc7/sdk/client';
 import type { Team } from '@agentc7/sdk/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
 
