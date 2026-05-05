@@ -1,121 +1,65 @@
 /**
  * Tests for `ac7 enroll`.
  *
- * Like the setup tests, we drive `runEnrollCommand` directly with a
- * tmp config and collect stdout. The interactive TOTP verify loop
- * isn't exercised here — that's covered by the wizard's own test
- * suite (`apps/server/test/wizard.test.ts`) which shares the same
- * `verifyCode` + `enrollUserTotp` primitives. Here we focus on the
- * CLI wrapper's error paths and dispatch:
- *
- *   - missing --user argument
- *   - no config file at the resolved path
- *   - config exists but doesn't contain the named user
- *   - invalid / corrupt existing config
- *   - agent userType cannot enroll for web UI
- *   - non-TTY stdin (the interactive flow needs a real terminal)
+ * The new CLI calls `POST /members/:name/enroll-totp` via the SDK
+ * Client. The server generates and persists a fresh TOTP secret in
+ * one round-trip; the CLI's job is to render the QR + secret and
+ * surface auth/usage errors clearly. These tests stub the Client and
+ * confirm the dispatch + output contract.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { runEnrollCommand, UsageError } from '../src/commands/enroll.js';
+import type { Client } from '@agentc7/sdk/client';
+import { describe, expect, it, vi } from 'vitest';
+import { runEnrollCommand } from '../src/commands/enroll.js';
+import { UsageError } from '../src/commands/errors.js';
 
-const dirsToClean: string[] = [];
-
-afterEach(() => {
-  for (const dir of dirsToClean.splice(0)) {
-    rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-function tmpPath(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'ac7-enroll-test-'));
-  dirsToClean.push(dir);
-  return join(dir, 'ac7.json');
+function fakeClient(
+  enrollImpl: () => Promise<{ totpSecret: string; totpUri: string }> = async () => ({
+    totpSecret: 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP',
+    totpUri:
+      'otpauth://totp/ac7:alice?secret=JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP&issuer=ac7',
+  }),
+): { client: Client; spy: ReturnType<typeof vi.fn> } {
+  const spy = vi.fn(enrollImpl);
+  const client = { enrollTotp: spy } as unknown as Client;
+  return { client, spy };
 }
 
-const VALID_CONFIG_JSON = JSON.stringify({
-  team: {
-    name: 'demo-team',
-    directive: 'ship',
-    brief: '',
-    permissionPresets: {},
-  },
-  members: [
-    {
-      name: 'director-1',
-      role: { title: 'director', description: '' },
-      permissions: ['members.manage'],
-      tokenHash: `sha256:${'a'.repeat(64)}`,
-    },
-    {
-      name: 'engineer-1',
-      role: { title: 'engineer', description: '' },
-      permissions: [],
-      tokenHash: `sha256:${'b'.repeat(64)}`,
-    },
-  ],
-});
+function captureStdout(): { lines: string[]; write: (line: string) => void } {
+  const lines: string[] = [];
+  return { lines, write: (l) => lines.push(l) };
+}
 
 describe('runEnrollCommand', () => {
   it('errors when --user is missing', async () => {
-    await expect(runEnrollCommand({}, () => {})).rejects.toThrow(UsageError);
-    try {
-      await runEnrollCommand({}, () => {});
-    } catch (err) {
-      expect((err as Error).message).toContain('--user');
-    }
+    const { client } = fakeClient();
+    await expect(runEnrollCommand({}, client, () => {})).rejects.toBeInstanceOf(UsageError);
   });
 
-  it('errors when the config file does not exist', async () => {
-    const configPath = tmpPath();
-    // Don't write the file — tmpPath only mkdtemps the dir.
-    await expect(runEnrollCommand({ user: 'director-1', configPath }, () => {})).rejects.toThrow(
-      UsageError,
-    );
-    try {
-      await runEnrollCommand({ user: 'director-1', configPath }, () => {});
-    } catch (err) {
-      const msg = (err as Error).message;
-      expect(msg).toContain('no config file');
-    }
+  it('calls Client.enrollTotp with the supplied user name', async () => {
+    const { client, spy } = fakeClient();
+    const out = captureStdout();
+    await runEnrollCommand({ user: 'alice' }, client, out.write);
+    expect(spy).toHaveBeenCalledOnce();
+    expect(spy).toHaveBeenCalledWith('alice');
   });
 
-  it('errors with the list of known names when the user is unknown', async () => {
-    const configPath = tmpPath();
-    writeFileSync(configPath, VALID_CONFIG_JSON);
-    try {
-      await runEnrollCommand({ user: 'ghost', configPath }, () => {});
-      throw new Error('expected UsageError');
-    } catch (err) {
-      expect(err).toBeInstanceOf(UsageError);
-      const msg = (err as Error).message;
-      expect(msg).toContain("'ghost'");
-      expect(msg).toContain('director-1');
-      expect(msg).toContain('engineer-1');
-    }
+  it('prints the success banner with the secret + invalidation note', async () => {
+    const { client } = fakeClient();
+    const out = captureStdout();
+    await runEnrollCommand({ user: 'alice' }, client, out.write);
+    const joined = out.lines.join('\n');
+    expect(joined).toContain("enrolled 'alice'");
+    expect(joined).toContain('JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP');
+    expect(joined.toLowerCase()).toContain('previously bound');
   });
 
-  it('errors when the existing config is invalid', async () => {
-    const configPath = tmpPath();
-    writeFileSync(configPath, '{ "nope": true }');
-    await expect(runEnrollCommand({ user: 'director-1', configPath }, () => {})).rejects.toThrow(
-      UsageError,
-    );
-  });
-
-  it('bails with a friendly UsageError when stdin is not a TTY', async () => {
-    // Vitest typically runs with stdin detached, so the non-TTY path
-    // is the default here. This confirms enroll reaches the interactive
-    // phase cleanly (past user lookup, past the "already enrolled"
-    // warning) before tripping the TTY guard.
-    const configPath = tmpPath();
-    writeFileSync(configPath, VALID_CONFIG_JSON);
-    const output: string[] = [];
+  it('propagates ClientError from the broker as a useful failure', async () => {
+    const { client } = fakeClient(async () => {
+      throw new Error('broker error 403: enroll-totp requires members.manage, or self');
+    });
     await expect(
-      runEnrollCommand({ user: 'director-1', configPath }, (line) => output.push(line)),
-    ).rejects.toThrow(/not a TTY/);
+      runEnrollCommand({ user: 'alice' }, client, () => {}),
+    ).rejects.toThrow(/members\.manage/);
   });
 });

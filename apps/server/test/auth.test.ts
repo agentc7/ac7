@@ -13,6 +13,7 @@ import { Broker, InMemoryEventLog } from '@agentc7/core';
 import type { SessionResponse, Team } from '@agentc7/sdk/types';
 import { calculateJwkThumbprint, exportJWK, generateKeyPair, type JWK, SignJWT } from 'jose';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { mockTeamStore } from './helpers/test-stores.js';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createJwtVerifier, type JwtConfig } from '../src/jwt.js';
@@ -62,7 +63,7 @@ function makeApp(options: { now?: () => number; totpSecret?: string } = {}) {
     members,
     tokens,
     sessions,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     logger: {
       debug: vi.fn(),
@@ -530,7 +531,7 @@ function makeJwtApp(fixture: JwtFixture) {
     members,
     tokens,
     sessions,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     jwt: createJwtVerifier(fixture.config),

@@ -21,6 +21,7 @@ import type {
   Objective,
   Team,
 } from '@agentc7/sdk/types';
+import { mockTeamStore } from './helpers/test-stores.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
@@ -94,7 +95,7 @@ function makeApp() {
     members,
     tokens,
     sessions,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     objectives,
     version: '0.0.0',
     logger: {

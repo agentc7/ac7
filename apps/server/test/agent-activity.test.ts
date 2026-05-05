@@ -25,6 +25,7 @@ import { Broker, InMemoryEventLog } from '@agentc7/core';
 import { MEMBER_PATHS } from '@agentc7/sdk/protocol';
 import type { ActivityEvent, ListActivityResponse, Team } from '@agentc7/sdk/types';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mockTeamStore } from './helpers/test-stores.js';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { createSqliteActivityStore } from '../src/member-activity.js';
@@ -78,7 +79,7 @@ function makeApp() {
     tokens,
     sessions: new SessionStore(db),
     activityStore,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     logger: {
       debug: vi.fn(),

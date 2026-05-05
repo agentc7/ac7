@@ -33,6 +33,8 @@ import { runEnrollCommand } from './commands/enroll.js';
 import { UsageError } from './commands/errors.js';
 import { runMemberCommand } from './commands/member.js';
 import { runObjectivesCommand } from './commands/objectives.js';
+import { runPresetsCommand } from './commands/presets.js';
+import { runTeamCommand } from './commands/team.js';
 import { runPruneTracesCommand } from './commands/prune-traces.js';
 import { type PushCommandInput, runPushCommand } from './commands/push.js';
 import { QuickstartError, runQuickstartCommand } from './commands/quickstart.js';
@@ -167,6 +169,12 @@ async function main(): Promise<void> {
     case 'objectives':
       await handleObjectives(rest);
       return;
+    case 'team':
+      await handleTeam(rest);
+      return;
+    case 'presets':
+      await handlePresets(rest);
+      return;
     case 'serve':
       await handleServe(rest);
       return;
@@ -215,8 +223,8 @@ async function handleSetup(args: string[]): Promise<void> {
 async function handleEnroll(args: string[]): Promise<void> {
   const { values } = parseSubcommandArgs(args, {
     user: { type: 'string', short: 'u' },
-    'config-path': { type: 'string' },
-    config: { type: 'string' },
+    url: { type: 'string' },
+    token: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   });
   if (values.help === true) {
@@ -225,13 +233,8 @@ async function handleEnroll(args: string[]): Promise<void> {
   }
 
   try {
-    await runEnrollCommand(
-      {
-        user: getString(values, 'user'),
-        configPath: getString(values, 'config-path') ?? getString(values, 'config'),
-      },
-      (line) => log(line),
-    );
+    const client = makeClient(values);
+    await runEnrollCommand({ user: getString(values, 'user') }, client, (line) => log(line));
   } catch (err) {
     if (err instanceof UsageError) fail(err.message, 2);
     fail(err instanceof Error ? err.message : String(err));
@@ -272,8 +275,8 @@ async function handleConnect(args: string[]): Promise<void> {
 async function handleRotate(args: string[]): Promise<void> {
   const { values } = parseSubcommandArgs(args, {
     user: { type: 'string', short: 'u' },
-    'config-path': { type: 'string' },
-    config: { type: 'string' },
+    url: { type: 'string' },
+    token: { type: 'string' },
     help: { type: 'boolean', short: 'h' },
   });
   if (values.help === true) {
@@ -282,11 +285,12 @@ async function handleRotate(args: string[]): Promise<void> {
   }
 
   try {
+    const client = makeClient(values);
     await runRotateCommand(
       {
         user: getString(values, 'user'),
-        configPath: getString(values, 'config-path') ?? getString(values, 'config'),
       },
+      client,
       (line) => log(line),
     );
   } catch (err) {
@@ -296,14 +300,17 @@ async function handleRotate(args: string[]): Promise<void> {
 }
 
 async function handleUser(args: string[]): Promise<void> {
-  // `user` has internal subcommand routing (list/create/update/delete)
-  // with flags that differ per-subcommand — parse there, not here.
+  // `member` has internal subcommand routing (list/create/update/delete)
+  // with flags that differ per-subcommand — parse out the client opts
+  // here, then pass everything else through.
   if (args[0] === '-h' || args[0] === '--help') {
     process.stdout.write(USAGE);
     return;
   }
+  const { clientOpts, passthrough } = splitClientOpts(args);
   try {
-    await runMemberCommand(args, (line) => log(line));
+    const client = makeClient(clientOpts);
+    await runMemberCommand(passthrough, client, (line) => log(line));
   } catch (err) {
     if (err instanceof UsageError) fail(err.message, 2);
     fail(err instanceof Error ? err.message : String(err));
@@ -491,12 +498,10 @@ async function handleRoster(args: string[]): Promise<void> {
     log('  (ac7 never persists token plaintext; the only honest "reveal"');
     log('   is to mint a fresh token and print it once. This invalidates');
     log('   any previous token for this user.)');
-    const rotateInput: RotateCommandInput = {
-      user,
-      configPath: getString(values, 'config-path') ?? getString(values, 'config'),
-    };
+    const rotateInput: RotateCommandInput = { user };
     try {
-      await runRotateCommand(rotateInput, (line) => log(line));
+      const client = makeClient(values);
+      await runRotateCommand(rotateInput, client, (line) => log(line));
     } catch (err) {
       if (err instanceof UsageError) fail(err.message, 2);
       fail(err instanceof Error ? err.message : String(err));
@@ -595,6 +600,53 @@ async function handleObjectives(args: string[]): Promise<void> {
     const client = makeClient(clientOpts);
     const output = await runObjectivesCommand(client, passthrough);
     log(output);
+  } catch (err) {
+    if (err instanceof UsageError) fail(err.message, 2);
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+/**
+ * Split off `--url` / `--token` for `makeClient`, pass everything else
+ * through to the subcommand. Same pattern as `handleObjectives`.
+ */
+function splitClientOpts(args: string[]): {
+  clientOpts: Record<string, string>;
+  passthrough: string[];
+} {
+  const clientOpts: Record<string, string> = {};
+  const passthrough: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--url' || arg === '--token') {
+      const next = args[i + 1];
+      if (next === undefined) fail(`${arg} requires a value`, 2);
+      clientOpts[arg.slice(2)] = next as string;
+      i++;
+      continue;
+    }
+    if (arg === undefined) continue;
+    passthrough.push(arg);
+  }
+  return { clientOpts, passthrough };
+}
+
+async function handleTeam(args: string[]): Promise<void> {
+  const { clientOpts, passthrough } = splitClientOpts(args);
+  try {
+    const client = makeClient(clientOpts);
+    await runTeamCommand(passthrough, client, (line) => log(line));
+  } catch (err) {
+    if (err instanceof UsageError) fail(err.message, 2);
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
+async function handlePresets(args: string[]): Promise<void> {
+  const { clientOpts, passthrough } = splitClientOpts(args);
+  try {
+    const client = makeClient(clientOpts);
+    await runPresetsCommand(passthrough, client, (line) => log(line));
   } catch (err) {
     if (err instanceof UsageError) fail(err.message, 2);
     fail(err instanceof Error ? err.message : String(err));

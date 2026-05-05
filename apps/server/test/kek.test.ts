@@ -158,7 +158,7 @@ describe('KEK install contract — server entry points', () => {
     // not after. The function definition appears earlier in the file,
     // so we match the awaited call site (inside main()) specifically.
     const setKekIdx = source.search(/setKek\s*\(\s*resolveKek/);
-    const loadIdx = source.search(/await\s+loadOrCreateTeamConfig\s*\(/);
+    const loadIdx = source.search(/await\s+loadOrCreateServerConfig\s*\(/);
     expect(setKekIdx).toBeGreaterThan(0);
     expect(loadIdx).toBeGreaterThan(setKekIdx);
   });

@@ -23,7 +23,6 @@ import { createServer as createHttpServer, type Server as HttpServer } from 'nod
 import { dirname, resolve as pathResolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Broker } from '@agentc7/core';
-import type { Team } from '@agentc7/sdk/types';
 import { serve } from '@hono/node-server';
 import { createApp } from './app.js';
 import { createSqliteChannelStore } from './channels.js';
@@ -44,18 +43,19 @@ import {
   defaultHttpsConfig,
   getKek,
   type HttpsConfig,
+  MemberLoadError,
   type MemberStore,
-  persistMemberStore,
   type WebPushConfig,
-  writeWebPushConfig,
 } from './members.js';
+import { updateServerConfigFile } from './server-config.js';
+import { openTeamAndMembers, type TeamStore } from './team-store.js';
 import { createSqliteObjectivesStore } from './objectives.js';
 import { dispatchPush } from './push/dispatch.js';
 import { PushSubscriptionStore } from './push/store.js';
 import { configureVapid, generateVapidKeys } from './push/vapid.js';
 import { SessionStore } from './sessions.js';
 import { SqliteEventLog } from './sqlite-event-log.js';
-import { createTokenStoreFromMembers } from './tokens.js';
+import { TokenStore } from './tokens.js';
 import { SERVER_VERSION } from './version.js';
 
 export { composeBriefing } from './briefing.js';
@@ -89,29 +89,33 @@ export {
 } from './member-activity.js';
 export {
   type AddMemberInput,
-  CONFIG_FILE_COMMENT,
   ConfigNotFoundError,
-  createMemberStore,
   defaultConfigPath,
   defaultHttpsConfig,
-  enrollMemberTotp,
-  exampleConfig,
   generateMemberToken,
   type HttpsConfig,
   hashToken,
   type LoadedMember,
-  loadTeamConfigFromFile,
   MemberLoadError,
   type MemberStore,
-  persistMemberStore,
   resolvePermissions,
-  rotateMemberToken,
   setKek,
-  type TeamConfig,
   teammatesFromMembers,
   type UpdateMemberPatch,
-  writeTeamConfig,
+  type WebPushConfig,
 } from './members.js';
+export {
+  loadServerConfigFromFile,
+  type ServerConfig,
+  ServerConfigSchema,
+  writeServerConfigFile,
+  updateServerConfigFile,
+} from './server-config.js';
+export {
+  createSqliteMemberStore,
+  openTeamAndMembers,
+  type TeamStore,
+} from './team-store.js';
 export {
   createSqliteObjectivesStore,
   ObjectivesError,
@@ -119,7 +123,6 @@ export {
 } from './objectives.js';
 export { SESSION_COOKIE_NAME, SESSION_TTL_MS, SessionStore } from './sessions.js';
 export {
-  createTokenStoreFromMembers,
   generateBearerToken,
   hashRawToken,
   type InsertTokenInput,
@@ -142,10 +145,12 @@ export {
 export { SERVER_VERSION };
 
 export interface RunServerOptions {
-  /** Fully-loaded member store — the caller is responsible for building this. */
-  members: MemberStore;
-  /** Team config (name, directive, brief, permissionPresets). */
-  team: Team;
+  /**
+   * Team and members are sourced from the database (see team-store.ts).
+   * `runServer` opens its own DB handle on `dbPath` and refuses to
+   * boot if the team singleton row is missing — the caller (CLI entry
+   * or wizard flow) is responsible for seeding the DB beforehand.
+   */
   /**
    * HTTPS configuration. Omit or pass a mode:'off' config to run
    * plain HTTP. For self-signed mode the caller must also pass
@@ -199,6 +204,14 @@ export interface RunServerOptions {
   port?: number;
   host?: string;
   dbPath?: string;
+  /**
+   * Pre-opened main DB. Used by test fixtures that seed team + members
+   * before boot — `:memory:` SQLite handles aren't shared across opens,
+   * so passing the seeded handle here is the only way to keep that
+   * setup in scope. Production callers (CLI entry, library consumers)
+   * pass `dbPath` and let runServer open its own.
+   */
+  db?: DatabaseSyncInstance;
   /**
    * Root directory for the content-addressed blob store backing
    * filesystem attachments. Defaults to `./data/files`. The path is
@@ -306,21 +319,22 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // single-connection-per-file; every module that writes to the
   // main DB gets a handle into the same underlying Database, not a
   // new connection.
-  const db: DatabaseSyncInstance = openDatabase(dbPath);
+  const db: DatabaseSyncInstance = options.db ?? openDatabase(dbPath);
+  // Open the DB-backed team + member stores. Refuse to boot if no team
+  // exists — the wizard or seeding caller must have populated it.
+  const stores = openTeamAndMembers(db);
+  if (!stores.team.hasTeam()) {
+    if (options.db === undefined) db.close();
+    throw new MemberLoadError(
+      `runServer: no team in ${dbPath}. Run \`ac7 serve\` to bootstrap, or seed via the API.`,
+    );
+  }
+  const memberStore: MemberStore = stores.members;
+  const teamStore: TeamStore = stores.team;
+
   const eventLog = new SqliteEventLog(db);
   const sessions = new SessionStore(db);
-  // Bootstrap-migrated token store: every member's legacy `tokenHash`
-  // from ac7.json is copied in as an `origin = 'bootstrap'` row,
-  // idempotent across reboots. After this point the auth resolver
-  // reads only from `tokens`; the JSON `tokenHash` stays put as a
-  // human-readable record but is no longer load-bearing.
-  //
-  // Sysadmins who hand-edit ac7.json to add a member with a fresh
-  // plaintext `token` field flow through here on next boot —
-  // `loadTeamConfigFromFile` re-hashes, `MemberStore` exposes the
-  // hash, and we copy it in (label = 'legacy', so device-code-issued
-  // tokens stand out visually in the admin UI).
-  const tokens = createTokenStoreFromMembers(db, options.members);
+  const tokens = new TokenStore(db);
 
   // Pending-enrollment store for the device-code (`ac7 connect`)
   // flow. KEK is the same one that wraps TOTP secrets and VAPID
@@ -351,7 +365,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   const filesStore = createSqliteFilesystemStore({ db, blobs: blobStore });
   // Pre-seed home directories so browsers can list their own home
   // without having to write first.
-  for (const s of options.members.members()) {
+  for (const s of memberStore.members()) {
     filesStore.ensureHome(s.name);
   }
 
@@ -368,7 +382,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   if (webPush === null && options.configPath) {
     webPush = generateVapidKeys();
     try {
-      writeWebPushConfig(options.configPath, webPush);
+      updateServerConfigFile(options.configPath, { webPush });
       log.info('VAPID keys generated and persisted', {
         path: options.configPath,
       });
@@ -391,7 +405,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
       error: (msg, ctx) => log.error(msg, ctx),
     },
   });
-  broker.seedMembers(options.members.members());
+  broker.seedMembers(memberStore.members());
 
   // Shutdown fan-out: when stop() is called, abort this controller;
   // every open WebSocket handler listens and closes its socket.
@@ -454,7 +468,7 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
     ? (message: import('@agentc7/sdk/types').Message) => {
         void dispatchPush(message, {
           sessions: pushStore,
-          members: options.members,
+          members: memberStore,
           logger: log,
           isLive,
         }).catch((err) => {
@@ -466,23 +480,14 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
       }
     : undefined;
 
-  // User-mutation persistence hook. When `configPath` is known the
-  // runtime rewrites the on-disk team config after every add /
-  // update / delete / rotate-token / enroll-totp. Tests without a
-  // config path get a no-op that 501s mutation endpoints — you can't
-  // mutate without persistence or state silently drifts.
-  const persistMembers = options.configPath
-    ? () => {
-        persistMemberStore(
-          options.configPath as string,
-          options.team,
-          options.members,
-          https,
-          webPush,
-          options.jwt ?? null,
-        );
-      }
-    : undefined;
+  // The DB-backed `MemberStore` persists every mutation transactionally
+  // at the call site, so there is no longer a JSON-file rewrite step
+  // to schedule. We pass an empty no-op into `createApp` to keep the
+  // existing handler signature happy; it can be deleted from the
+  // handler API in a follow-up cleanup pass.
+  const persistMembers = (): void => {
+    /* DB-backed members persist immediately; nothing to do. */
+  };
 
   // Federated JWT verifier. Built once per run — the underlying JWKS
   // is cached internally by `jose` across verify calls, so key
@@ -492,11 +497,11 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
 
   const { app, injectWebSocket } = createApp({
     broker,
-    members: options.members,
+    members: memberStore,
     tokens,
     enrollments,
     sessions,
-    team: options.team,
+    teamStore,
     objectives: objectivesStore,
     channels: channelStore,
     activityStore: activityStore,

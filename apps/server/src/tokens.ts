@@ -28,7 +28,6 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { TokenInfo, TokenOrigin } from '@agentc7/sdk/types';
 import type { DatabaseSyncInstance, StatementInstance } from './db.js';
-import type { MemberStore } from './members.js';
 
 export const TOKEN_HASH_PREFIX = 'sha256:';
 
@@ -391,20 +390,22 @@ export class TokenStore {
 }
 
 /**
- * One-shot factory: open a TokenStore on `db` and seed it with every
- * member's bootstrap hash from `members`. Used in production by
- * `runServer`'s startup path; exposed here so tests and library
- * consumers don't have to inline the migration loop. Idempotent —
- * calling twice on the same DB is a no-op for the second call.
+ * Open a TokenStore on `db` and seed it with the bootstrap hash of
+ * every member that knows its own hash (currently: only the in-memory
+ * `MapMemberStore` used by tests does — the DB-backed store returns
+ * null and the loop becomes a no-op). Idempotent across re-calls.
+ *
+ * Production callers don't need this — member create / device-code
+ * approve / rotate-token issue tokens via `insert` directly.
  */
 export function createTokenStoreFromMembers(
   db: DatabaseSyncInstance,
-  members: MemberStore,
+  members: import('./members.js').MemberStore,
   options: { now?: () => number } = {},
 ): TokenStore {
   const store = new TokenStore(db, options);
   for (const m of members.members()) {
-    const hash = members.tokenHashOf(m.name);
+    const hash = members.tokenHashOf?.(m.name);
     if (!hash) continue;
     store.insertHashed({
       memberName: m.name,

@@ -2,22 +2,27 @@
  * `ac7 serve` — start a local ac7 broker.
  *
  * Thin launcher. `@agentc7/server` is an *optional* peer dependency
- * of the CLI so that users who only ever push events don't drag in
- * Hono, node:sqlite, and the MCP server SDK. When the user invokes
- * `ac7 serve`, we dynamically import the server at runtime. If it
- * isn't installed, we exit with a friendly hint.
+ * of the CLI so users who only ever push events don't drag in Hono,
+ * node:sqlite, and the MCP server SDK. When the user invokes `ac7
+ * serve`, we dynamically import the server at runtime. If it isn't
+ * installed, we exit with a friendly hint.
  *
- * Auth comes from a JSON team config file. The CLI forwards the
- * resolved path to the server module; on a missing file we drop into
- * the same first-run wizard `ac7-server` uses, so the two entry points
- * stay consistent.
+ * Boot path:
+ *   1. Resolve the slim infra-only config file path.
+ *   2. Resolve + install the KEK so encrypted-at-rest fields
+ *      (TOTP secrets, VAPID private key) round-trip.
+ *   3. Load the slim ServerConfig, or run the wizard if missing
+ *      (TTY required) and seed the DB inline.
+ *   4. Hand off to `runServer`, which opens the DB-backed team and
+ *      member stores from `dbPath` and refuses to boot if the team
+ *      singleton is missing.
  */
 
 import { dirname } from 'node:path';
 import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 
 // Type-only import: compiles away, never loaded at runtime.
-import type { RunningServer, RunServerOptions, TeamConfig } from '@agentc7/server';
+import type { RunningServer, RunServerOptions, ServerConfig } from '@agentc7/server';
 import { UsageError } from './errors.js';
 
 export { UsageError };
@@ -30,22 +35,16 @@ export interface ServeCommandInput {
 }
 
 /**
- * Translate `ac7 serve` inputs + a loaded TeamConfig into the options
- * bag that `runServer` expects. Pure — no I/O — so the seam between
- * the CLI and the server is unit-testable.
+ * Translate `ac7 serve` inputs + a loaded ServerConfig into the
+ * options bag that `runServer` expects. Pure — no I/O — so the seam
+ * between the CLI and the server is unit-testable.
  *
- * Threading every relevant TeamConfig field through is critical: the
- * server's `runServer` makes the `persistMembers` hook (the one that
- * rewrites the on-disk team config after every member mutation) only
- * when `configPath` is supplied. Drop `configPath` and every member-
- * mutation endpoint short-circuits with 501 — including the
- * "create-new-member" branch of `/enroll/approve`, which is the path
- * the web UI's enrollment-approval flow hits. The same goes for
- * `https`, `webPush`, and `jwt`: missing fields silently disable the
- * corresponding feature, so we forward whatever the team config has.
+ * `configPath` and `configDir` matter because runServer rewrites the
+ * file when it auto-generates VAPID keys on first boot. `dbPath`
+ * precedence: CLI arg > env var > config file > default `./ac7.db`.
  */
 export function buildServeRunOptions(args: {
-  config: TeamConfig;
+  config: ServerConfig;
   configPath: string;
   port: number;
   host: string;
@@ -53,9 +52,7 @@ export function buildServeRunOptions(args: {
   onListen: RunServerOptions['onListen'];
 }): RunServerOptions {
   return {
-    members: args.config.store,
-    team: args.config.team,
-    https: args.config.https,
+    ...(args.config.https !== null ? { https: args.config.https } : {}),
     ...(args.config.webPush !== null ? { webPush: args.config.webPush } : {}),
     ...(args.config.jwt !== null ? { jwt: args.config.jwt } : {}),
     configPath: args.configPath,
@@ -80,12 +77,26 @@ export async function runServeCommand(
     throw new UsageError(`serve: invalid port ${port}`);
   }
   const host = input.host ?? process.env[ENV.host] ?? '127.0.0.1';
-  const dbPath = input.dbPath ?? process.env[ENV.dbPath] ?? ':memory:';
 
   const server = await loadServerModule();
   const configPath = input.configPath ?? process.env[ENV.configPath] ?? server.defaultConfigPath();
 
-  const config = await loadOrCreateTeamConfig(server, configPath, stdout);
+  // KEK before any read/write so encrypted-at-rest fields round-trip.
+  try {
+    server.setKek(server.resolveKek(configPath));
+  } catch (err) {
+    if (err instanceof server.KekResolutionError) {
+      throw new UsageError(`serve: ${err.message}`);
+    }
+    throw err;
+  }
+
+  const { config, freshlySeeded } = await loadOrCreateServerConfig(server, configPath, stdout);
+  const dbPath = input.dbPath ?? process.env[ENV.dbPath] ?? config.dbPath ?? './ac7.db';
+
+  if (freshlySeeded) {
+    stdout(`ac7 serve: bootstrapped ${configPath} with team data in ${dbPath}`);
+  }
 
   const running = await server.runServer(
     buildServeRunOptions({
@@ -97,11 +108,8 @@ export async function runServeCommand(
       onListen: (info) => {
         stdout(
           `ac7-server listening on ${info.protocol}://${info.address}:${info.port}\n` +
-            `  team:      ${config.team.name}\n` +
-            `  directive: ${config.team.directive}\n` +
             `  config:    ${configPath}\n` +
-            `  db:        ${dbPath}\n` +
-            `  members:   ${config.store.size()} (${config.store.names().join(', ')})`,
+            `  db:        ${dbPath}`,
         );
       },
     }),
@@ -110,35 +118,17 @@ export async function runServeCommand(
   return running;
 }
 
-async function loadOrCreateTeamConfig(
+async function loadOrCreateServerConfig(
   server: typeof import('@agentc7/server'),
   configPath: string,
-  stdout: (line: string) => void,
-): Promise<TeamConfig> {
-  // Resolve + install the KEK before loading. Auto-generates a key file
-  // alongside the config on first boot; subsequent boots read the same
-  // key. IndividualContributors who manage their own key injection set AC7_KEK
-  // instead and this call returns the env-var-resolved buffer.
+  _stdout: (line: string) => void,
+): Promise<{ config: ServerConfig; freshlySeeded: boolean }> {
   try {
-    server.setKek(server.resolveKek(configPath));
-  } catch (err) {
-    if (err instanceof server.KekResolutionError) {
-      throw new UsageError(`serve: ${err.message}`);
-    }
-    throw err;
-  }
-  try {
-    const config = server.loadTeamConfigFromFile(configPath);
-    if (config.migrated > 0) {
-      stdout(
-        `ac7 serve: migrated ${config.migrated} plaintext field(s) in ${configPath} ` +
-          '(token hashes, TOTP secrets, and/or VAPID private key)',
-      );
-    }
-    return config;
+    return { config: server.loadServerConfigFromFile(configPath), freshlySeeded: false };
   } catch (err) {
     if (err instanceof server.ConfigNotFoundError) {
-      return runWizardOrFail(server, configPath);
+      const config = await runWizardOrFail(server, configPath);
+      return { config, freshlySeeded: true };
     }
     if (err instanceof server.MemberLoadError) {
       throw new UsageError(`serve: ${err.message}`);
@@ -147,22 +137,69 @@ async function loadOrCreateTeamConfig(
   }
 }
 
+/**
+ * No config file — run the wizard, seed the freshly-opened DB with
+ * the captured team + admin, write the slim ServerConfig file, and
+ * return the in-memory config so the caller can hand it to runServer.
+ */
 async function runWizardOrFail(
   server: typeof import('@agentc7/server'),
   configPath: string,
-): Promise<TeamConfig> {
+): Promise<ServerConfig> {
   const { io, close } = server.createTtyWizardIO();
   if (!io.isInteractive) {
     close();
     throw new UsageError(
       `serve: no config file at ${configPath}\n` +
-        '  stdin is not a TTY, so the first-run wizard cannot prompt. Create\n' +
-        '  the file yourself or pass --config-path to point at a file you already have.\n' +
-        `  example config:\n\n${server.exampleConfig()}`,
+        '  stdin is not a TTY, so the first-run wizard cannot prompt.\n' +
+        '  Run `ac7 setup` interactively to create one, or seed the DB\n' +
+        '  via the API once you have one running.',
     );
   }
   try {
-    return await server.runFirstRunWizard({ configPath, io });
+    const wizard = await server.runFirstRunWizard({ configPath, io });
+    const dbPath = './ac7.db';
+    const db = server.openDatabase(dbPath);
+    try {
+      const stores = server.openTeamAndMembers(db);
+      stores.team.setTeam({
+        name: wizard.team.name,
+        directive: wizard.team.directive,
+        brief: wizard.team.brief,
+      });
+      for (const [name, leaves] of Object.entries(wizard.team.permissionPresets)) {
+        stores.team.setPreset(name, leaves);
+      }
+      stores.members.addMember({
+        name: wizard.admin.name,
+        role: wizard.admin.role,
+        instructions: wizard.admin.instructions,
+        rawPermissions: wizard.admin.rawPermissions,
+        permissions: wizard.admin.permissions,
+        totpSecret: wizard.admin.totpSecret,
+      });
+      const tokens = new server.TokenStore(db);
+      tokens.insert({
+        memberName: wizard.admin.name,
+        rawToken: wizard.admin.token,
+        label: 'wizard',
+        origin: 'bootstrap',
+        createdBy: null,
+      });
+    } finally {
+      db.close();
+    }
+    const config: ServerConfig = {
+      dbPath,
+      activityDbPath: null,
+      filesRoot: null,
+      https: server.defaultHttpsConfig(),
+      webPush: null,
+      jwt: null,
+      files: null,
+    };
+    server.writeServerConfigFile(configPath, config);
+    return config;
   } catch (err) {
     if (err instanceof server.MemberLoadError) {
       throw new UsageError(`serve: ${err.message}`);
@@ -173,11 +210,6 @@ async function runWizardOrFail(
   }
 }
 
-/**
- * Dynamically resolve the full server module. If the package isn't
- * installed (it's an optional peer), throw a UsageError with install
- * instructions rather than a raw MODULE_NOT_FOUND trace.
- */
 async function loadServerModule(): Promise<typeof import('@agentc7/server')> {
   try {
     return await import('@agentc7/server');

@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import type { FsEntry, Team } from '@agentc7/sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mockTeamStore } from '../helpers/test-stores.js';
 import { createApp } from '../../src/app.js';
 import { openDatabase } from '../../src/db.js';
 import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/index.js';
@@ -75,7 +76,7 @@ function makeApp() {
     members,
     tokens,
     sessions,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     files,
     version: '0.0.0',
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },

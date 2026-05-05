@@ -1,29 +1,26 @@
 /**
- * `runServer` wiring contract — end-to-end regression for the
- * persistMembers gate.
+ * `runServer` member-mutation regression.
  *
- * The published `ac7 serve` CLI shipped a wiring bug where it called
- * `runServer({...})` without `configPath`, which silently disabled
- * the `persistMembers` hook. With persistMembers undefined, every
- * member-mutation endpoint short-circuited with 501 Not Implemented
- * — including the "create new member" branch of `/enroll/approve`,
- * which is what the web UI calls during enrollment approval.
+ * The original test pinned the legacy `persistMembers` 501 gate: the
+ * `ac7 serve` CLI used to drop `configPath` from the runServer
+ * options bag, which silently disabled the persistence callback and
+ * caused every mutation endpoint to short-circuit with 501. That gate
+ * is gone now — `MemberStore` mutations land transactionally in
+ * SQLite at the call site.
  *
- * The CLI-side unit test for `buildServeRunOptions` (in
- * `packages/cli/test/commands/serve.test.ts`) pins the option
- * construction. This file pins the OTHER side of the contract:
- * `runServer({ configPath })` actually produces a server that
- * accepts member mutations, and `runServer({})` (no configPath)
- * still rejects them with 501. If either invariant flips, this
- * test fails.
+ * What stays worth pinning: a fresh `runServer({db: seeded.db})` boot
+ * accepts `POST /members` and writes the new row through the
+ * DB-backed store. If a future refactor accidentally short-circuits
+ * mutations again, this test catches it.
  */
 
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createMemberStore, defaultHttpsConfig } from '../src/members.js';
+import { defaultHttpsConfig } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
+import { seedStores } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'ac7_run_wiring_test_admin_token';
 
@@ -31,7 +28,6 @@ const TEAM = {
   name: 'demo-team',
   directive: 'Verify run.ts wiring.',
   brief: '',
-  permissionPresets: {},
 };
 
 const dirsToClean: string[] = [];
@@ -52,63 +48,34 @@ function tmpDir(): string {
   return dir;
 }
 
-function makeMembers() {
-  return createMemberStore([
-    {
-      name: 'alice',
-      role: { title: 'admin', description: '' },
-      permissions: ['members.manage'],
-      token: ADMIN_TOKEN,
-    },
-  ]);
-}
-
 function silentLogger() {
   return { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() };
 }
 
-async function bootHttp(opts: { configPath?: string; configDir?: string }): Promise<RunningServer> {
-  const dir = opts.configDir ?? tmpDir();
-  const running = await runServer({
-    members: makeMembers(),
+async function bootHttp(): Promise<RunningServer> {
+  const seeded = seedStores({
     team: TEAM,
+    members: [
+      {
+        name: 'alice',
+        role: { title: 'admin', description: '' },
+        rawPermissions: ['members.manage'],
+        permissions: ['members.manage'],
+        token: ADMIN_TOKEN,
+      },
+    ],
+  });
+  const running = await runServer({
+    db: seeded.db,
     https: { ...defaultHttpsConfig(), mode: 'off' },
-    // null + configPath → runServer auto-generates VAPID keys; null
-    // alone → Web Push stays off. Either is fine for this test.
     webPush: null,
-    ...(opts.configPath !== undefined ? { configPath: opts.configPath } : {}),
-    ...(opts.configPath !== undefined ? { configDir: dir } : {}),
     port: 0,
     host: '127.0.0.1',
-    dbPath: ':memory:',
     publicRoot: null,
     logger: silentLogger(),
   });
   serversToStop.push(running);
   return running;
-}
-
-function seedConfigFile(dir: string): string {
-  const configPath = join(dir, 'ac7.json');
-  writeFileSync(
-    configPath,
-    JSON.stringify({
-      team: TEAM,
-      members: [
-        {
-          name: 'alice',
-          role: { title: 'admin', description: '' },
-          permissions: ['members.manage'],
-          // Hash of ADMIN_TOKEN — but we don't actually use the
-          // file's auth path here; we re-hash the live token via
-          // createMemberStore in bootHttp(). The file just needs to
-          // exist so persistMemberStore has something to rewrite.
-          tokenHash: `sha256:${'a'.repeat(64)}`,
-        },
-      ],
-    }),
-  );
-  return configPath;
 }
 
 async function postMember(running: RunningServer, body: unknown): Promise<Response> {
@@ -122,32 +89,30 @@ async function postMember(running: RunningServer, body: unknown): Promise<Respon
   });
 }
 
-describe('runServer member mutation gate', () => {
-  it('200s POST /members when configPath is wired (regression for `ac7 serve` bug)', async () => {
-    const dir = tmpDir();
-    const configPath = seedConfigFile(dir);
-    const running = await bootHttp({ configPath, configDir: dir });
-
+describe('runServer member mutation', () => {
+  it('200s POST /members and writes through to the DB-backed store', async () => {
+    const running = await bootHttp();
     const res = await postMember(running, {
       name: 'newbie',
       role: { title: 'engineer', description: '' },
       permissions: [],
     });
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { token: string };
+    const body = (await res.json()) as { token: string; member: { name: string } };
     expect(body.token).toMatch(/^ac7_/);
-  });
+    expect(body.member.name).toBe('newbie');
 
-  it('501s POST /members when configPath is omitted (the failure mode)', async () => {
-    const running = await bootHttp({});
-
-    const res = await postMember(running, {
-      name: 'newbie',
-      role: { title: 'engineer', description: '' },
-      permissions: [],
+    // Read it back through GET /members to confirm it's in the store.
+    const list = await fetch(`http://127.0.0.1:${running.port}/members`, {
+      headers: { Authorization: `Bearer ${ADMIN_TOKEN}` },
     });
-    expect(res.status).toBe(501);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toContain('persistMembers');
+    expect(list.status).toBe(200);
+    const listed = (await list.json()) as { members: Array<{ name: string }> };
+    const names = listed.members.map((m) => m.name);
+    expect(names).toContain('newbie');
   });
 });
+
+// `tmpDir` is no longer used by the boot path but kept around for any
+// future test that wants a scratch dir for cert/file paths.
+void tmpDir;

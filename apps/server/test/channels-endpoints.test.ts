@@ -1,5 +1,6 @@
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import type { Channel, ChannelSummary, GetChannelResponse, Team } from '@agentc7/sdk/types';
+import { mockTeamStore } from './helpers/test-stores.js';
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../src/app.js';
 import { createSqliteChannelStore } from '../src/channels.js';
@@ -57,7 +58,7 @@ function makeApp() {
     members,
     tokens,
     sessions,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     channels,
     version: '0.0.0',
     logger: {

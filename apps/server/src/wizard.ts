@@ -4,9 +4,14 @@
  * Triggered when the server boots without a config file at the
  * expected path AND stdin is a TTY. Walks the operator through
  * creating a team (name, directive, brief) and the first admin
- * member, generates a random bearer token, auto-enrolls the admin
- * in TOTP (admins need web UI login by default), writes a hashed
- * config to disk (0o600), and returns the loaded `TeamConfig`.
+ * member, generates a random bearer token, and auto-enrolls the
+ * admin in TOTP (admins need web UI login by default).
+ *
+ * The wizard is I/O only: it returns the captured data and lets the
+ * caller decide where to persist it. Today that caller is the boot
+ * entry (`index.ts`), which inserts the team + admin into SQLite via
+ * the team/member/token stores and writes a slim infra-only
+ * `ac7.json` to disk.
  *
  * Subsequent members are added by the admin through the web UI
  * (Members admin page) or the CLI (`ac7 member create`).
@@ -14,17 +19,11 @@
 
 import { randomBytes } from 'node:crypto';
 import { createInterface } from 'node:readline/promises';
-import type { Permission, Role, Team } from '@agentc7/sdk/types';
+import type { Permission, PermissionPresets, Role, Team } from '@agentc7/sdk/types';
 import { PERMISSIONS } from '@agentc7/sdk/types';
 // qrcode-terminal is CJS; default-import the namespace and destructure.
 import qrcodeTerminal from 'qrcode-terminal';
-import {
-  createMemberStore,
-  defaultHttpsConfig,
-  MemberLoadError,
-  type TeamConfig,
-  writeTeamConfig,
-} from './members.js';
+import { MemberLoadError } from './members.js';
 import { generateSecret, otpauthUri, verifyCode } from './totp.js';
 
 const { generate: generateQrCode, setErrorLevel } = qrcodeTerminal;
@@ -42,11 +41,10 @@ const TOTP_ISSUER = 'ac7';
 const TOTP_MAX_CONFIRM_ATTEMPTS = 3;
 
 /**
- * Default permission presets shipped with every new team config.
- * The operator can edit after first boot — these are sensible
- * starting points for small teams.
+ * Default permission presets seeded with every new team. The operator
+ * can edit them via the API/CLI/MCP after first boot.
  */
-export const DEFAULT_PERMISSION_PRESETS: Record<string, Permission[]> = {
+export const DEFAULT_PERMISSION_PRESETS: PermissionPresets = {
   admin: [...PERMISSIONS],
   operator: ['objectives.create', 'objectives.cancel', 'objectives.reassign'],
 };
@@ -69,12 +67,32 @@ export interface RunWizardOptions {
 }
 
 /**
- * Drive the wizard to completion, write the config file, and return
- * the loaded team config. Throws `MemberLoadError` if IO is not
- * interactive — the CLI catches that and prints a non-interactive
+ * Captured wizard data, ready to seed the DB-backed stores. The
+ * caller is responsible for inserting the team + presets + admin into
+ * SQLite (via `TeamStore` / `MemberStore` / `TokenStore`) and writing
+ * the slim infra-only config file.
+ */
+export interface WizardResult {
+  team: Team;
+  admin: {
+    name: string;
+    role: Role;
+    instructions: string;
+    rawPermissions: string[];
+    permissions: Permission[];
+    /** Plaintext bearer token — show once, then hash and discard. */
+    token: string;
+    /** Plaintext base32 TOTP secret — caller encrypts before persisting. */
+    totpSecret: string;
+  };
+}
+
+/**
+ * Drive the wizard to completion. Throws `MemberLoadError` if IO is
+ * not interactive — the CLI catches that and prints a non-interactive
  * hint instead.
  */
-export async function runFirstRunWizard(options: RunWizardOptions): Promise<TeamConfig> {
+export async function runFirstRunWizard(options: RunWizardOptions): Promise<WizardResult> {
   const { io, configPath } = options;
   const mintToken = options.tokenFactory ?? defaultTokenFactory;
   const mintTotpSecret = options.totpSecretFactory ?? generateSecret;
@@ -103,7 +121,7 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Team
 
   // ── Team ────────────────────────────────────────────────────
   io.println('-- team --');
-  const team = await promptTeam(io);
+  const teamCore = await promptTeam(io);
 
   // ── First admin member ─────────────────────────────────────
   io.println('');
@@ -128,50 +146,24 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Team
     renderQr,
   });
 
-  const fullTeam: Team = { ...team, permissionPresets: DEFAULT_PERMISSION_PRESETS };
+  const team: Team = {
+    name: teamCore.name,
+    directive: teamCore.directive,
+    brief: teamCore.brief,
+    permissionPresets: DEFAULT_PERMISSION_PRESETS,
+  };
 
-  writeTeamConfig(configPath, fullTeam, [
-    {
-      name,
-      role,
-      instructions: '',
-      permissions: ['admin'],
-      token,
-      totpSecret,
-    },
-  ]);
-
-  io.println('');
-  io.println(`wrote team '${team.name}' with 1 admin member (${name}) to`);
-  io.println(`  ${configPath}`);
-  io.println('file is chmod 600; the token is stored as a SHA-256 hash only.');
-  io.println(`web UI login is enabled for ${name}.`);
-  io.println('');
-  io.println('Next steps:');
-  io.println(`  • Sign in at the web UI as ${name} with the 6-digit code from your`);
-  io.println('    authenticator app and use the Members page to add teammates.');
-  io.println('  • Or run `ac7 member create --name <name> --title <title>` from the CLI.');
-  io.println('');
-
-  const store = createMemberStore([
-    {
-      name,
-      role,
-      instructions: '',
-      permissions: DEFAULT_PERMISSION_PRESETS.admin ?? [],
-      rawPermissions: ['admin'],
-      token,
-      totpSecret,
-    },
-  ]);
   return {
-    team: fullTeam,
-    store,
-    https: defaultHttpsConfig(),
-    webPush: null,
-    files: null,
-    jwt: null,
-    migrated: 0,
+    team,
+    admin: {
+      name,
+      role,
+      instructions: '',
+      rawPermissions: ['admin'],
+      permissions: DEFAULT_PERMISSION_PRESETS.admin ?? [],
+      token,
+      totpSecret,
+    },
   };
 }
 

@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { Broker, InMemoryEventLog } from '@agentc7/core';
 import type { Team } from '@agentc7/sdk/types';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 import { createApp } from '../src/app.js';
 import { openDatabase } from '../src/db.js';
 import { certExpiryMs, generateSelfSignedCert } from '../src/https/cert.js';
@@ -249,7 +250,7 @@ describe('secureCookies option', () => {
       members,
       tokens,
       sessions,
-      team: TEAM,
+      teamStore: mockTeamStore(TEAM),
 
       version: '0.0.0',
       secureCookies: true,
@@ -273,32 +274,39 @@ describe('secureCookies option', () => {
 // ─── runServer end-to-end HTTPS ─────────────────────────────────────
 
 describe('runServer with self-signed HTTPS', () => {
+  function seedAdmin() {
+    return seedStores({
+      team: TEAM,
+      members: [
+        {
+          name: 'director-1',
+          role: { title: 'director', description: '' },
+          rawPermissions: ['members.manage'],
+          permissions: ['members.manage'],
+          token: OP_TOKEN,
+        },
+      ],
+    });
+  }
+
+  const SELF_SIGNED_HTTPS = {
+    mode: 'self-signed' as const,
+    bindHttp: 0,
+    bindHttps: 0,
+    redirectHttpToHttps: false,
+    hsts: 'off' as const,
+    selfSigned: { lanIp: null, validityDays: 365, regenerateIfExpiringWithin: 30 },
+    custom: { certPath: null, keyPath: null },
+  };
+
   it('boots on HTTP/2 and responds to /healthz', async () => {
     const configDir = tmpDir();
-    const members = createMemberStore([
-      {
-        name: 'director-1',
-        role: { title: 'director', description: '' },
-        permissions: ['members.manage'],
-        token: OP_TOKEN,
-      },
-    ]);
+    const seeded = seedAdmin();
     const running = await runServer({
-      members,
-      team: TEAM,
-
-      https: {
-        mode: 'self-signed',
-        bindHttp: 0,
-        bindHttps: 0,
-        redirectHttpToHttps: false,
-        hsts: 'off',
-        selfSigned: { lanIp: null, validityDays: 365, regenerateIfExpiringWithin: 30 },
-        custom: { certPath: null, keyPath: null },
-      },
+      db: seeded.db,
+      https: SELF_SIGNED_HTTPS,
       configDir,
       host: '127.0.0.1',
-      dbPath: ':memory:',
       logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     });
     serversToStop.push(running);
@@ -306,8 +314,6 @@ describe('runServer with self-signed HTTPS', () => {
     expect(running.protocol).toBe('https');
     expect(running.port).toBeGreaterThan(0);
 
-    // Open an HTTP/2 session to the server with verification skipped
-    // (self-signed). Then issue a GET /healthz and read the JSON body.
     const client = http2Connect(`https://127.0.0.1:${running.port}`, {
       rejectUnauthorized: false,
     });
@@ -335,29 +341,12 @@ describe('runServer with self-signed HTTPS', () => {
     const certPath = join(configDir, 'certs', 'server.crt');
 
     // First boot: generates + persists.
+    const s1 = seedAdmin();
     const r1 = await runServer({
-      members: createMemberStore([
-        {
-          name: 'director-1',
-          role: { title: 'director', description: '' },
-          permissions: ['members.manage'],
-          token: OP_TOKEN,
-        },
-      ]),
-      team: TEAM,
-
-      https: {
-        mode: 'self-signed',
-        bindHttp: 0,
-        bindHttps: 0,
-        redirectHttpToHttps: false,
-        hsts: 'off',
-        selfSigned: { lanIp: null, validityDays: 365, regenerateIfExpiringWithin: 30 },
-        custom: { certPath: null, keyPath: null },
-      },
+      db: s1.db,
+      https: SELF_SIGNED_HTTPS,
       configDir,
       host: '127.0.0.1',
-      dbPath: ':memory:',
       logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     });
     await r1.stop();
@@ -365,29 +354,12 @@ describe('runServer with self-signed HTTPS', () => {
     expect(cert1).toContain('-----BEGIN CERTIFICATE-----');
 
     // Second boot: reuses.
+    const s2 = seedAdmin();
     const r2 = await runServer({
-      members: createMemberStore([
-        {
-          name: 'director-1',
-          role: { title: 'director', description: '' },
-          permissions: ['members.manage'],
-          token: OP_TOKEN,
-        },
-      ]),
-      team: TEAM,
-
-      https: {
-        mode: 'self-signed',
-        bindHttp: 0,
-        bindHttps: 0,
-        redirectHttpToHttps: false,
-        hsts: 'off',
-        selfSigned: { lanIp: null, validityDays: 365, regenerateIfExpiringWithin: 30 },
-        custom: { certPath: null, keyPath: null },
-      },
+      db: s2.db,
+      https: SELF_SIGNED_HTTPS,
       configDir,
       host: '127.0.0.1',
-      dbPath: ':memory:',
       logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     });
     serversToStop.push(r2);

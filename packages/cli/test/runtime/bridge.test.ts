@@ -188,6 +188,9 @@ describeIfBuilt('runner + bridge end-to-end', () => {
       'fs_shared',
       'fs_stat',
       'fs_write',
+      'members_add',
+      'members_remove',
+      'members_update',
       'objectives_cancel',
       'objectives_complete',
       'objectives_create',
@@ -197,9 +200,14 @@ describeIfBuilt('runner + bridge end-to-end', () => {
       'objectives_update',
       'objectives_view',
       'objectives_watchers',
+      'presets_delete',
+      'presets_list',
+      'presets_set',
       'recent',
       'roster',
       'send',
+      'team_get',
+      'team_update',
     ]);
 
     const chatToolNames = new Set(['roster', 'broadcast', 'send', 'recent']);
