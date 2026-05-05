@@ -29,8 +29,9 @@
 import { useEffect } from 'preact/hooks';
 import { closeInspector, isInspectorOpen } from '../lib/inspector.js';
 import { memberActivityConnected, startMemberActivitySubscribe } from '../lib/member-activity.js';
+import { useStickyBottom } from '../lib/use-sticky-bottom.js';
 import { TimelineBody } from './AgentTimeline.js';
-import { X } from './icons/index.js';
+import { ChevronsDown, X } from './icons/index.js';
 
 interface ActivityInspectorProps {
   /** Display name shown in the feed-header. */
@@ -40,6 +41,7 @@ interface ActivityInspectorProps {
 export function ActivityInspector({ agentName }: ActivityInspectorProps) {
   const connected = memberActivityConnected.value;
   const open = isInspectorOpen.value;
+  const { containerRef, onScroll, isPinned, jumpToBottom } = useStickyBottom();
 
   useEffect(() => {
     return startMemberActivitySubscribe({ name: agentName });
@@ -79,8 +81,26 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
         </button>
       </header>
 
-      <div style="flex:1;min-height:0;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px">
-        <TimelineBody />
+      <div style="flex:1;min-height:0;position:relative">
+        <div
+          ref={containerRef}
+          onScroll={onScroll}
+          data-scroll-anchor="activity"
+          style="position:absolute;inset:0;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px"
+        >
+          <TimelineBody />
+        </div>
+        {!isPinned && (
+          <button
+            type="button"
+            onClick={jumpToBottom}
+            aria-label="Jump to newest activity"
+            title="Jump to newest"
+            style="position:absolute;right:14px;bottom:14px;width:36px;height:36px;border-radius:9999px;background:var(--paper);border:1px solid var(--rule);color:var(--ink);box-shadow:0 4px 12px rgba(0,0,0,0.12);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2"
+          >
+            <ChevronsDown size={18} aria-hidden="true" />
+          </button>
+        )}
       </div>
     </aside>
   );

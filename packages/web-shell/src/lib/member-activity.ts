@@ -9,8 +9,9 @@
  *
  * On open:
  *   1. Hydrate via `listActivity(name)` — the server returns up to
- *      200 most-recent rows newest-first. We keep that ordering
- *      in the signal (render reads left-to-right as newest-first).
+ *      200 most-recent rows newest-first. We reverse into oldest-first
+ *      so the rendered feed is chronological top-to-bottom (newest at
+ *      the bottom — chat/`tail -f` semantics).
  *   2. Open the WebSocket at `/members/:name/activity/stream`.
  *   3. Every incoming message event is a JSON-encoded `ActivityRow`.
  *      Merge into the list, de-duping by `id` so overlap with the
@@ -34,8 +35,9 @@ import { getClient } from './client.js';
 const MAX_ROWS = 500;
 
 /**
- * Rows for the currently-subscribed agent, **newest-first**. Empty
- * when no subscription is active or before hydration completes.
+ * Rows for the currently-subscribed agent, **oldest-first** (newest
+ * at the tail of the array). Empty when no subscription is active or
+ * before hydration completes.
  */
 export const memberActivityRows = signal<ActivityRow[]>([]);
 
@@ -97,9 +99,11 @@ export function startMemberActivitySubscribe(options: StartAgentActivityOptions)
     try {
       const rows = await getClient().listActivity(name, { limit: hydrationLimit });
       if (cancelled) return;
-      // Server returns newest-first; we keep that ordering in the
-      // signal (render reads left-to-right as newest-first).
-      memberActivityRows.value = rows.slice(0, MAX_ROWS);
+      // Server returns newest-first; flip to oldest-first for the
+      // chat-style feed (newest at the bottom).
+      const ascending = rows.slice().reverse();
+      memberActivityRows.value =
+        ascending.length > MAX_ROWS ? ascending.slice(-MAX_ROWS) : ascending;
       // If the server returned fewer than requested, there's no
       // more history to fetch.
       if (rows.length < hydrationLimit) memberActivityExhausted.value = true;
@@ -197,28 +201,29 @@ function buildWsUrl(path: string): string {
 }
 
 /**
- * Merge a single freshly-arrived row into the newest-first list.
+ * Merge a single freshly-arrived row into the oldest-first list.
  * Deduped by `id` — if an earlier hydration already has this row,
- * we leave the list alone. Inserts new rows at the head and
- * enforces the `MAX_ROWS` cap on the tail.
+ * we leave the list alone. Appends new rows at the tail (the live
+ * edge) and, when the cap is exceeded, drops the oldest from the
+ * head.
  */
 function mergeRow(row: ActivityRow): void {
   const existing = memberActivityRows.value;
   if (existing.some((r) => r.id === row.id)) return;
-  // Insert in ts-descending position. The common case is that the
+  // Insert in ts-ascending position. The common case is that the
   // new row is newer than everything in the list, so we fast-path
   // that and only walk the list for out-of-order arrivals.
-  const newest = existing[0];
+  const newest = existing[existing.length - 1];
   if (!newest || row.event.ts >= newest.event.ts) {
-    const next = [row, ...existing];
-    memberActivityRows.value = next.length > MAX_ROWS ? next.slice(0, MAX_ROWS) : next;
+    const next = [...existing, row];
+    memberActivityRows.value = next.length > MAX_ROWS ? next.slice(-MAX_ROWS) : next;
     return;
   }
   const inserted = [...existing];
-  const idx = inserted.findIndex((r) => r.event.ts <= row.event.ts);
+  const idx = inserted.findIndex((r) => r.event.ts > row.event.ts);
   if (idx === -1) inserted.push(row);
   else inserted.splice(idx, 0, row);
-  memberActivityRows.value = inserted.length > MAX_ROWS ? inserted.slice(0, MAX_ROWS) : inserted;
+  memberActivityRows.value = inserted.length > MAX_ROWS ? inserted.slice(-MAX_ROWS) : inserted;
 }
 
 /**
@@ -233,20 +238,23 @@ export async function loadOlderMemberActivity(limit = 100): Promise<void> {
   if (!name) return;
   if (memberActivityExhausted.value) return;
   const rows = memberActivityRows.value;
-  const oldest = rows[rows.length - 1];
+  const oldest = rows[0];
   if (!oldest) return;
   memberActivityLoading.value = true;
   try {
     // `to = oldest.ts - 1` so we don't re-fetch the oldest row.
-    const older = await getClient().listActivity(name, {
+    // Server returns newest-first; reverse so the older batch comes
+    // back oldest-first and prepends cleanly.
+    const olderDesc = await getClient().listActivity(name, {
       to: oldest.event.ts - 1,
       limit,
     });
-    if (older.length === 0) {
+    if (olderDesc.length === 0) {
       memberActivityExhausted.value = true;
       return;
     }
-    const merged = [...rows, ...older];
+    const olderAsc = olderDesc.slice().reverse();
+    const merged = [...olderAsc, ...rows];
     // Dedup by id as a safety net against concurrent inserts.
     const seen = new Set<number>();
     const deduped: ActivityRow[] = [];
@@ -255,8 +263,9 @@ export async function loadOlderMemberActivity(limit = 100): Promise<void> {
       seen.add(r.id);
       deduped.push(r);
     }
-    memberActivityRows.value = deduped.slice(0, MAX_ROWS);
-    if (older.length < limit) memberActivityExhausted.value = true;
+    // Cap from the head (drop oldest) to keep newest visible.
+    memberActivityRows.value = deduped.length > MAX_ROWS ? deduped.slice(-MAX_ROWS) : deduped;
+    if (olderDesc.length < limit) memberActivityExhausted.value = true;
   } catch (err) {
     memberActivityError.value = err instanceof Error ? err.message : String(err);
   } finally {

@@ -7,7 +7,7 @@
  * — lets individual-contributors read history without being yanked back.
  */
 
-import { useEffect, useRef } from 'preact/hooks';
+import { useEffect } from 'preact/hooks';
 import { briefing } from '../lib/briefing.js';
 import { isInspectorOpen, toggleInspector } from '../lib/inspector.js';
 import {
@@ -17,11 +17,10 @@ import {
   selectThreadMessage,
   threadMessages,
 } from '../lib/messages.js';
+import { useStickyBottom } from '../lib/use-sticky-bottom.js';
 import { selectAgentDetail, view } from '../lib/view.js';
-import { PanelRight } from './icons/index.js';
+import { ChevronsDown, PanelRight } from './icons/index.js';
 import { MessageLine } from './MessageLine.js';
-
-const STICKY_BOTTOM_PX = 64;
 
 export interface TranscriptProps {
   viewer: string;
@@ -35,32 +34,17 @@ export function Transcript({ viewer }: TranscriptProps) {
   const b = briefing.value;
   const isDirector = b?.permissions.includes('members.manage') ?? false;
 
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const stickyRef = useRef(true);
-
   const threadKey = v.kind === 'thread' ? v.key : null;
   const messages = threadKey ? threadMessages(threadKey) : [];
   const dmCounterpart = threadKey !== null ? dmOther(threadKey) : null;
   const showDmHeader =
     dmCounterpart !== null && dmCounterpart !== 'self' && dmCounterpart !== viewer;
 
-  // Track whether the user is pinned to the bottom so we know whether
-  // to auto-follow on new-message arrival.
-  const onScroll = () => {
-    const el = containerRef.current;
-    if (!el) return;
-    const gap = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stickyRef.current = gap < STICKY_BOTTOM_PX;
-  };
-
-  // Auto-scroll after render when sticky. Depends on messages.length
-  // so a thread switch and a new message both trigger the effect.
-  useEffect(() => {
-    if (!stickyRef.current) return;
-    const el = containerRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [messages.length, threadKey]);
+  // Sticky-to-bottom: the hook re-pins on every render of this
+  // component, which fires on any signal mutation that touches
+  // messages or the view — covering arrivals, edits, status flips,
+  // and thread switches uniformly.
+  const { containerRef, onScroll, isPinned, jumpToBottom } = useStickyBottom();
 
   // Drop any inspector → thread selection when navigating away from
   // the thread it was anchored to. The selected message id is opaque
@@ -113,25 +97,38 @@ export function Transcript({ viewer }: TranscriptProps) {
           </button>
         </div>
       )}
-      <div
-        ref={containerRef}
-        onScroll={onScroll}
-        aria-live="polite"
-        aria-atomic="false"
-        class="flex-1 overflow-y-auto"
-        style="background:var(--paper);padding:18px max(0.75rem,env(safe-area-inset-right)) 18px max(0.75rem,env(safe-area-inset-left));-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation"
-      >
-        {messages.length === 0 ? (
-          <EmptyState threadKey={threadKey} />
-        ) : (
-          messages.map((m, i) => (
-            <MessageLine
-              key={m.id}
-              message={m}
-              viewer={viewer}
-              {...(i > 0 && messages[i - 1] ? { previousMessage: messages[i - 1] } : {})}
-            />
-          ))
+      <div class="flex-1 min-h-0" style="position:relative">
+        <div
+          ref={containerRef}
+          onScroll={onScroll}
+          aria-live="polite"
+          aria-atomic="false"
+          class="overflow-y-auto"
+          style="position:absolute;inset:0;background:var(--paper);padding:18px max(0.75rem,env(safe-area-inset-right)) 18px max(0.75rem,env(safe-area-inset-left));-webkit-overflow-scrolling:touch;overscroll-behavior:none;touch-action:manipulation"
+        >
+          {messages.length === 0 ? (
+            <EmptyState threadKey={threadKey} />
+          ) : (
+            messages.map((m, i) => (
+              <MessageLine
+                key={m.id}
+                message={m}
+                viewer={viewer}
+                {...(i > 0 && messages[i - 1] ? { previousMessage: messages[i - 1] } : {})}
+              />
+            ))
+          )}
+        </div>
+        {!isPinned && messages.length > 0 && (
+          <button
+            type="button"
+            onClick={jumpToBottom}
+            aria-label="Jump to latest message"
+            title="Jump to latest"
+            style="position:absolute;right:14px;bottom:14px;width:36px;height:36px;border-radius:9999px;background:var(--paper);border:1px solid var(--rule);color:var(--ink);box-shadow:0 4px 12px rgba(0,0,0,0.12);cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2"
+          >
+            <ChevronsDown size={18} aria-hidden="true" />
+          </button>
         )}
       </div>
     </div>
