@@ -2031,19 +2031,20 @@ body::before {
 
 /* ─── Activity inspector ─────────────────────────────────────────── */
 /*
- * Wide-state default lives in JSX (component owns layout). Below 1100
- * we absolutely-position it inside the AppShell row so it overlays
- * the main content area while the navcol stays visible and tappable.
- * The toggle in the thread head animates `data-inspector-open`
- * between closed (off-canvas right) and open (in view).
+ * Persistent-flow widths (≥1100) are user-resizable: the inline
+ * `--activity-inspector-width` custom property (set from the
+ * `useResizableWidth` hook) drives the rendered width, with the
+ * defaults below as fallbacks. The overlay state below 1100 hard-sets
+ * `width` without referencing the variable, so the inline value is
+ * ignored on screens where resize doesn't apply.
  */
 .activity-inspector {
-  width: 380px;
+  width: var(--activity-inspector-width, 380px);
 }
 
 @media (max-width: 1279px) {
   .activity-inspector {
-    width: 320px;
+    width: var(--activity-inspector-width, 320px);
   }
 }
 
@@ -2072,6 +2073,80 @@ body::before {
   .activity-inspector {
     width: 100vw;
   }
+}
+
+/* Drag-to-resize handle on the inspector's left edge. Sits 3px past
+ * the border so the user has a generous hit target without the
+ * handle visually intruding into the panel. Hidden below 1100 where
+ * the inspector becomes an overlay and resize stops being meaningful. */
+.activity-resize-handle {
+  position: absolute;
+  top: 0;
+  left: -3px;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+  touch-action: none;
+}
+.activity-resize-handle:hover,
+.activity-resize-handle[data-resizing="true"] {
+  background: var(--rule-strong);
+}
+@media (max-width: 1099px) {
+  .activity-resize-handle {
+    display: none;
+  }
+}
+
+/* Filter tray — tucked between the inspector header and the scroll
+ * body. Collapsed-by-default to keep the live tail visually dominant;
+ * expanding reveals the kind chips + objective scope picker. */
+.activity-filter-tray {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper);
+}
+.activity-filter-tray-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 14px;
+  background: transparent;
+  border: none;
+  font-family: var(--f-sans);
+  font-size: 12px;
+  color: var(--graphite);
+  cursor: pointer;
+}
+.activity-filter-tray-toggle:hover {
+  background: var(--ice);
+  color: var(--ink);
+}
+.activity-filter-tray-toggle:focus-visible {
+  outline: 2px solid var(--steel);
+  outline-offset: -2px;
+}
+.activity-filter-tray[data-open="true"] .activity-filter-tray-toggle {
+  background: var(--ice);
+  color: var(--ink);
+}
+.activity-filter-tray-body {
+  padding: 8px 14px 12px;
+  border-top: 1px solid var(--rule);
+}
+
+/* Wrap long unbroken tokens (URLs, hashes, base64, JSON keys) inside
+ * the activity feed. `overflow-wrap: anywhere` is inherited, so all
+ * descendants — including the many `<pre white-space:pre-wrap>`
+ * blocks rendered by ContentBlock — break long tokens at any
+ * character. min-width:0 lets flex children shrink below their
+ * intrinsic content width. */
+.activity-inspector-scroll {
+  overflow-wrap: anywhere;
+  min-width: 0;
 }
 
 /* Toggle button in the thread head — hidden until the inspector is

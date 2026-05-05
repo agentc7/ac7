@@ -33,6 +33,7 @@ import type {
   AnthropicUsage,
 } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
+import { useRef } from 'preact/hooks';
 import { highlightXmlTags } from '../lib/channel-highlight.js';
 import {
   loadOlderMemberActivity,
@@ -245,7 +246,7 @@ export function objectivesSeen(rows: ActivityRow[]): ObjectiveSeen[] {
  * markers for the target objective are always included; anything
  * strictly between a matching open and its close (non-inclusive on
  * the far side of interleaved opens for other objectives) is kept.
- * Input and output are newest-first.
+ * Input and output are oldest-first.
  */
 export function clipToObjective(rows: ActivityRow[], objectiveId: string | null): ActivityRow[] {
   if (objectiveId === null) return rows;
@@ -264,7 +265,7 @@ export function clipToObjective(rows: ActivityRow[], objectiveId: string | null)
       out.push(row);
     }
   }
-  return [...out].sort((a, b) => b.event.ts - a.event.ts);
+  return out;
 }
 
 // ── Rendering ────────────────────────────────────────────────────
@@ -291,16 +292,53 @@ export function AgentTimeline() {
           </span>
         )}
       </div>
+      <TimelineFilters />
       <TimelineBody />
     </section>
   );
 }
 
 /**
- * The chip bar + scope picker + threaded feed + paging affordances.
- * Extracted so `<AgentTimeline />` (member-profile card) and
- * `<ActivityInspector />` (TeamShell right rail) can share rendering
- * while supplying their own header chrome.
+ * Active-filter summary for the collapsed tray. Returns null when
+ * everything is on (the "all activity" baseline) so the tray header
+ * stays clean; otherwise returns a short string suitable for display
+ * next to the "Filters" label.
+ */
+export function timelineFilterSummary(): string | null {
+  const filters = kindFilters.value;
+  const obj = objectiveFilter.value;
+  const onCount = (Object.values(filters) as boolean[]).filter(Boolean).length;
+  const total = Object.keys(filters).length;
+  const parts: string[] = [];
+  if (onCount < total) parts.push(`${onCount} of ${total} kinds`);
+  if (obj !== null) parts.push(`scope: ${obj}`);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/**
+ * Filter chip bar + scope picker. Pure presentation around the
+ * `kindFilters` and `objectiveFilter` signals; either consumer
+ * (member-profile card or right-rail inspector) renders this where
+ * makes sense in their layout.
+ */
+export function TimelineFilters() {
+  const filters = kindFilters.value;
+  const objFilter = objectiveFilter.value;
+  const rows = memberActivityRows.value;
+  const objectives = objectivesSeen(rows);
+  return (
+    <div class="flex items-center gap-2 flex-wrap">
+      {objectives.length > 0 && <ObjectiveSelect objectives={objectives} current={objFilter} />}
+      <FilterBar filters={filters} />
+    </div>
+  );
+}
+
+/**
+ * The threaded feed + paging affordances. Extracted so `<AgentTimeline
+ * />` (member-profile card) and `<ActivityInspector />` (TeamShell
+ * right rail) share rendering while owning their own header chrome
+ * and filter placement.
  */
 export function TimelineBody() {
   const rows = memberActivityRows.value;
@@ -312,15 +350,28 @@ export function TimelineBody() {
   const clipped = clipToObjective(rows, objFilter);
   const filteredRows = clipped.filter((row) => filters[row.event.kind]);
   const thread = buildThread(filteredRows);
-  const objectives = objectivesSeen(rows);
+
+  // Scroll-anchor preservation: prepending older rows would shift
+  // the visible content down by the height of the new rows. Capture
+  // the scroll position before the fetch and restore the same
+  // relative position after render. Falls back to no-op when the
+  // body isn't inside a scroll container (member-profile page,
+  // where the browser handles anchoring natively via overflow-anchor).
+  const loadOlderBtnRef = useRef<HTMLButtonElement | null>(null);
+  const onLoadOlder = async (): Promise<void> => {
+    const btn = loadOlderBtnRef.current;
+    const scroller = btn?.closest<HTMLElement>('[data-scroll-anchor]') ?? null;
+    const before = scroller ? { height: scroller.scrollHeight, top: scroller.scrollTop } : null;
+    await loadOlderMemberActivity();
+    if (scroller && before) {
+      requestAnimationFrame(() => {
+        scroller.scrollTop = before.top + (scroller.scrollHeight - before.height);
+      });
+    }
+  };
 
   return (
     <>
-      <div class="flex items-center gap-2 flex-wrap">
-        {objectives.length > 0 && <ObjectiveSelect objectives={objectives} current={objFilter} />}
-        <FilterBar filters={filters} />
-      </div>
-
       {rows.length === 0 && loading && <div class="eyebrow">Loading activity…</div>}
       {rows.length === 0 && !loading && (
         <div style="font-family:var(--f-sans);font-size:13px;color:var(--muted);font-style:italic">
@@ -331,8 +382,9 @@ export function TimelineBody() {
       {rows.length > 0 && !exhausted && (
         <div>
           <button
+            ref={loadOlderBtnRef}
             type="button"
-            onClick={() => void loadOlderMemberActivity()}
+            onClick={() => void onLoadOlder()}
             disabled={loading}
             class="btn btn-ghost btn-sm"
           >
@@ -348,12 +400,6 @@ export function TimelineBody() {
           </li>
         ))}
       </ol>
-
-      {exhausted && rows.length > 0 && (
-        <div style="font-family:var(--f-sans);font-size:12px;color:var(--muted);font-style:italic">
-          — end of activity —
-        </div>
-      )}
     </>
   );
 }

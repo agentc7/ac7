@@ -111,6 +111,7 @@ export {
 } from './objectives.js';
 export {
   loadServerConfigFromFile,
+  resolveConfigPath,
   type ServerConfig,
   ServerConfigSchema,
   updateServerConfigFile,
