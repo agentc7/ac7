@@ -29,6 +29,11 @@ import { VitePWA } from 'vite-plugin-pwa';
 // matches `DEFAULT_PORT` (8717) from the SDK and the server's CLI
 // default so `pnpm dev` at the root "just works" with no env vars.
 const PROXY_TARGET = 'http://127.0.0.1:8717';
+// Keep this in sync with PATHS in packages/sdk/src/protocol.ts. Each
+// entry is a prefix — Vite forwards anything matching `/<prefix>` (and
+// its subpaths). Adding a new top-level API surface to the broker
+// almost always means adding it here too, otherwise Vite serves the
+// SPA fallback (or 404s) instead of proxying through to :8717.
 const PROXIED_PATHS = [
   '/healthz',
   '/briefing',
@@ -39,6 +44,10 @@ const PROXIED_PATHS = [
   '/session',
   '/objectives',
   '/members',
+  '/channels',
+  '/team',
+  '/enroll',
+  '/presence',
   '/fs',
 ];
 
