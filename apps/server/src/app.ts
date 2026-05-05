@@ -64,7 +64,6 @@ import type {
   ObjectiveEventKind,
   Permission,
   Role,
-  Team,
   Teammate,
 } from '@agentc7/sdk/types';
 import { hasPermission } from '@agentc7/sdk/types';
@@ -92,6 +91,7 @@ import {
 import { ObjectivesError, type ObjectivesStore } from './objectives.js';
 import type { PushSubscriptionStore } from './push/store.js';
 import { SESSION_COOKIE_NAME, SESSION_TTL_MS, type SessionStore } from './sessions.js';
+import type { TeamStore } from './team-store.js';
 import { generateBearerToken, type TokenStore } from './tokens.js';
 import { generateSecret, otpauthUri, verifyCode as verifyTotpCode } from './totp.js';
 
@@ -114,7 +114,14 @@ export interface AppOptions {
    */
   enrollments?: EnrollmentStore;
   sessions: SessionStore;
-  team: Team;
+  /**
+   * DB-backed team config + permission preset store. Replaces the
+   * static `team: Team` snapshot — handlers that need fresh team data
+   * (briefing, role/preset resolution, permission-preset CRUD) call
+   * `teamStore.getTeam()` so a `PATCH /team` from another caller is
+   * reflected on the next read.
+   */
+  teamStore: TeamStore;
   /**
    * Objectives store — the server's authoritative task state. The
    * `/objectives*` endpoints are registered iff this is provided,
@@ -311,7 +318,7 @@ export function createApp(options: AppOptions): CreatedApp {
     tokens,
     enrollments,
     sessions,
-    team,
+    teamStore,
     objectives,
     channels,
     activityStore,
@@ -648,7 +655,7 @@ export function createApp(options: AppOptions): CreatedApp {
       : [];
     const briefing = composeBriefing({
       self: member,
-      team,
+      team: teamStore.getTeam(),
       teammates: teammatesFromMembers(members),
       openObjectives,
     });
@@ -1978,6 +1985,110 @@ export function createApp(options: AppOptions): CreatedApp {
     return c.json({ members: teammatesFromMembers(members) });
   });
 
+  // ─── Team config endpoints ───────────────────────────────────
+  //
+  // Read is dual-auth (every authenticated member sees their team).
+  // Mutations require `team.manage`. The response always reflects the
+  // freshly-read DB state — there is no in-memory snapshot to go
+  // stale. Note: changing `directive` / `brief` / member `instructions`
+  // takes effect on the *next* MCP session for any agent — those
+  // strings are baked into the MCP `instructions` field, which is
+  // frozen for the lifetime of a session by the protocol. Restart the
+  // runner to pick up such changes.
+
+  app.get(PATHS.team, auth, (c) => {
+    return c.json({ team: teamStore.getTeam() });
+  });
+
+  app.patch(PATHS.team, auth, async (c) => {
+    const member = c.get('member');
+    if (!hasPermission(member.permissions, 'team.manage')) {
+      return c.json({ error: 'updating the team requires the team.manage permission' }, 403);
+    }
+    const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
+    if (body === null) return c.json({ error: 'expected a JSON body' }, 400);
+    const patch: { name?: string; directive?: string; brief?: string } = {};
+    if (typeof body.name === 'string') patch.name = body.name;
+    if (typeof body.directive === 'string') patch.directive = body.directive;
+    if (typeof body.brief === 'string') patch.brief = body.brief;
+    if (Object.keys(patch).length === 0) {
+      return c.json({ error: 'no fields to update (name, directive, brief)' }, 400);
+    }
+    try {
+      const updated = teamStore.updateTeam(patch, member.name);
+      logger.info('team updated', { fields: Object.keys(patch), updatedBy: member.name });
+      return c.json({ team: updated });
+    } catch (err) {
+      if (err instanceof MemberLoadError) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  });
+
+  // ─── Permission preset CRUD ──────────────────────────────────
+  //
+  // Presets are referenced by raw_permissions on members. A change
+  // here re-resolves all members that reference the preset on the
+  // next read — no admin re-resolve sweep required. Deleting a preset
+  // that members reference silently removes those leaves on next read;
+  // the response includes a `referencedBy` list so the caller can
+  // confirm the impact.
+
+  app.get(PATHS.teamPresets, auth, (c) => {
+    return c.json({ presets: teamStore.getPresets() });
+  });
+
+  app.put(`${PATHS.teamPresets}/:name`, auth, async (c) => {
+    const caller = c.get('member');
+    if (!hasPermission(caller.permissions, 'team.manage')) {
+      return c.json({ error: 'managing presets requires the team.manage permission' }, 403);
+    }
+    const presetName = c.req.param('name');
+    const body = (await c.req.json().catch(() => null)) as { permissions?: unknown } | null;
+    if (
+      body === null ||
+      !Array.isArray(body.permissions) ||
+      body.permissions.some((p) => typeof p !== 'string')
+    ) {
+      return c.json({ error: 'body must be `{ permissions: string[] }`' }, 400);
+    }
+    try {
+      // Validate each entry resolves to a known leaf permission. We
+      // run it through resolvePermissions with an empty preset map so
+      // preset-of-preset isn't a thing (intentional — keeps the
+      // resolution graph flat and free of cycles).
+      const leaves = resolvePermissions(body.permissions as string[], {}, `preset '${presetName}'`);
+      teamStore.setPreset(presetName, leaves, caller.name);
+      logger.info('preset updated', {
+        preset: presetName,
+        leaves,
+        updatedBy: caller.name,
+      });
+      return c.json({ preset: { name: presetName, permissions: leaves } });
+    } catch (err) {
+      if (err instanceof MemberLoadError) return c.json({ error: err.message }, 400);
+      throw err;
+    }
+  });
+
+  app.delete(`${PATHS.teamPresets}/:name`, auth, (c) => {
+    const caller = c.get('member');
+    if (!hasPermission(caller.permissions, 'team.manage')) {
+      return c.json({ error: 'managing presets requires the team.manage permission' }, 403);
+    }
+    const presetName = c.req.param('name');
+    const referencedBy = teamStore.membersReferencingPreset(presetName, members);
+    const removed = teamStore.deletePreset(presetName);
+    if (!removed) {
+      return c.json({ error: `no such preset: ${presetName}` }, 404);
+    }
+    logger.info('preset deleted', {
+      preset: presetName,
+      referencedBy,
+      deletedBy: caller.name,
+    });
+    return c.json({ deleted: presetName, referencedBy });
+  });
+
   app.post(PATHS.members, auth, async (c) => {
     const member = c.get('member');
     if (!hasPermission(member.permissions, 'members.manage')) {
@@ -2001,7 +2112,7 @@ export function createApp(options: AppOptions): CreatedApp {
     try {
       resolvedPerms = resolvePermissions(
         parsed.data.permissions,
-        team.permissionPresets,
+        teamStore.getPresets(),
         `create member '${parsed.data.name}'`,
       );
     } catch (err) {
@@ -2075,7 +2186,7 @@ export function createApp(options: AppOptions): CreatedApp {
       try {
         nextPermissions = resolvePermissions(
           parsed.data.permissions,
-          team.permissionPresets,
+          teamStore.getPresets(),
           `update member '${target.name}'`,
         );
       } catch (err) {
@@ -2198,19 +2309,9 @@ export function createApp(options: AppOptions): CreatedApp {
       origin: 'rotate',
       createdBy: member.name,
     });
-    // Keep MemberStore.rotateToken in sync so the JSON config (still
-    // the canonical place for sysadmin hand-edits) shows the latest
-    // hash. Treat any failure as soft — the SQLite store is the
-    // resolver's source of truth, the JSON is just a record.
-    try {
-      members.rotateToken(parsedName.data, token);
-    } catch (err) {
-      logger.warn('rotate: members.rotateToken failed (SQLite tokens still updated)', {
-        name: parsedName.data,
-        error: err instanceof Error ? err.message : String(err),
-      });
-    }
-    persistMembers();
+    // Token rotation is a tokens-table operation only — the
+    // DB-backed MemberStore does not own auth tokens. Persistence is
+    // immediate at the `tokens.insert` / `tokens.revoke` calls above.
     logger.info('token rotated', {
       name: parsedName.data,
       rotatedBy: member.name,
@@ -2540,7 +2641,7 @@ export function createApp(options: AppOptions): CreatedApp {
         try {
           resolvedPerms = resolvePermissions(
             parsed.data.permissions,
-            team.permissionPresets,
+            teamStore.getPresets(),
             `approve-enrollment ${parsed.data.memberName}`,
           );
         } catch (err) {
@@ -2676,13 +2777,12 @@ export function createApp(options: AppOptions): CreatedApp {
     }
     const secret = generateSecret();
     members.setTotpSecret(parsedName.data, secret);
-    persistMembers();
     logger.info('totp enrolled', { name: parsedName.data, enrolledBy: member.name });
     return c.json({
       totpSecret: secret,
       totpUri: otpauthUri({
         secret,
-        issuer: `ac7-${team.name}`,
+        issuer: `ac7-${teamStore.getTeam().name}`,
         label: target.name,
       }),
     });

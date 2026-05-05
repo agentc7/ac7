@@ -31,6 +31,7 @@ import { createSqliteActivityStore } from '../src/member-activity.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 const CMD_TOKEN = 'ac7_test_director';
 const ASSIGNEE_TOKEN = 'ac7_test_assignee';
@@ -78,7 +79,7 @@ function makeApp() {
     tokens,
     sessions: new SessionStore(db),
     activityStore,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     logger: {
       debug: vi.fn(),

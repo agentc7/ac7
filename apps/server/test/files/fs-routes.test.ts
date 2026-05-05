@@ -19,6 +19,7 @@ import { createSqliteFilesystemStore, LocalBlobStore } from '../../src/files/ind
 import { createMemberStore } from '../../src/members.js';
 import { SessionStore } from '../../src/sessions.js';
 import { createTokenStoreFromMembers } from '../../src/tokens.js';
+import { mockTeamStore } from '../helpers/test-stores.js';
 
 const ALICE_TOKEN = 'ac7_test_alice_secret';
 const BOB_TOKEN = 'ac7_test_bob_secret';
@@ -75,7 +76,7 @@ function makeApp() {
     members,
     tokens,
     sessions,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     files,
     version: '0.0.0',
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },

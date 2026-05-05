@@ -1,21 +1,21 @@
 /**
- * `ac7 setup` — run the first-time wizard and exit.
+ * `ac7 setup` — run the first-time wizard and seed the DB.
  *
- * Thin launcher over `@agentc7/server`'s `runFirstRunWizard`. The
- * server package is an optional peer of the CLI, so we dynamically
- * import it at call time and print a friendly install hint if it's
- * missing — same pattern as `ac7 serve`.
+ * Walks the operator through team + admin setup, opens the SQLite DB
+ * at the resolved path, seeds the team singleton + permission presets
+ * + admin member + admin bearer token, and writes the slim infra-only
+ * config file alongside.
  *
  * Resolution of the config path:
  *   1. explicit `--config-path` on the command line
  *   2. `$AC7_CONFIG_PATH` in the environment
  *   3. `./ac7.json` relative to the caller's cwd
  *
- * Safety behavior: if a config already exists at the resolved path,
- * we refuse to overwrite it and print the existing team/user summary.
- * Re-running the wizard against a live config would mint fresh tokens
- * and invalidate any deployed links — that's a foot-gun we'd rather
- * require an explicit `rm ac7.json` for.
+ * Refuses to touch a setup that's already complete: if the config
+ * file exists AND the referenced DB has a team singleton, we print a
+ * diagnostic and exit. Re-running would mint a fresh admin token and
+ * invalidate every active credential — explicit `rm ac7.json && rm
+ * ac7.db` is the way to start over.
  */
 
 import { ENV } from '@agentc7/sdk/protocol';
@@ -34,10 +34,8 @@ export async function runSetupCommand(
   const server = await loadServerModule();
   const configPath = input.configPath ?? process.env[ENV.configPath] ?? server.defaultConfigPath();
 
-  // Install the KEK before any load / write. `resolveKek` will
-  // auto-generate a fresh key file alongside the (future) config if
-  // one isn't already present, so the wizard's first write encrypts
-  // TOTP secrets + VAPID private key on disk from day one.
+  // KEK first — encrypted-at-rest TOTP / VAPID values round-trip
+  // cleanly through the wizard's write path.
   try {
     server.setKek(server.resolveKek(configPath));
   } catch (err) {
@@ -47,29 +45,45 @@ export async function runSetupCommand(
     throw err;
   }
 
-  // Refuse to touch an existing config. Parse it so the user gets a
-  // diagnostic showing what's already there — that's usually enough
-  // to realize they didn't actually want to re-run setup.
+  // Refuse to overwrite an existing setup. We check both: file
+  // presence AND a populated team singleton in the DB. If only the
+  // file exists but the DB is empty, fall through and let the wizard
+  // re-seed (operator probably bricked their DB and is recovering).
+  let existingConfig: Awaited<ReturnType<typeof server.loadServerConfigFromFile>> | null = null;
   try {
-    const existing = server.loadTeamConfigFromFile(configPath);
-    throw new UsageError(
-      `setup: a config already exists at ${configPath}\n` +
-        `  team:  ${existing.team.name}\n` +
-        `  users: ${existing.store.size()} (${existing.store.names().join(', ')})\n` +
-        '\n' +
-        '  Running the wizard now would overwrite every user token and\n' +
-        '  invalidate any deployed links. If that is what you want,\n' +
-        `  delete the file first:   rm ${configPath}`,
-    );
+    existingConfig = server.loadServerConfigFromFile(configPath);
   } catch (err) {
-    if (err instanceof UsageError) throw err;
-    if (!(err instanceof server.ConfigNotFoundError)) {
-      if (err instanceof server.MemberLoadError) {
-        throw new UsageError(`setup: existing config at ${configPath} is invalid: ${err.message}`);
-      }
+    if (err instanceof server.ConfigNotFoundError) {
+      // Happy path — no file, run the wizard.
+    } else if (err instanceof server.MemberLoadError) {
+      throw new UsageError(`setup: existing config at ${configPath} is invalid: ${err.message}`);
+    } else {
       throw err;
     }
-    // ConfigNotFoundError is the happy path — drop through to the wizard.
+  }
+
+  const dbPath = existingConfig?.dbPath ?? './ac7.db';
+
+  if (existingConfig !== null) {
+    const probeDb = server.openDatabase(dbPath);
+    try {
+      const stores = server.openTeamAndMembers(probeDb);
+      if (stores.team.hasTeam()) {
+        const team = stores.team.getTeam();
+        const memberNames = stores.members.names();
+        throw new UsageError(
+          `setup: ${configPath} already points to a populated team\n` +
+            `  team:    ${team.name}\n` +
+            `  members: ${stores.members.size()} (${memberNames.join(', ')})\n` +
+            `  db:      ${dbPath}\n\n` +
+            `  Running the wizard now would mint a fresh admin and invalidate all\n` +
+            `  existing tokens. If that is what you want, remove both first:\n` +
+            `    rm ${configPath} ${dbPath}`,
+        );
+      }
+    } finally {
+      probeDb.close();
+    }
   }
 
   const { io, close } = server.createTtyWizardIO();
@@ -77,23 +91,65 @@ export async function runSetupCommand(
     close();
     throw new UsageError(
       'setup: stdin is not a TTY — the wizard needs interactive input.\n' +
-        '  Run this command in a real terminal (not piped / under turbo), or\n' +
-        `  create ${configPath} by hand using the example config in the\n` +
-        '  server README.',
+        '  Run this command in a real terminal (not piped / under turbo).',
     );
   }
 
   try {
-    const config = await server.runFirstRunWizard({ configPath, io });
+    const wizard = await server.runFirstRunWizard({ configPath, io });
+
+    // Seed DB with the wizard's captured team + admin.
+    const db = server.openDatabase(dbPath);
+    try {
+      const stores = server.openTeamAndMembers(db);
+      stores.team.setTeam({
+        name: wizard.team.name,
+        directive: wizard.team.directive,
+        brief: wizard.team.brief,
+      });
+      for (const [name, leaves] of Object.entries(wizard.team.permissionPresets)) {
+        stores.team.setPreset(name, leaves);
+      }
+      stores.members.addMember({
+        name: wizard.admin.name,
+        role: wizard.admin.role,
+        instructions: wizard.admin.instructions,
+        rawPermissions: wizard.admin.rawPermissions,
+        permissions: wizard.admin.permissions,
+        totpSecret: wizard.admin.totpSecret,
+      });
+      const tokens = new server.TokenStore(db);
+      tokens.insert({
+        memberName: wizard.admin.name,
+        rawToken: wizard.admin.token,
+        label: 'wizard',
+        origin: 'bootstrap',
+        createdBy: null,
+      });
+    } finally {
+      db.close();
+    }
+
+    // Write the slim infra-only config file with sensible defaults.
+    server.writeServerConfigFile(configPath, {
+      dbPath,
+      activityDbPath: null,
+      filesRoot: null,
+      https: server.defaultHttpsConfig(),
+      webPush: null,
+      jwt: null,
+      files: null,
+    });
+
     stdout('');
     stdout('✓ setup complete');
-    stdout(`  team:   ${config.team.name}`);
-    stdout(`  users:  ${config.store.names().join(', ')}`);
-    stdout(`  config: ${configPath}`);
+    stdout(`  team:    ${wizard.team.name}`);
+    stdout(`  admin:   ${wizard.admin.name}`);
+    stdout(`  config:  ${configPath}`);
+    stdout(`  db:      ${dbPath}`);
     stdout('');
     stdout('Next steps:');
-    stdout('  pnpm dev          # watch-mode server + Vite dev for the web UI');
-    stdout('  ac7 serve         # one-shot server run against this config');
+    stdout('  ac7 serve         # start the broker against this config');
     stdout('');
   } catch (err) {
     if (err instanceof server.MemberLoadError) {
@@ -105,13 +161,6 @@ export async function runSetupCommand(
   }
 }
 
-/**
- * Dynamically resolve the full server module. If the package isn't
- * installed (it's an optional peer), throw a UsageError with install
- * instructions rather than a raw MODULE_NOT_FOUND trace. Same
- * implementation as the one in `commands/serve.ts` — small enough
- * that duplication beats a shared helper module.
- */
 async function loadServerModule(): Promise<typeof import('@agentc7/server')> {
   try {
     return await import('@agentc7/server');

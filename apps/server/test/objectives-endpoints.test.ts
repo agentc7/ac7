@@ -28,6 +28,7 @@ import { createMemberStore } from '../src/members.js';
 import { createSqliteObjectivesStore } from '../src/objectives.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 const ALICE = 'ac7_test_alice_secret_token';
 const BOB = 'ac7_test_bob_secret_token';
@@ -94,7 +95,7 @@ function makeApp() {
     members,
     tokens,
     sessions,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     objectives,
     version: '0.0.0',
     logger: {

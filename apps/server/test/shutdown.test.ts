@@ -16,15 +16,14 @@
 import { Client } from '@agentc7/sdk/client';
 import type { Team } from '@agentc7/sdk/types';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createMemberStore } from '../src/members.js';
 import { type RunningServer, runServer } from '../src/run.js';
+import { seedStores } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'ac7_shutdown_test_op';
-const TEAM: Team = {
+const TEAM: Pick<Team, 'name' | 'directive' | 'brief'> = {
   name: 'shutdown-test-team',
   directive: 'Verify shutdown does not hang on live SSE subscribers.',
   brief: '',
-  permissionPresets: {},
 };
 
 describe('runServer shutdown with live SSE subscriber', () => {
@@ -32,21 +31,22 @@ describe('runServer shutdown with live SSE subscriber', () => {
   let client: Client;
 
   beforeAll(async () => {
-    const members = createMemberStore([
-      {
-        name: 'director-1',
-        role: { title: 'director', description: '' },
-        permissions: ['members.manage'],
-        token: OP_TOKEN,
-      },
-    ]);
-    server = await runServer({
-      members,
+    const seeded = seedStores({
       team: TEAM,
-
+      members: [
+        {
+          name: 'director-1',
+          role: { title: 'director', description: '' },
+          rawPermissions: ['members.manage'],
+          permissions: ['members.manage'],
+          token: OP_TOKEN,
+        },
+      ],
+    });
+    server = await runServer({
+      db: seeded.db,
       port: 0,
       host: '127.0.0.1',
-      dbPath: ':memory:',
       logger: {
         debug: () => {},
         info: () => {},
@@ -57,12 +57,7 @@ describe('runServer shutdown with live SSE subscriber', () => {
     client = new Client({ url: `http://${server.host}:${server.port}`, token: OP_TOKEN });
   }, 10_000);
 
-  // No afterAll — the `it` block owns the shutdown and asserts on its
-  // completion time. Anything that leaks gets picked up by vitest.
-
   it('stop() completes quickly even with an active SSE subscription', async () => {
-    // Open a subscription in the background. We do NOT await the loop —
-    // it runs until the server's shutdown signal tears it down.
     const ac = new AbortController();
     let iterationsBeforeClose = 0;
     const subPromise = (async () => {
@@ -89,17 +84,10 @@ describe('runServer shutdown with live SSE subscriber', () => {
     ]);
     const elapsed = Date.now() - start;
 
-    // Clean up the client-side abort controller — if stop() worked,
-    // the stream is already closed, but we want to release the reader.
     ac.abort();
     await subPromise;
 
-    // 3s ceiling is generous; the real number should be well under 1s.
     expect(elapsed).toBeLessThan(3_000);
-    // Sanity check that we actually opened a stream before shutdown.
-    // iterationsBeforeClose counts yielded messages — it may be 0
-    // because we never pushed anything. The key signal is that the
-    // loop exited (subPromise resolved) rather than hanging.
     expect(iterationsBeforeClose).toBeGreaterThanOrEqual(0);
   }, 10_000);
 

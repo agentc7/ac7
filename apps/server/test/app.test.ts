@@ -7,6 +7,7 @@ import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'ac7_test_operator_secret';
 const BOT_TOKEN = 'ac7_test_bot_secret';
@@ -47,7 +48,7 @@ function makeApp() {
     members,
     tokens,
     sessions,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     logger: {
       debug: vi.fn(),

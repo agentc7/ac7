@@ -15,6 +15,7 @@ import { PushSubscriptionStore } from '../src/push/store.js';
 import { generateVapidKeys } from '../src/push/vapid.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 // Mock web-push sendNotification so no real network traffic happens.
 //
@@ -431,7 +432,7 @@ describe('push HTTP endpoints', () => {
       members,
       tokens,
       sessions,
-      team: TEAM,
+      teamStore: mockTeamStore(TEAM),
 
       version: '0.0.0',
       logger: noopLogger(),

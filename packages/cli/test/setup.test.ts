@@ -1,15 +1,16 @@
 /**
  * Tests for `ac7 setup`.
  *
- * Most of the wizard path is already covered by the server's wizard
- * tests — here we focus on the CLI wrapper:
- *   - correct UsageError on non-TTY stdin
- *   - refusing to overwrite an existing config with a readable summary
- *   - invalid existing config reports as a UsageError (not a raw stack)
- *   - ConfigNotFoundError is the happy path (drops into the wizard)
+ * The CLI wrapper around the wizard. End-to-end paths that drive the
+ * full wizard (team capture → DB seed → slim config write) are
+ * covered by `apps/server/test/wizard.test.ts` and the server-side
+ * boot path. Here we focus on the CLI's guard-rails:
  *
- * We invoke `runSetupCommand` directly rather than spawning the CLI
- * binary — same pattern as `push`/`roster` tests.
+ *   - non-TTY stdin yields a clear UsageError (no raw stack)
+ *   - an invalid existing slim config surfaces as a UsageError
+ *   - an existing config that points to a populated DB refuses to
+ *     overwrite, with a readable summary that includes the team
+ *     name and member count
  */
 
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -26,69 +27,84 @@ afterEach(() => {
   }
 });
 
-function tmpPath(): string {
+function tmpDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'ac7-setup-test-'));
   dirsToClean.push(dir);
-  return join(dir, 'ac7.json');
+  return dir;
 }
 
-const VALID_CONFIG_JSON = JSON.stringify({
-  team: {
-    name: 'demo-team',
-    directive: 'ship the payment service',
-    brief: '',
-    permissionPresets: {},
-  },
-  members: [
-    {
-      name: 'director-1',
-      role: { title: 'director', description: '' },
-      permissions: ['members.manage'],
-      tokenHash: `sha256:${'a'.repeat(64)}`,
-    },
-    {
-      name: 'engineer-1',
-      role: { title: 'engineer', description: '' },
-      permissions: [],
-      tokenHash: `sha256:${'b'.repeat(64)}`,
-    },
-  ],
-});
-
 describe('runSetupCommand', () => {
-  it('refuses to overwrite an existing config and reports the current team/slots', async () => {
-    const configPath = tmpPath();
-    writeFileSync(configPath, VALID_CONFIG_JSON);
+  it('throws a friendly UsageError when stdin is not a TTY', async () => {
+    // Vitest runs with stdin non-TTY, so the wizard's interactive
+    // guard fires once we get past the "config exists" check.
+    const dir = tmpDir();
+    const configPath = join(dir, 'ac7.json');
+    await expect(runSetupCommand({ configPath }, () => {})).rejects.toThrow(/not a TTY/);
+  });
 
-    const output: string[] = [];
-    await expect(runSetupCommand({ configPath }, (line) => output.push(line))).rejects.toThrow(
-      UsageError,
-    );
+  it('reports an invalid existing config as a UsageError', async () => {
+    const dir = tmpDir();
+    const configPath = join(dir, 'ac7.json');
+    // Bad shape — `dbPath` must be a string, here it's a number.
+    writeFileSync(configPath, JSON.stringify({ dbPath: 123 }));
+    await expect(runSetupCommand({ configPath }, () => {})).rejects.toThrow(UsageError);
+  });
+
+  it('refuses to overwrite when the config + DB are populated', async () => {
+    const dir = tmpDir();
+    const configPath = join(dir, 'ac7.json');
+    const dbPath = join(dir, 'ac7.db');
+
+    // Stand up a real DB with a seeded team via the server module so
+    // the setup probe finds a hasTeam() true. Importing the server
+    // module dynamically keeps this aligned with how the CLI loads it.
+    const server = await import('@agentc7/server');
+    const db = server.openDatabase(dbPath);
     try {
-      await runSetupCommand({ configPath }, (line) => output.push(line));
+      const stores = server.openTeamAndMembers(db);
+      stores.team.setTeam({
+        name: 'demo-team',
+        directive: 'ship the payment service',
+        brief: '',
+      });
+      stores.members.addMember({
+        name: 'director-1',
+        role: { title: 'director', description: '' },
+        instructions: '',
+        rawPermissions: [],
+        permissions: ['members.manage'],
+      });
+      stores.members.addMember({
+        name: 'engineer-1',
+        role: { title: 'engineer', description: '' },
+        instructions: '',
+        rawPermissions: [],
+        permissions: [],
+      });
+    } finally {
+      db.close();
+    }
+
+    server.writeServerConfigFile(configPath, {
+      dbPath,
+      activityDbPath: null,
+      filesRoot: null,
+      https: server.defaultHttpsConfig(),
+      webPush: null,
+      jwt: null,
+      files: null,
+    });
+
+    try {
+      await runSetupCommand({ configPath }, () => {});
+      throw new Error('expected runSetupCommand to throw');
     } catch (err) {
+      expect(err).toBeInstanceOf(UsageError);
       const message = (err as Error).message;
       expect(message).toContain('demo-team');
       expect(message).toContain('director-1');
       expect(message).toContain('engineer-1');
-      expect(message).toContain(`rm ${configPath}`);
+      expect(message).toContain(`rm ${configPath} ${dbPath}`);
     }
-  });
-
-  it('reports an invalid existing config as a UsageError', async () => {
-    const configPath = tmpPath();
-    writeFileSync(configPath, '{ "bogus": true }');
-
-    await expect(runSetupCommand({ configPath }, () => {})).rejects.toThrow(UsageError);
-  });
-
-  it('throws a friendly UsageError when stdin is not a TTY', async () => {
-    // In the vitest runner stdin is typically not a TTY, so this
-    // exercises the real code path. The config path doesn't exist,
-    // so we get past the "already exists" check and fall into the
-    // wizard, which immediately bails because `createTtyWizardIO()`
-    // reports isInteractive: false.
-    const configPath = tmpPath();
-    await expect(runSetupCommand({ configPath }, () => {})).rejects.toThrow(/not a TTY/);
   });
 });

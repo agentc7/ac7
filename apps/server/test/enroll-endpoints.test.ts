@@ -29,6 +29,7 @@ import { EnrollmentStore } from '../src/enrollments.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'ac7_enroll_admin_token';
 const NON_ADMIN_TOKEN = 'ac7_enroll_engineer_token';
@@ -97,7 +98,7 @@ function makeApp(options: { now?: () => number } = {}): Harness {
     tokens,
     enrollments,
     sessions,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     persistMembers,
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },

@@ -20,6 +20,7 @@ import { createMemberStore } from '../src/members.js';
 import { SESSION_COOKIE_NAME, SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
 import { currentCode, generateSecret, verifyCode } from '../src/totp.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'ac7_auth_test_operator_token';
 const BOT_TOKEN = 'ac7_auth_test_bot_token';
@@ -62,7 +63,7 @@ function makeApp(options: { now?: () => number; totpSecret?: string } = {}) {
     members,
     tokens,
     sessions,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     logger: {
       debug: vi.fn(),
@@ -530,7 +531,7 @@ function makeJwtApp(fixture: JwtFixture) {
     members,
     tokens,
     sessions,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     jwt: createJwtVerifier(fixture.config),

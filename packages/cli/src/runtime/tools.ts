@@ -332,7 +332,177 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
     // the "only objectives you originated" rule so the agent doesn't
     // try to touch someone else's objective and eat a 403.
     ...buildAuthorityTools(briefing),
+    // Admin tools for live team/member/preset management. Each gated
+    // on the corresponding `team.manage` or `members.manage`
+    // permission so non-admin agents don't see them in their toolbox.
+    // The broker enforces the same gates independently — these tools
+    // exist for UX (don't offer what you can't do) and as a first line
+    // of defense, not as the security boundary.
+    ...buildAdminTools(briefing),
   ];
+}
+
+function buildAdminTools(briefing: BriefingResponse): Tool[] {
+  const { permissions } = briefing;
+  const canManageTeam = permissions.includes('team.manage');
+  const canManageMembers = permissions.includes('members.manage');
+  if (!canManageTeam && !canManageMembers) return [];
+
+  const tools: Tool[] = [];
+
+  // ─── Team config ──────────────────────────────────────────────
+  // Read is allowed for anyone — same as `/team` on the HTTP API —
+  // but we only surface the tool to admins so the toolbox stays
+  // narrow for ICs. Any agent that needs team data can pull it from
+  // the briefing on session start.
+  if (canManageTeam) {
+    tools.push({
+      name: 'team_get',
+      description:
+        'Read the current team config (name, directive, brief, permission presets). ' +
+        'Use this to confirm team state before proposing edits, or to check whether ' +
+        'a previous `team_update` landed.',
+      inputSchema: { type: 'object', properties: {} },
+    });
+    tools.push({
+      name: 'team_update',
+      description:
+        'Update one or more team-level fields. `directive` and `brief` change the ' +
+        'context every member is briefed with on subsequent MCP sessions; live ' +
+        'sessions still reflect the OLD strings until the runner restarts (the MCP ' +
+        '`instructions` field is frozen for the lifetime of a session by protocol). ' +
+        'Authority: requires `team.manage`. Pass at least one of `name`, `directive`, ' +
+        '`brief`.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'New team name (1–128 chars).' },
+          directive: {
+            type: 'string',
+            description: "New short directive (1–512 chars). Set the team's overarching mission.",
+          },
+          brief: {
+            type: 'string',
+            description: 'New longer brief (≤ 4096 chars). Operating context.',
+          },
+        },
+      },
+    });
+
+    // ─── Permission presets ──────────────────────────────────────
+    tools.push({
+      name: 'presets_list',
+      description: "List the team's permission presets — named bundles of leaf permissions.",
+      inputSchema: { type: 'object', properties: {} },
+    });
+    tools.push({
+      name: 'presets_set',
+      description:
+        'Create or replace a permission preset. Members that reference this preset by ' +
+        'name in their raw permissions automatically pick up the new leaf set on the next ' +
+        'read — no member-by-member re-resolve required.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: {
+            type: 'string',
+            description: 'Preset name (alphanumeric + . _ -, ≤ 64 chars).',
+          },
+          permissions: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Leaf permissions, e.g. ["objectives.create","objectives.cancel"]. Unknown leaves are rejected.',
+          },
+        },
+        required: ['name', 'permissions'],
+      },
+    });
+    tools.push({
+      name: 'presets_delete',
+      description:
+        'Delete a permission preset. Returns the names of members that still reference it; ' +
+        'their resolved permissions silently drop those leaves on the next read. Use this ' +
+        'with intent — there is no soft-delete.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Preset name to delete.' },
+        },
+        required: ['name'],
+      },
+    });
+  }
+
+  // ─── Member management ────────────────────────────────────────
+  if (canManageMembers) {
+    tools.push({
+      name: 'members_add',
+      description:
+        'Create a new team member. Returns the plaintext bearer token exactly once — ' +
+        'capture it from the response and deliver it to the operator/agent securely. ' +
+        '`permissions` accepts preset names (e.g. "admin", "operator") or leaf permissions.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Member name (alphanumeric + . _ -, ≤ 128 chars).' },
+          title: { type: 'string', description: 'Role title (1–64 chars).' },
+          description: {
+            type: 'string',
+            description: 'Optional role description (≤ 512 chars).',
+          },
+          instructions: {
+            type: 'string',
+            description: 'Optional personal instructions for this member (≤ 8192 chars).',
+          },
+          permissions: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Preset names or leaf permissions. Defaults to no permissions.',
+          },
+        },
+        required: ['name', 'title'],
+      },
+    });
+    tools.push({
+      name: 'members_update',
+      description:
+        "Update an existing member's role, instructions, or permissions. Changes to " +
+        "`instructions` apply to that member's NEXT MCP session — the current session " +
+        'continues to reflect the old briefing until the runner restarts.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Member name to update.' },
+          title: { type: 'string', description: 'New role title.' },
+          description: { type: 'string', description: 'New role description.' },
+          instructions: { type: 'string', description: 'New personal instructions.' },
+          permissions: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Replacement permission list (preset names or leaves). Enforces "at least one members.manage holder remains".',
+          },
+        },
+        required: ['name'],
+      },
+    });
+    tools.push({
+      name: 'members_remove',
+      description:
+        'Delete a member. All bearer tokens for the member are revoked. Refused if this ' +
+        'would leave the team with zero members holding `members.manage`.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: 'Member name to remove.' },
+        },
+        required: ['name'],
+      },
+    });
+  }
+
+  return tools;
 }
 
 function buildFilesystemTools(name: string): Tool[] {
@@ -684,6 +854,22 @@ export async function handleToolCall(
         return await handleFsMv(args, brokerClient);
       case 'fs_shared':
         return await handleFsShared(brokerClient);
+      case 'team_get':
+        return await handleTeamGet(brokerClient);
+      case 'team_update':
+        return await handleTeamUpdate(args, brokerClient);
+      case 'presets_list':
+        return await handlePresetsList(brokerClient);
+      case 'presets_set':
+        return await handlePresetsSet(args, brokerClient);
+      case 'presets_delete':
+        return await handlePresetsDelete(args, brokerClient);
+      case 'members_add':
+        return await handleMembersAdd(args, brokerClient);
+      case 'members_update':
+        return await handleMembersUpdate(args, brokerClient);
+      case 'members_remove':
+        return await handleMembersRemove(args, brokerClient);
       default:
         return errorResult(`unknown tool: ${name}`);
     }
@@ -1209,6 +1395,144 @@ async function handleObjectivesReassign(
     ...(note ? { note } : {}),
   });
   return textResult(`reassigned ${updated.id} to ${updated.assignee}: ${updated.title}`);
+}
+
+// ── Admin handlers (team / presets / members) ─────────────────────
+
+async function handleTeamGet(brokerClient: BrokerClient): Promise<CallToolResult> {
+  const team = await brokerClient.getTeam();
+  const presetNames = Object.keys(team.permissionPresets);
+  const lines = [
+    `team: ${team.name}`,
+    `directive: ${team.directive}`,
+    `brief: ${team.brief.length === 0 ? '(empty)' : team.brief}`,
+    `presets: ${presetNames.length === 0 ? '(none)' : presetNames.join(', ')}`,
+  ];
+  return textResult(lines.join('\n'));
+}
+
+async function handleTeamUpdate(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const patch: { name?: string; directive?: string; brief?: string } = {};
+  if (typeof args.name === 'string') patch.name = args.name;
+  if (typeof args.directive === 'string') patch.directive = args.directive;
+  if (typeof args.brief === 'string') patch.brief = args.brief;
+  if (Object.keys(patch).length === 0) {
+    return errorResult('team_update: pass at least one of name, directive, brief');
+  }
+  const team = await brokerClient.updateTeam(patch);
+  return textResult(
+    `team_update applied: fields=${Object.keys(patch).join(',')} name='${team.name}'\n` +
+      `note: live MCP sessions still see the OLD briefing until the runner restarts.`,
+  );
+}
+
+async function handlePresetsList(brokerClient: BrokerClient): Promise<CallToolResult> {
+  const presets = await brokerClient.listPresets();
+  const entries = Object.entries(presets);
+  if (entries.length === 0) return textResult('(no presets)');
+  const lines = entries.map(([name, leaves]) => `- ${name}: ${leaves.join(', ')}`);
+  return textResult(lines.join('\n'));
+}
+
+async function handlePresetsSet(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const name = typeof args.name === 'string' ? args.name : '';
+  const permissions = Array.isArray(args.permissions) ? args.permissions : null;
+  if (!name) return errorResult('presets_set: `name` is required');
+  if (permissions === null || permissions.some((p) => typeof p !== 'string')) {
+    return errorResult('presets_set: `permissions` must be an array of leaf strings');
+  }
+  const result = await brokerClient.setPreset(
+    name,
+    permissions as import('@agentc7/sdk/types').Permission[],
+  );
+  return textResult(`preset '${result.name}' set: ${result.permissions.join(', ')}`);
+}
+
+async function handlePresetsDelete(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const name = typeof args.name === 'string' ? args.name : '';
+  if (!name) return errorResult('presets_delete: `name` is required');
+  const result = await brokerClient.deletePreset(name);
+  const tail =
+    result.referencedBy.length > 0
+      ? `; still referenced by: ${result.referencedBy.join(', ')}`
+      : '';
+  return textResult(`preset '${result.deleted}' deleted${tail}`);
+}
+
+async function handleMembersAdd(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const name = typeof args.name === 'string' ? args.name : '';
+  const title = typeof args.title === 'string' ? args.title : '';
+  if (!name || !title) return errorResult('members_add: `name` and `title` are required');
+  const description = typeof args.description === 'string' ? args.description : '';
+  const instructions = typeof args.instructions === 'string' ? args.instructions : '';
+  const permissions = Array.isArray(args.permissions)
+    ? (args.permissions.filter((p) => typeof p === 'string') as string[])
+    : [];
+  const result = await brokerClient.createMember({
+    name,
+    role: { title, description },
+    instructions,
+    permissions,
+  });
+  return textResult(
+    `member '${result.member.name}' created.\n` +
+      `bearer token (capture now — not shown again):\n  ${result.token}`,
+  );
+}
+
+async function handleMembersUpdate(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const name = typeof args.name === 'string' ? args.name : '';
+  if (!name) return errorResult('members_update: `name` is required');
+  const patch: {
+    role?: { title: string; description: string };
+    instructions?: string;
+    permissions?: string[];
+  } = {};
+  if (typeof args.title === 'string' || typeof args.description === 'string') {
+    patch.role = {
+      title: typeof args.title === 'string' ? args.title : '',
+      description: typeof args.description === 'string' ? args.description : '',
+    };
+  }
+  if (typeof args.instructions === 'string') patch.instructions = args.instructions;
+  if (Array.isArray(args.permissions)) {
+    patch.permissions = args.permissions.filter((p) => typeof p === 'string') as string[];
+  }
+  if (Object.keys(patch).length === 0) {
+    return errorResult(
+      'members_update: nothing to update (title, description, instructions, permissions)',
+    );
+  }
+  const member = await brokerClient.updateMember(name, patch);
+  return textResult(
+    `member '${member.name}' updated: fields=${Object.keys(patch).join(',')}\n` +
+      `note: instruction changes apply to that member's NEXT MCP session, not the live one.`,
+  );
+}
+
+async function handleMembersRemove(
+  args: Record<string, unknown>,
+  brokerClient: BrokerClient,
+): Promise<CallToolResult> {
+  const name = typeof args.name === 'string' ? args.name : '';
+  if (!name) return errorResult('members_remove: `name` is required');
+  await brokerClient.deleteMember(name);
+  return textResult(`member '${name}' removed; all bearer tokens revoked.`);
 }
 
 // ── Filesystem handlers ────────────────────────────────────────────

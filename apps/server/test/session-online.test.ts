@@ -33,6 +33,7 @@ import { createSqliteObjectivesStore } from '../src/objectives.js';
 import { type RunningServer, runServer } from '../src/run.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore, seedStores } from './helpers/test-stores.js';
 
 // ─── unit: composeSessionOnlineMessage ──────────────────────────────
 
@@ -90,20 +91,22 @@ interface BootedServer {
 }
 
 async function bootServer(): Promise<BootedServer> {
-  const members = createMemberStore([
-    {
-      name: 'alice',
-      role: { title: 'admin', description: '' },
-      permissions: ['members.manage'],
-      token: ADMIN_TOKEN,
-    },
-  ]);
-  const running = await runServer({
-    members,
+  const seeded = seedStores({
     team: TEAM,
+    members: [
+      {
+        name: 'alice',
+        role: { title: 'admin', description: '' },
+        rawPermissions: ['members.manage'],
+        permissions: ['members.manage'],
+        token: ADMIN_TOKEN,
+      },
+    ],
+  });
+  const running = await runServer({
+    db: seeded.db,
     port: 0,
     host: '127.0.0.1',
-    dbPath: ':memory:',
     logger: silentLogger(),
   });
   return {
@@ -229,7 +232,7 @@ describe('session-online gate — cookie subscriber receives nothing', () => {
       members,
       tokens,
       sessions,
-      team: TEAM,
+      teamStore: mockTeamStore(TEAM),
       objectives,
       version: '0.0.0',
       logger: silentLogger(),

@@ -51,6 +51,7 @@ import {
   MemberSchema,
   MessageSchema,
   ObjectiveSchema,
+  PermissionPresetsSchema,
   PushPayloadSchema,
   PushResultSchema,
   PushSubscriptionResponseSchema,
@@ -59,6 +60,7 @@ import {
   RosterResponseSchema,
   RotateTokenResponseSchema,
   SessionResponseSchema,
+  TeamSchema,
   UploadActivityResponseSchema,
   VapidPublicKeyResponseSchema,
 } from './schemas.js';
@@ -94,6 +96,8 @@ import type {
   Message,
   Objective,
   PendingEnrollment,
+  Permission,
+  PermissionPresets,
   PushPayload,
   PushResult,
   PushSubscriptionPayload,
@@ -104,6 +108,7 @@ import type {
   RosterResponse,
   RotateTokenResponse,
   SessionResponse,
+  Team,
   TokenInfo,
   TotpLoginRequest,
   UpdateMemberRequest,
@@ -524,6 +529,64 @@ export class Client {
   async listMembers(): Promise<Member[]> {
     const resp = await this.request(PATHS.members, { method: 'GET' });
     return ListMembersResponseSchema.parse(await this.json(resp)).members;
+  }
+
+  /**
+   * Read the current team config (name, directive, brief, presets).
+   * Authenticated; available to every member.
+   */
+  async getTeam(): Promise<Team> {
+    const resp = await this.request(PATHS.team, { method: 'GET' });
+    const body = (await this.json(resp)) as { team: unknown };
+    return TeamSchema.parse(body.team);
+  }
+
+  /**
+   * Update one or more team-level fields (name, directive, brief).
+   * Requires `team.manage`. Permission presets are managed separately
+   * via `setPreset` / `deletePreset` so the API surface stays narrow.
+   */
+  async updateTeam(patch: Partial<Pick<Team, 'name' | 'directive' | 'brief'>>): Promise<Team> {
+    const resp = await this.request(PATHS.team, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    const body = (await this.json(resp)) as { team: unknown };
+    return TeamSchema.parse(body.team);
+  }
+
+  /** List the team's permission presets. Authenticated; readable to every member. */
+  async listPresets(): Promise<PermissionPresets> {
+    const resp = await this.request(PATHS.teamPresets, { method: 'GET' });
+    const body = (await this.json(resp)) as { presets: unknown };
+    return PermissionPresetsSchema.parse(body.presets);
+  }
+
+  /** Upsert a permission preset. Requires `team.manage`. */
+  async setPreset(
+    name: string,
+    permissions: Permission[],
+  ): Promise<{ name: string; permissions: Permission[] }> {
+    const resp = await this.request(`${PATHS.teamPresets}/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ permissions }),
+    });
+    const body = (await this.json(resp)) as { preset: { name: string; permissions: Permission[] } };
+    return body.preset;
+  }
+
+  /**
+   * Delete a permission preset. Returns the names of members that
+   * still reference it in their `raw_permissions`; their resolved
+   * leaves drop those permissions on the next read.
+   */
+  async deletePreset(name: string): Promise<{ deleted: string; referencedBy: string[] }> {
+    const resp = await this.request(`${PATHS.teamPresets}/${encodeURIComponent(name)}`, {
+      method: 'DELETE',
+    });
+    return (await this.json(resp)) as { deleted: string; referencedBy: string[] };
   }
 
   /**

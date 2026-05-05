@@ -20,6 +20,7 @@ import { openDatabase } from '../src/db.js';
 import { createMemberStore } from '../src/members.js';
 import { SessionStore } from '../src/sessions.js';
 import { createTokenStoreFromMembers } from '../src/tokens.js';
+import { mockTeamStore } from './helpers/test-stores.js';
 
 const ADMIN_TOKEN = 'ac7_busy_test_admin_token';
 const AGENT_TOKEN = 'ac7_busy_test_agent_token';
@@ -73,7 +74,7 @@ function makeApp(): Harness {
     members,
     tokens,
     sessions,
-    team: TEAM,
+    teamStore: mockTeamStore(TEAM),
     version: '0.0.0',
     persistMembers,
     now: () => now,

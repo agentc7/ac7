@@ -36,6 +36,15 @@ export const PATHS = {
   // gate on the permission. The helpers below compose the `:name`
   // subpaths.
   members: '/members',
+  // Team — name, directive, brief, permission presets. `GET /team` is
+  // dual-auth (every authenticated member sees the team they're on).
+  // `PATCH /team` requires `team.manage`. Permission-preset CRUD lives
+  // under `/team/presets` (same gate). Mutations apply immediately to
+  // the DB; live MCP sessions still need a runner restart for changes
+  // to `instructions`-class strings (the MCP protocol freezes those
+  // per session).
+  team: '/team',
+  teamPresets: '/team/presets',
   // Filesystem — per-member home directories with content-addressed
   // blob storage. The dedicated `read/*` catch-all supports friendly
   // URLs for <a href> and <img src>; other ops take path via query or body.
