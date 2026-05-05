@@ -18,7 +18,7 @@
  *      singleton is missing.
  */
 
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 
 // Type-only import: compiles away, never loaded at runtime.
@@ -92,7 +92,14 @@ export async function runServeCommand(
   }
 
   const { config, freshlySeeded } = await loadOrCreateServerConfig(server, configPath, stdout);
-  const dbPath = input.dbPath ?? process.env[ENV.dbPath] ?? config.dbPath ?? './ac7.db';
+  // Relative paths in the config resolve against the config file's
+  // directory, not the caller's cwd. CLI/env overrides are treated
+  // as operator-explicit and used verbatim.
+  const dbPath =
+    input.dbPath ??
+    process.env[ENV.dbPath] ??
+    server.resolveConfigPath(configPath, config.dbPath) ??
+    join(dirname(configPath), 'ac7.db');
 
   if (freshlySeeded) {
     stdout(`ac7 serve: bootstrapped ${configPath} with team data in ${dbPath}`);
@@ -158,7 +165,9 @@ async function runWizardOrFail(
   }
   try {
     const wizard = await server.runFirstRunWizard({ configPath, io });
-    const dbPath = './ac7.db';
+    // Seed the DB next to the config file so the path round-trips
+    // through `resolveConfigPath` regardless of caller cwd.
+    const dbPath = join(dirname(configPath), 'ac7.db');
     const db = server.openDatabase(dbPath);
     try {
       const stores = server.openTeamAndMembers(db);
@@ -189,8 +198,10 @@ async function runWizardOrFail(
     } finally {
       db.close();
     }
+    // Store the dbPath relative to the config file so the file stays
+    // portable; consumers anchor it via `resolveConfigPath` on read.
     const config: ServerConfig = {
-      dbPath,
+      dbPath: './ac7.db',
       activityDbPath: null,
       filesRoot: null,
       https: server.defaultHttpsConfig(),

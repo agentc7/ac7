@@ -18,7 +18,7 @@
  */
 
 import { networkInterfaces } from 'node:os';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 import type { Team } from '@agentc7/sdk/types';
@@ -39,6 +39,7 @@ import {
 import { type ListenInfo, runServer } from './run.js';
 import {
   loadServerConfigFromFile,
+  resolveConfigPath,
   type ServerConfig,
   writeServerConfigFile,
 } from './server-config.js';
@@ -251,7 +252,15 @@ async function main(): Promise<void> {
   const { config: serverConfig, wizard } = await loadOrCreateServerConfig(configPath);
 
   // dbPath precedence: env override > config file > default.
-  const dbPath = readEnv(ENV.dbPath) ?? serverConfig.dbPath ?? './ac7.db';
+  // Relative paths in the config file resolve against the config
+  // file's directory (not the cwd of whoever spawned us) so a config
+  // written by `ac7 setup` from one cwd works when consumed by the
+  // broker from another. Env-provided dbPath is treated as
+  // operator-explicit and used verbatim.
+  const dbPath =
+    readEnv(ENV.dbPath) ??
+    resolveConfigPath(configPath, serverConfig.dbPath) ??
+    join(dirname(configPath), 'ac7.db');
 
   // Open DB + DB-backed team and member stores. The team store
   // creates its tables on construction; the member store reuses them.

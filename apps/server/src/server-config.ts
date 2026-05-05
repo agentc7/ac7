@@ -31,7 +31,7 @@ import {
   renameSync,
   writeSync,
 } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { z } from 'zod';
 import {
   ConfigNotFoundError,
@@ -150,6 +150,26 @@ export function updateServerConfigFile(path: string, patch: Partial<ServerConfig
   const next: ServerConfig = { ...current, ...patch };
   writeServerConfigFile(path, next);
   return next;
+}
+
+/**
+ * Resolve a path field from a loaded ServerConfig against the config
+ * file's own directory. Relative paths in the config refer to
+ * locations adjacent to the config file — *not* the cwd of whoever is
+ * reading it. This matters because the config file is often loaded
+ * from one cwd (the wizard, run from the repo root) and consumed from
+ * another (the broker, spawned from `apps/server/`); without anchoring,
+ * `./ac7.db` resolves to two different files.
+ *
+ * Behavior:
+ *   - `null` → `null` (no value to resolve)
+ *   - absolute → returned verbatim
+ *   - relative → joined onto `dirname(configPath)`
+ */
+export function resolveConfigPath(configPath: string, value: string | null): string | null {
+  if (value === null) return null;
+  if (isAbsolute(value)) return value;
+  return join(dirname(configPath), value);
 }
 
 function atomicWriteRestricted(path: string, body: string): void {

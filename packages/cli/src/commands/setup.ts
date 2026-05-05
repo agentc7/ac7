@@ -18,6 +18,7 @@
  * ac7.db` is the way to start over.
  */
 
+import { dirname, join } from 'node:path';
 import { ENV } from '@agentc7/sdk/protocol';
 import { UsageError } from './errors.js';
 
@@ -62,7 +63,13 @@ export async function runSetupCommand(
     }
   }
 
-  const dbPath = existingConfig?.dbPath ?? './ac7.db';
+  // Relative paths in the loaded config resolve against the config
+  // file's directory so seeding lands next to the config file
+  // regardless of cwd. New setups default to `<configDir>/ac7.db`.
+  const dbPath = existingConfig?.dbPath
+    ? (server.resolveConfigPath(configPath, existingConfig.dbPath) ??
+      join(dirname(configPath), 'ac7.db'))
+    : join(dirname(configPath), 'ac7.db');
 
   if (existingConfig !== null) {
     const probeDb = server.openDatabase(dbPath);
@@ -131,8 +138,14 @@ export async function runSetupCommand(
     }
 
     // Write the slim infra-only config file with sensible defaults.
+    // Store dbPath relative to the config file when we placed the DB
+    // alongside it (the new-setup case); preserve whatever shape the
+    // existing config used otherwise (recovery-from-empty-DB path).
+    const configuredDbPath =
+      existingConfig?.dbPath ??
+      (dbPath === join(dirname(configPath), 'ac7.db') ? './ac7.db' : dbPath);
     server.writeServerConfigFile(configPath, {
-      dbPath,
+      dbPath: configuredDbPath,
       activityDbPath: null,
       filesRoot: null,
       https: server.defaultHttpsConfig(),
