@@ -20,10 +20,10 @@ import { type RunningServer, runServer } from '../src/run.js';
 import { seedStores } from './helpers/test-stores.js';
 
 const OP_TOKEN = 'ac7_shutdown_test_op';
-const TEAM: Pick<Team, 'name' | 'directive' | 'brief'> = {
+const TEAM: Pick<Team, 'name' | 'directive' | 'context'> = {
   name: 'shutdown-test-team',
   directive: 'Verify shutdown does not hang on live SSE subscribers.',
-  brief: '',
+  context: '',
 };
 
 describe('runServer shutdown with live SSE subscriber', () => {

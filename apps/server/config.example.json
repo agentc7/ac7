@@ -3,7 +3,7 @@
   "team": {
     "name": "my-team",
     "directive": "Ship and operate the payment processing service.",
-    "brief": "We own the full lifecycle of the payment service: code, CI, deploys, and incident response. Our operating window is 0900-1700 UTC."
+    "context": "We own the full lifecycle of the payment service: code, CI, deploys, and incident response. Our operating window is 0900-1700 UTC."
   },
   "roles": {
     "individual-contributor": {

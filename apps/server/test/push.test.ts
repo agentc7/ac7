@@ -73,7 +73,7 @@ const BOT_TOKEN = 'ac7_push_test_bot_token';
 const TEAM: Team = {
   name: 'demo-team',
   directive: 'Test push notifications.',
-  brief: '',
+  context: '',
   permissionPresets: {},
 };
 

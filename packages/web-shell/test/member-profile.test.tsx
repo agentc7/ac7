@@ -35,7 +35,7 @@ const COMMANDER_BRIEFING: BriefingResponse = {
   name: 'director-1',
   role: { title: 'director', description: '' },
   permissions: ['members.manage'],
-  team: { name: 'demo-team', directive: 'Ship it', brief: '', permissionPresets: {} },
+  team: { name: 'demo-team', directive: 'Ship it', context: '', permissionPresets: {} },
   teammates: [
     {
       name: 'director-1',

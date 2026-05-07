@@ -15,7 +15,7 @@ const BOT_TOKEN = 'ac7_test_bot_secret';
 const TEAM: Team = {
   name: 'demo-team',
   directive: 'Ship and operate the payment service.',
-  brief: 'We own the full lifecycle.',
+  context: 'We own the full lifecycle.',
   permissionPresets: {},
 };
 

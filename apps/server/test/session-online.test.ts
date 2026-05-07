@@ -76,7 +76,7 @@ const ADMIN_TOKEN = 'ac7_session_online_test_admin_token';
 const TEAM: Team = {
   name: 'session-online-team',
   directive: 'Verify the session-online notice is gated by auth plane.',
-  brief: '',
+  context: '',
   permissionPresets: {},
 };
 

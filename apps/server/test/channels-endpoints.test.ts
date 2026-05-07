@@ -16,7 +16,7 @@ const CAROL = 'ac7_test_carol_secret';
 const TEAM: Team = {
   name: 'demo-team',
   directive: 'Ship the thing.',
-  brief: '',
+  context: '',
   permissionPresets: {},
 };
 

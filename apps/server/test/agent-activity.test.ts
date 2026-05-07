@@ -40,7 +40,7 @@ const OTHER_TOKEN = 'ac7_test_other';
 const TEAM: Team = {
   name: 'demo-team',
   directive: 'Ship the payments service.',
-  brief: 'End-to-end ownership.',
+  context: 'End-to-end ownership.',
   permissionPresets: {},
 };
 

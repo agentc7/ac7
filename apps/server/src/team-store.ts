@@ -4,7 +4,7 @@
  * Replaces the legacy ac7.json team/member surface. Three tables live
  * here:
  *
- *   - `team`               singleton row (id=1) carrying name, directive, brief
+ *   - `team`               singleton row (id=1) carrying name, directive, context
  *   - `permission_presets` named bundles of leaf permissions
  *   - `members`            roster: name, role, instructions, raw_permissions,
  *                          totp enrollment, insertion order
@@ -43,7 +43,7 @@ import {
   validatePermissionPreset,
   validateRawPermissions,
   validateRole,
-  validateTeamBrief,
+  validateTeamContext,
   validateTeamDirective,
   validateTeamName,
   validateTotpSecret,
@@ -54,7 +54,7 @@ const CREATE_SCHEMA = `
     id          INTEGER PRIMARY KEY CHECK (id = 1),
     name        TEXT NOT NULL,
     directive   TEXT NOT NULL,
-    brief       TEXT NOT NULL DEFAULT '',
+    context     TEXT NOT NULL DEFAULT '',
     updated_at  INTEGER NOT NULL,
     updated_by  TEXT
   );
@@ -86,7 +86,7 @@ interface RawTeamRow {
   id: number;
   name: string;
   directive: string;
-  brief: string;
+  context: string;
   updated_at: number;
   updated_by: string | null;
 }
@@ -161,15 +161,15 @@ export class TeamStore {
     this.now = options.now ?? Date.now;
     this.db.exec(CREATE_SCHEMA);
     this.getTeamStmt = this.db.prepare(
-      'SELECT id, name, directive, brief, updated_at, updated_by FROM team WHERE id = 1',
+      'SELECT id, name, directive, context, updated_at, updated_by FROM team WHERE id = 1',
     );
     this.upsertTeamStmt = this.db.prepare(`
-      INSERT INTO team (id, name, directive, brief, updated_at, updated_by)
+      INSERT INTO team (id, name, directive, context, updated_at, updated_by)
       VALUES (1, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         directive = excluded.directive,
-        brief = excluded.brief,
+        context = excluded.context,
         updated_at = excluded.updated_at,
         updated_by = excluded.updated_by
     `);
@@ -200,7 +200,7 @@ export class TeamStore {
     return {
       name: row.name,
       directive: row.directive,
-      brief: row.brief,
+      context: row.context,
       permissionPresets: this.getPresets(),
     };
   }
@@ -221,23 +221,23 @@ export class TeamStore {
   }
 
   /**
-   * Create or replace the team singleton. Validates name/directive/brief
+   * Create or replace the team singleton. Validates name/directive/context
    * lengths via the shared zod-derived helpers.
    */
   setTeam(
-    input: { name: string; directive: string; brief: string },
+    input: { name: string; directive: string; context: string },
     by: string | null = null,
   ): Team {
     validateTeamName(input.name);
     validateTeamDirective(input.directive);
-    validateTeamBrief(input.brief);
-    this.upsertTeamStmt.run(input.name, input.directive, input.brief, this.now(), by);
+    validateTeamContext(input.context);
+    this.upsertTeamStmt.run(input.name, input.directive, input.context, this.now(), by);
     return this.getTeam();
   }
 
   /** Patch the team singleton; only the supplied fields change. */
   updateTeam(
-    patch: { name?: string; directive?: string; brief?: string },
+    patch: { name?: string; directive?: string; context?: string },
     by: string | null = null,
   ): Team {
     const current = this.getTeam();
@@ -245,7 +245,7 @@ export class TeamStore {
       {
         name: patch.name ?? current.name,
         directive: patch.directive ?? current.directive,
-        brief: patch.brief ?? current.brief,
+        context: patch.context ?? current.context,
       },
       by,
     );

@@ -14,6 +14,7 @@
  */
 
 import { type InboxItem, inboxItems } from '../lib/inbox.js';
+import { isObjectiveThread, OBJ_PREFIX } from '../lib/messages.js';
 import { selectObjectiveDetail, selectThread } from '../lib/view.js';
 import { EmptyState, PageHeader } from './ui/index.js';
 
@@ -124,9 +125,13 @@ function InboxRow({ item, isLast }: { item: InboxItem; isLast: boolean }) {
 
 function openItem(item: InboxItem): void {
   if (item.kind === 'thread-unread') {
-    // selectThread maps primary/dm keys into the right route; objective
-    // threads don't have their own URL but the call is a no-op there,
-    // which matches today's behavior (they surface inside the objective).
+    // Objective threads (`obj:<id>`) don't have a standalone URL — they
+    // surface inside the objective detail view, so route there instead;
+    // `selectThread` would silently no-op on them.
+    if (isObjectiveThread(item.threadKey)) {
+      selectObjectiveDetail(item.threadKey.slice(OBJ_PREFIX.length));
+      return;
+    }
     selectThread(item.threadKey);
     return;
   }

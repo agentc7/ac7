@@ -5,7 +5,7 @@ import { composeBriefing } from '../src/briefing.js';
 const TEAM: Team = {
   name: 'demo-team',
   directive: 'Ship the payment service.',
-  brief: 'We own the full lifecycle of the payment service.',
+  context: 'We own the full lifecycle of the payment service.',
   permissionPresets: {},
 };
 
@@ -73,7 +73,7 @@ describe('composeBriefing', () => {
     expect(briefing.instructions).toContain('Your role here: engineer');
     expect(briefing.instructions).toContain(TEAM.name);
     expect(briefing.instructions).toContain(TEAM.directive);
-    expect(briefing.instructions).toContain(TEAM.brief);
+    expect(briefing.instructions).toContain(TEAM.context);
     expect(briefing.instructions).toContain(ALPHA_1.instructions);
   });
 
@@ -94,16 +94,16 @@ describe('composeBriefing', () => {
     expect(linesAfterHeader).not.toMatch(/^\s{2}engineer-1\s/m);
   });
 
-  it('omits the brief line when team.brief is empty', () => {
-    const teamNoBrief: Team = { ...TEAM, brief: '' };
+  it('omits the context line when team.context is empty', () => {
+    const teamNoContext: Team = { ...TEAM, context: '' };
     const briefing = composeBriefing({
       self: DIRECTOR,
-      team: teamNoBrief,
+      team: teamNoContext,
       teammates: TEAMMATES,
       openObjectives: [],
     });
-    expect(briefing.instructions).not.toContain('Brief:');
-    expect(briefing.instructions).toContain(`Directive: ${teamNoBrief.directive}`);
+    expect(briefing.instructions).not.toContain('Context:');
+    expect(briefing.instructions).toContain(`Directive: ${teamNoContext.directive}`);
   });
 
   it('omits the personal-instructions block when the member has none', () => {

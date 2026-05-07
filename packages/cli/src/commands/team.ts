@@ -3,13 +3,13 @@
  *
  * Subcommands:
  *   ac7 team get
- *   ac7 team set [--name <n>] [--directive <d>] [--brief <b>]
+ *   ac7 team set [--name <n>] [--directive <d>] [--context <c>]
  *
  * Talks to the running broker via the HTTP API. Mutations require
  * the calling member to have `team.manage`. Changes apply
  * immediately on the server side; agents already in an MCP session
  * still need a runner restart to pick up changes that flow into the
- * MCP `instructions` string (directive, brief), since that string is
+ * MCP `instructions` string (directive, context), since that string is
  * frozen for the lifetime of a session by the MCP protocol.
  */
 
@@ -56,11 +56,11 @@ async function runGet(
   }
   stdout(`name      ${team.name}`);
   stdout(`directive ${team.directive}`);
-  stdout('brief');
-  if (team.brief.trim().length === 0) {
+  stdout('context');
+  if (team.context.trim().length === 0) {
     stdout('  (none)');
   } else {
-    for (const line of team.brief.split('\n')) stdout(`  ${line}`);
+    for (const line of team.context.split('\n')) stdout(`  ${line}`);
   }
   const presetNames = Object.keys(team.permissionPresets);
   stdout(`presets   ${presetNames.length === 0 ? '(none)' : presetNames.join(', ')}`);
@@ -76,22 +76,22 @@ async function runSet(
     options: {
       name: { type: 'string' },
       directive: { type: 'string' },
-      brief: { type: 'string' },
-      'brief-file': { type: 'string' },
+      context: { type: 'string' },
+      'context-file': { type: 'string' },
     },
     allowPositionals: false,
   });
-  const patch: { name?: string; directive?: string; brief?: string } = {};
+  const patch: { name?: string; directive?: string; context?: string } = {};
   if (typeof values.name === 'string') patch.name = values.name;
   if (typeof values.directive === 'string') patch.directive = values.directive;
-  if (typeof values.brief === 'string') patch.brief = values.brief;
-  if (typeof values['brief-file'] === 'string') {
+  if (typeof values.context === 'string') patch.context = values.context;
+  if (typeof values['context-file'] === 'string') {
     const { readFileSync } = await import('node:fs');
-    patch.brief = readFileSync(values['brief-file'], 'utf8');
+    patch.context = readFileSync(values['context-file'], 'utf8');
   }
   if (Object.keys(patch).length === 0) {
     throw new UsageError(
-      'team set requires at least one of --name, --directive, --brief, --brief-file',
+      'team set requires at least one of --name, --directive, --context, --context-file',
     );
   }
   const team = await client.updateTeam(patch);

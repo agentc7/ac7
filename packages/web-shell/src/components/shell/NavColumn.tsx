@@ -122,7 +122,7 @@ export function NavColumn({ viewer }: NavColumnProps) {
           ${drawerOpen ? 'is-open translate-x-0 flex shadow-2xl' : '-translate-x-full hidden md:flex md:-translate-x-0'}`}
       style="background:var(--paper);border-right:1px solid var(--rule);padding-left:env(safe-area-inset-left);padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom);bottom:0"
     >
-      <TeamHeader />
+      <TeamHeader viewer={viewer} />
 
       {/* ── Work section ─────────────────────────────────────────── */}
       <div style="padding:8px 0;border-bottom:1px solid var(--rule)">
@@ -299,7 +299,7 @@ function TeamSettingsButton() {
   );
 }
 
-function TeamHeader() {
+function TeamHeader({ viewer }: { viewer: string }) {
   const team = currentTeam.value;
   if (!team) {
     return (
@@ -329,14 +329,12 @@ function TeamHeader() {
         >
           {team.name}
         </div>
-        {team.directive && (
-          <div
-            class="truncate"
-            style="font-family:var(--f-sans);font-size:11px;color:var(--muted);line-height:1.2;margin-top:2px;font-style:italic"
-          >
-            {team.directive}
-          </div>
-        )}
+        <div
+          class="truncate"
+          style="font-family:var(--f-sans);font-size:11px;color:var(--muted);line-height:1.2;margin-top:2px"
+        >
+          {viewer}
+        </div>
       </div>
     </button>
   );

@@ -21,7 +21,7 @@
  *     "team": {
  *       "name": "demo-team",
  *       "directive": "Ship the payment service.",
- *       "brief": "We own the full lifecycle...",
+ *       "context": "We own the full lifecycle...",
  *       "permissionPresets": {
  *         "admin":    ["team.manage", "members.manage", "objectives.create", "objectives.cancel", "objectives.reassign", "objectives.watch", "activity.read"],
  *         "operator": ["objectives.create", "objectives.cancel", "objectives.reassign"]
@@ -112,7 +112,7 @@ const PermissionLeafSchema = z.enum(PERMISSIONS);
 
 const TeamNameSchema = z.string().min(1).max(128);
 const TeamDirectiveSchema = z.string().min(1).max(512);
-const TeamBriefSchema = z.string().max(4096).default('');
+const TeamContextSchema = z.string().max(4096).default('');
 const MemberNameSchema = z
   .string()
   .min(1)
@@ -220,11 +220,11 @@ export function validateTeamDirective(directive: string): void {
     failFromZod('team.directive', err);
   }
 }
-export function validateTeamBrief(brief: string): void {
+export function validateTeamContext(context: string): void {
   try {
-    TeamBriefSchema.parse(brief);
+    TeamContextSchema.parse(context);
   } catch (err) {
-    failFromZod('team.brief', err);
+    failFromZod('team.context', err);
   }
 }
 export function validateMemberName(name: string): void {

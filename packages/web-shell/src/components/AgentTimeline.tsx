@@ -51,7 +51,7 @@ const DEFAULT_FILTERS: KindFilter = {
   objective_open: true,
   objective_close: true,
   llm_exchange: true,
-  opaque_http: true,
+  opaque_http: false,
 };
 
 const kindFilters = signal<KindFilter>({ ...DEFAULT_FILTERS });

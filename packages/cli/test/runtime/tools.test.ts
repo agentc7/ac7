@@ -32,7 +32,7 @@ const BRIEFING: BriefingResponse = {
   team: {
     name: 'demo',
     directive: 'ship',
-    brief: '',
+    context: '',
     permissionPresets: {},
   },
   teammates: [

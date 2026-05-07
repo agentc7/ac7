@@ -265,10 +265,16 @@ export function Composer({ viewer }: ComposerProps) {
   };
 
   const onKeyDown = (event: JSX.TargetedKeyboardEvent<HTMLTextAreaElement>) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      void send();
+    if (event.key !== 'Enter' || event.shiftKey) return;
+    // On touch devices, the soft keyboard's "return" key should insert
+    // a newline (the native textarea behavior). Sending is the dedicated
+    // inline button on mobile, where Enter-to-send is unintuitive and
+    // an easy way to fire off half-typed thoughts.
+    if (typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches) {
+      return;
     }
+    event.preventDefault();
+    void send();
   };
 
   const onInput = (event: JSX.TargetedInputEvent<HTMLTextAreaElement>) => {

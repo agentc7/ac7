@@ -274,7 +274,7 @@ async function main(): Promise<void> {
     stores.team.setTeam({
       name: wizard.team.name,
       directive: wizard.team.directive,
-      brief: wizard.team.brief,
+      context: wizard.team.context,
     });
     for (const [name, leaves] of Object.entries(wizard.team.permissionPresets)) {
       stores.team.setPreset(name, leaves);

@@ -28,7 +28,7 @@ const AGENT_TOKEN = 'ac7_busy_test_agent_token';
 const TEAM: Team = {
   name: 'busy-test',
   directive: 'Verify busy presence flow.',
-  brief: '',
+  context: '',
   permissionPresets: {},
 };
 

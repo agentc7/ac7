@@ -28,7 +28,7 @@ const BOT_TOKEN = 'ac7_auth_test_bot_token';
 const TEAM: Team = {
   name: 'demo-team',
   directive: 'Verify the auth surface.',
-  brief: '',
+  context: '',
   permissionPresets: {},
 };
 

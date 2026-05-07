@@ -143,7 +143,7 @@ export function ActivityInspector({ agentName }: ActivityInspectorProps) {
       class="activity-inspector flex flex-col flex-shrink-0"
       aria-label={`Activity for ${agentName}`}
       data-inspector-open={open ? 'true' : 'false'}
-      style={`--activity-inspector-width:${width}px;height:100%;background:var(--paper);border-left:1px solid var(--rule);position:relative`}
+      style={`--activity-inspector-width:${width}px`}
     >
       {/* biome-ignore lint/a11y/useSemanticElements: <hr> is a thematic
           break, not a draggable splitter — `role="separator"` with

@@ -28,7 +28,7 @@ const DIRECTOR_TOKEN = 'ac7_test_director_secret';
 const TEAM: Team = {
   name: 'files-team',
   directive: 'Exercise filesystem endpoints.',
-  brief: '',
+  context: '',
   permissionPresets: {},
 };
 

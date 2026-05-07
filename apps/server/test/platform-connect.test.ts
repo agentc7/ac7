@@ -29,7 +29,7 @@ const OP_TOKEN = 'ac7_platform_connect_op_token';
 const TEAM: Team = {
   name: 'demo-team',
   directive: 'Exercise the platform-connect handshake.',
-  brief: '',
+  context: '',
   permissionPresets: {},
 };
 

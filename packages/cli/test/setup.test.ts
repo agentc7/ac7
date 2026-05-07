@@ -65,7 +65,7 @@ describe('runSetupCommand', () => {
       stores.team.setTeam({
         name: 'demo-team',
         directive: 'ship the payment service',
-        brief: '',
+        context: '',
       });
       stores.members.addMember({
         name: 'director-1',

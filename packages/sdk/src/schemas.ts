@@ -47,7 +47,7 @@ export const RoleSchema = z.object({
 export const TeamSchema = z.object({
   name: z.string().min(1).max(128),
   directive: z.string().min(1).max(512),
-  brief: z.string().max(4096).default(''),
+  context: z.string().max(4096).default(''),
   permissionPresets: PermissionPresetsSchema.default({}),
 });
 

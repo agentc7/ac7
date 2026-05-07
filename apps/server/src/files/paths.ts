@@ -1,14 +1,23 @@
 /**
  * Path utilities for the ac7 filesystem.
  *
- * Paths are absolute, Unix-like, with `/` as separator. The first
- * segment is the owner (a slot name). Segments may contain
- * alphanumerics, dot, underscore, hyphen, and single spaces; no
- * `.`/`..` traversal; no leading/trailing whitespace; no empty
+ * Paths are absolute, Unix-like, with `/` as separator. Segments may
+ * contain alphanumerics, dot, underscore, hyphen, and single spaces;
+ * no `.`/`..` traversal; no leading/trailing whitespace; no empty
  * segments between slashes.
  *
+ * Two top-level scopes share the path tree:
+ *   - **Member homes** at `/<member-name>/` — the original per-slot
+ *     scope. The first path segment is the member name; that name is
+ *     also the row's `owner` value, and the read/write ACL is
+ *     "owner-only + admin + grant-holders".
+ *   - **Objective namespaces** at `/objectives/<id>/` — a per-objective
+ *     scope owned not by an individual but by the objective's member
+ *     set (originator + assignee + watchers). Rows under this prefix
+ *     have `owner = 'obj:<id>'`; the ACL gate is "member of the
+ *     objective + admin".
+ *
  * The root `/` has no owner and is implicit (no DB row represents it).
- * Every slot's home is `/<slotname>/`.
  */
 
 import { FsError } from './errors.js';
@@ -17,6 +26,15 @@ export const ROOT_PATH = '/' as const;
 
 export const MAX_PATH_LENGTH = 1024;
 export const MAX_SEGMENT_LENGTH = 255;
+
+/**
+ * Top-level segment for the objective-scope namespace. We use the
+ * spelled-out word `objectives` in paths to keep them readable, while
+ * the `owner` column carries the abbreviated `obj:<id>` form so it
+ * matches the `obj:<id>` thread-key prefix used elsewhere.
+ */
+export const OBJECTIVE_NAMESPACE_SEGMENT = 'objectives';
+export const OBJECTIVE_OWNER_PREFIX = 'obj:';
 
 const SEGMENT_RE = /^[a-zA-Z0-9._\- ]+$/;
 
@@ -84,12 +102,50 @@ export function basenameOf(path: string): string {
 }
 
 /**
- * First segment — the slot that owns this subtree. Root → null (no owner).
+ * Authoritative `owner` column value for the row at `path`.
+ *
+ *   `/alice/...`           → `'alice'`              (member-home scope)
+ *   `/objectives/foo/...`  → `'obj:foo'`            (objective scope)
+ *   `/objectives`          → `'objectives'`         (the bare namespace dir;
+ *                                                    no individual owns it)
+ *   `/`                    → `null`                 (root; no DB row)
+ *
+ * Centralizing this here means write-time row creation and ACL checks
+ * agree on the same scope tag without each call site re-deriving it.
  */
 export function ownerOf(path: string): string | null {
   const segments = splitPath(path);
   if (segments.length === 0) return null;
+  if (segments[0] === OBJECTIVE_NAMESPACE_SEGMENT) {
+    if (segments.length === 1) return OBJECTIVE_NAMESPACE_SEGMENT;
+    return `${OBJECTIVE_OWNER_PREFIX}${segments[1]}`;
+  }
   return segments[0] as string;
+}
+
+/**
+ * If `path` lives in the objective namespace, return its `id` and the
+ * subpath under that objective's root. Returns `null` for any other
+ * path (member homes, root, the bare `/objectives` parent).
+ *
+ *   `/objectives/foo/spec.pdf` → `{ id: 'foo', subpath: 'spec.pdf' }`
+ *   `/objectives/foo`          → `{ id: 'foo', subpath: '' }`
+ *   `/objectives`              → `null` (the bare namespace dir
+ *                                        belongs to no specific objective)
+ *   `/alice/...`               → `null`
+ */
+export function parseObjectiveNamespacePath(path: string): { id: string; subpath: string } | null {
+  const segments = splitPath(path);
+  if (segments.length < 2) return null;
+  if (segments[0] !== OBJECTIVE_NAMESPACE_SEGMENT) return null;
+  const id = segments[1] as string;
+  const subpath = segments.slice(2).join('/');
+  return { id, subpath };
+}
+
+/** Build a normalized path under an objective's namespace. */
+export function objectiveNamespacePath(id: string, ...subpath: string[]): string {
+  return joinPath(`/${OBJECTIVE_NAMESPACE_SEGMENT}`, id, ...subpath);
 }
 
 /**

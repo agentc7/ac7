@@ -329,7 +329,7 @@ describe('<Sidebar />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'alpha', directive: 'ship', brief: '', permissionPresets: {} },
+      team: { name: 'alpha', directive: 'ship', context: '', permissionPresets: {} },
       teammates: [
         {
           name: 'director-1',
@@ -432,7 +432,7 @@ describe('<TeamHome />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: '', brief: '', permissionPresets: {} },
+      team: { name: 'demo-team', directive: '', context: '', permissionPresets: {} },
       teammates: [],
       openObjectives: [],
       instructions: '',
@@ -468,7 +468,7 @@ describe('<TeamHome />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: '', brief: '', permissionPresets: {} },
+      team: { name: 'demo-team', directive: '', context: '', permissionPresets: {} },
       teammates: [],
       openObjectives: [],
       instructions: '',
@@ -497,7 +497,7 @@ describe('<TeamHome />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: '', brief: '', permissionPresets: {} },
+      team: { name: 'demo-team', directive: '', context: '', permissionPresets: {} },
       teammates: [],
       openObjectives: [],
       instructions: '',
@@ -541,7 +541,7 @@ describe('briefing bootstrap', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: 'ship', brief: '', permissionPresets: {} },
+      team: { name: 'demo-team', directive: 'ship', context: '', permissionPresets: {} },
       teammates: [
         {
           name: 'director-1',
@@ -595,7 +595,7 @@ describe('<Sidebar /> overview button', () => {
       team: {
         name: 'demo-team',
         directive: 'Ship the payment service.',
-        brief: '',
+        context: '',
         permissionPresets: {},
       },
       teammates: [
@@ -624,7 +624,7 @@ describe('<TeamHome /> directive header', () => {
       team: {
         name: 'demo-team',
         directive: 'Ship the payment service.',
-        brief: 'Longer context about the operating window.',
+        context: 'Longer context about the operating window.',
         permissionPresets: {},
       },
       teammates: [
