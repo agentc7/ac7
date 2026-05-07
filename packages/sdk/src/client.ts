@@ -334,7 +334,7 @@ export class Client {
    * Fetch the team-context briefing for the authenticated member.
    *
    * Returns the caller's name, role, permissions, team
-   * (name/directive/brief/presets), list of teammates, open objectives
+   * (name/directive/context/presets), list of teammates, open objectives
    * currently on the caller's plate, and the member's personal
    * `instructions` string ready for `new Server({instructions})` in
    * the MCP link.
@@ -532,7 +532,7 @@ export class Client {
   }
 
   /**
-   * Read the current team config (name, directive, brief, presets).
+   * Read the current team config (name, directive, context, presets).
    * Authenticated; available to every member.
    */
   async getTeam(): Promise<Team> {
@@ -542,11 +542,11 @@ export class Client {
   }
 
   /**
-   * Update one or more team-level fields (name, directive, brief).
+   * Update one or more team-level fields (name, directive, context).
    * Requires `team.manage`. Permission presets are managed separately
    * via `setPreset` / `deletePreset` so the API surface stays narrow.
    */
-  async updateTeam(patch: Partial<Pick<Team, 'name' | 'directive' | 'brief'>>): Promise<Team> {
+  async updateTeam(patch: Partial<Pick<Team, 'name' | 'directive' | 'context'>>): Promise<Team> {
     const resp = await this.request(PATHS.team, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -1035,6 +1035,17 @@ export class Client {
    */
   async fsShared(): Promise<FsEntry[]> {
     const resp = await this.request(PATHS.fsShared, { method: 'GET' });
+    return FsListResponseSchema.parse(await this.json(resp)).entries;
+  }
+
+  /**
+   * Admin-only flat enumeration of every file in every home, newest
+   * first. The server gates on `members.manage` and 403s otherwise;
+   * non-admins should keep using `fsList` per-home and `fsShared` for
+   * cross-home grants. Returned entries always have `kind === 'file'`.
+   */
+  async fsAll(): Promise<FsEntry[]> {
+    const resp = await this.request(PATHS.fsAll, { method: 'GET' });
     return FsListResponseSchema.parse(await this.json(resp)).entries;
   }
 

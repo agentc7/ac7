@@ -256,6 +256,14 @@ export interface ObjectivesStore {
     actor: string,
     now?: number,
   ): ObjectivesMutationResult;
+  /**
+   * Replace the `attachments` JSON column without producing an audit
+   * event. Used by the server route after `create` to swap the
+   * originally-claimed attachment paths (in member homes) for their
+   * mirrored copies in the `/objectives/<id>/...` namespace. Returns
+   * the updated objective.
+   */
+  setAttachments(id: string, attachments: Attachment[], now?: number): Objective;
 }
 
 class SqliteObjectivesStore implements ObjectivesStore {
@@ -268,6 +276,7 @@ class SqliteObjectivesStore implements ObjectivesStore {
   private readonly insertStmt: StatementInstance;
   private readonly updateRowStmt: StatementInstance;
   private readonly updateWatchersStmt: StatementInstance;
+  private readonly updateAttachmentsStmt: StatementInstance;
   private readonly insertEventStmt: StatementInstance;
   private readonly listEventsStmt: StatementInstance;
 
@@ -314,6 +323,9 @@ class SqliteObjectivesStore implements ObjectivesStore {
     );
     this.updateWatchersStmt = db.prepare(
       'UPDATE objectives SET watchers = ?, updated_at = ? WHERE id = ?',
+    );
+    this.updateAttachmentsStmt = db.prepare(
+      'UPDATE objectives SET attachments = ?, updated_at = ? WHERE id = ?',
     );
     this.insertEventStmt = db.prepare(
       'INSERT INTO objective_events (objective_id, ts, actor, kind, payload) VALUES (?, ?, ?, ?, ?)',
@@ -701,6 +713,15 @@ class SqliteObjectivesStore implements ObjectivesStore {
     const updated = this.get(id);
     if (!updated) throw new ObjectivesError('not_found', `objective ${id} not found`);
     return { objective: updated, events };
+  }
+
+  setAttachments(id: string, attachments: Attachment[], now = Date.now()): Objective {
+    const current = this.get(id);
+    if (!current) throw new ObjectivesError('not_found', `objective ${id} not found`);
+    this.updateAttachmentsStmt.run(JSON.stringify(attachments), now, id);
+    const updated = this.get(id);
+    if (!updated) throw new ObjectivesError('not_found', `objective ${id} vanished after update`);
+    return updated;
   }
 
   private appendEvent(

@@ -8,11 +8,20 @@
  * State machine:
  *   - Healthy steady state                 → no toast
  *   - Connected, then dropped              → "Disconnected" sticky toast
+ *                                            (after a short grace window,
+ *                                            so backgrounded-tab churn
+ *                                            on focus return doesn't
+ *                                            flash the warning)
  *   - Reconnected with backfill loss       → "Reconnected" auto-dismiss toast
  *
  * The pre-first-open race (signal starts `false` until the WebSocket's
  * first `open` event) is gated behind `streamEverConnected` so the
  * shell doesn't shout "disconnected" during the normal connect window.
+ *
+ * The post-resume race (a previously-connected tab returning from the
+ * background briefly reads `connected: false` until the WebSocket
+ * re-opens) is gated by `DISCONNECT_GRACE_MS`. If reconnect lands
+ * within that window we never raise the toast at all.
  *
  * Dedup is handled by the `stream-status` tag — re-emitting replaces
  * any previous stream-status toast in place. Healthy reconnect with
@@ -25,6 +34,13 @@ import { dismissToastsByTag, toast } from '../lib/toast.js';
 
 const STATUS_TAG = 'stream-status';
 
+/**
+ * How long to wait after a disconnect before raising the toast. Tuned
+ * to absorb the typical tab-resume reconnect window (often <1 s) and
+ * brief network blips, without making real outages feel silent.
+ */
+const DISCONNECT_GRACE_MS = 3000;
+
 export function DisconnectedBanner() {
   // Read all three signals so the effect re-runs on any change.
   const connected = streamConnected.value;
@@ -36,13 +52,19 @@ export function DisconnectedBanner() {
     if (!connected && !everConnected) return;
 
     if (!connected) {
-      toast.warn({
-        tag: STATUS_TAG,
-        title: 'Disconnected',
-        body: 'The live update stream is offline — trying to reconnect…',
-        duration: null,
-      });
-      return;
+      // Defer the toast — if the stream reconnects within the grace
+      // window, the cleanup below clears the timer and the user sees
+      // nothing. This swallows the focus-return flash on browsers
+      // that pause WebSockets in backgrounded tabs.
+      const timer = setTimeout(() => {
+        toast.warn({
+          tag: STATUS_TAG,
+          title: 'Disconnected',
+          body: 'The live update stream is offline — trying to reconnect…',
+          duration: null,
+        });
+      }, DISCONNECT_GRACE_MS);
+      return () => clearTimeout(timer);
     }
 
     // Reconnected, but backfill failed — surface a transient warning,

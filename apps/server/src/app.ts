@@ -76,7 +76,13 @@ import { composeBriefing } from './briefing.js';
 import { type BusyTracker, createBusyTracker } from './busy-tracker.js';
 import { type ChannelStore, ChannelsError, GENERAL_CHANNEL_ID, validateSlug } from './channels.js';
 import { type EnrollmentStore, formatUserCode, normalizeUserCode } from './enrollments.js';
-import { type FilesystemStore, FsError, type ViewerContext } from './files/index.js';
+import {
+  basenameOf,
+  type FilesystemStore,
+  FsError,
+  objectiveNamespacePath,
+  type ViewerContext,
+} from './files/index.js';
 import type { JwtVerifier } from './jwt.js';
 import type { Logger } from './logger.js';
 import type { ActivityStore } from './member-activity.js';
@@ -1264,20 +1270,45 @@ export function createApp(options: AppOptions): CreatedApp {
           assignee: created.assignee,
           attachments: created.attachments.length,
         });
-        // Grant every initial thread member access to the attachments.
-        // `objectiveThreadMembers` already knows the originator,
-        // assignee, explicit watchers, and all admins — so one
-        // call covers everyone who should see these files.
+
+        // Mirror each attachment into the objective's own namespace
+        // (`/objectives/<id>/...`) so the file's home is the
+        // objective, not whichever member uploaded it. The originator's
+        // home copy stays put — `copyByBlobRef` shares a single
+        // underlying blob, so bytes aren't duplicated, but each entry
+        // is independently deletable.
+        //
+        // No fallback: if any copy fails, the whole create surfaces
+        // the error. A half-mirrored objective with mixed
+        // namespace/pointer paths is harder to reason about than a
+        // clean retry, and there's no legacy data to coexist with.
+        let finalObjective = created;
         if (files && created.attachments.length > 0) {
-          const members = objectiveThreadMembers(created);
-          grantAttachmentsTo(files, created.attachments, members, `obj:${created.id}`, logger);
+          const viewer = toViewer(member);
+          const namespacePaths: Attachment[] = created.attachments.map((att) => {
+            const dst = objectiveNamespacePath(created.id, basenameOf(att.path));
+            const copied = files.copyByBlobRef({
+              src: att.path,
+              dst,
+              mimeType: att.mimeType,
+              collision: 'suffix',
+              viewer,
+            });
+            return {
+              path: copied.path,
+              name: copied.name,
+              size: copied.size ?? att.size,
+              mimeType: copied.mimeType ?? att.mimeType,
+            };
+          });
+          finalObjective = objectives.setAttachments(created.id, namespacePaths);
         }
         queueMicrotask(() => {
           for (const ev of events) {
-            void publishObjectiveEvent(created, ev, member.name);
+            void publishObjectiveEvent(finalObjective, ev, member.name);
           }
         });
-        return c.json(created);
+        return c.json(finalObjective);
       } catch (err) {
         const mapped = mapObjectivesError(err);
         return c.json(mapped.body, mapped.status as 400 | 404 | 409 | 500);
@@ -1400,18 +1431,10 @@ export function createApp(options: AppOptions): CreatedApp {
       }
       try {
         const { objective: updated, events } = objectives.reassign(id, parsed.data, member.name);
-        // Backfill attachment grants for the new assignee — they're
-        // now a thread member and should be able to download
-        // anything that was attached to the objective at creation.
-        if (files && updated.attachments.length > 0) {
-          grantAttachmentsTo(
-            files,
-            updated.attachments,
-            [updated.assignee],
-            `obj:${updated.id}`,
-            logger,
-          );
-        }
+        // Attachment access for the new assignee comes "for free" from
+        // the objective-namespace ACL — they're now a thread member,
+        // so `canRead('/objectives/<id>/...')` returns true via
+        // `isObjectiveMember`. No grant backfill needed.
         queueMicrotask(() => {
           for (const ev of events) {
             void publishObjectiveEvent(updated, ev, member.name);
@@ -1473,21 +1496,11 @@ export function createApp(options: AppOptions): CreatedApp {
           parsed.data,
           member.name,
         );
-        // Every watcher_added event carries a name; backfill attachment
-        // grants for each newly-added watcher so they can read files
-        // that were attached to the objective before they joined the
-        // thread.
-        if (files && updated.attachments.length > 0) {
-          const addedNames: string[] = [];
-          for (const ev of events) {
-            if (ev.kind === 'watcher_added' && typeof ev.payload.name === 'string') {
-              addedNames.push(ev.payload.name);
-            }
-          }
-          if (addedNames.length > 0) {
-            grantAttachmentsTo(files, updated.attachments, addedNames, `obj:${updated.id}`, logger);
-          }
-        }
+        // Watcher membership changes have no FS-side bookkeeping to do:
+        // attachment access flows from `isObjectiveMember` in the
+        // namespace ACL, so adding a watcher grants access at the
+        // moment the membership lands and removing one revokes it the
+        // moment they're gone. No grant rows to backfill or sweep.
         queueMicrotask(() => {
           for (const ev of events) {
             void publishObjectiveEvent(updated, ev, member.name);
@@ -1990,7 +2003,7 @@ export function createApp(options: AppOptions): CreatedApp {
   // Read is dual-auth (every authenticated member sees their team).
   // Mutations require `team.manage`. The response always reflects the
   // freshly-read DB state — there is no in-memory snapshot to go
-  // stale. Note: changing `directive` / `brief` / member `instructions`
+  // stale. Note: changing `directive` / `context` / member `instructions`
   // takes effect on the *next* MCP session for any agent — those
   // strings are baked into the MCP `instructions` field, which is
   // frozen for the lifetime of a session by the protocol. Restart the
@@ -2007,12 +2020,12 @@ export function createApp(options: AppOptions): CreatedApp {
     }
     const body = (await c.req.json().catch(() => null)) as Record<string, unknown> | null;
     if (body === null) return c.json({ error: 'expected a JSON body' }, 400);
-    const patch: { name?: string; directive?: string; brief?: string } = {};
+    const patch: { name?: string; directive?: string; context?: string } = {};
     if (typeof body.name === 'string') patch.name = body.name;
     if (typeof body.directive === 'string') patch.directive = body.directive;
-    if (typeof body.brief === 'string') patch.brief = body.brief;
+    if (typeof body.context === 'string') patch.context = body.context;
     if (Object.keys(patch).length === 0) {
-      return c.json({ error: 'no fields to update (name, directive, brief)' }, 400);
+      return c.json({ error: 'no fields to update (name, directive, context)' }, 400);
     }
     try {
       const updated = teamStore.updateTeam(patch, member.name);
@@ -2830,6 +2843,19 @@ export function createApp(options: AppOptions): CreatedApp {
     app.get(PATHS.fsShared, auth, (c) => {
       const entries = fsStore.listShared(toViewer(c.get('member')));
       return c.json({ entries });
+    });
+
+    // `/fs/all` — admin-only flat enumeration of every file in every
+    // home, newest-first. Non-admins use the per-home tree under
+    // `/<owner>/...` for their own files and `/fs/shared` for the
+    // grants other members have given them.
+    app.get(PATHS.fsAll, auth, (c) => {
+      try {
+        const entries = fsStore.listAllFiles(toViewer(c.get('member')));
+        return c.json({ entries });
+      } catch (err) {
+        return mapFsError(c, err);
+      }
     });
 
     // `/fs/read/*` — catch-all, single URL-decoded segment per path

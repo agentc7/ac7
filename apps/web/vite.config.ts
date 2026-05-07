@@ -143,6 +143,12 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    // Bind on all interfaces so on-LAN / tailnet devices (iPhone via
+    // Tailscale, etc.) can reach the dev server for cross-device
+    // testing. The dev server is only ever expected to run inside a
+    // trusted network — not behind a public IP — so the wider bind
+    // is the right default for an internal tool.
+    host: true,
     proxy: deriveProxyRules(),
   },
 });

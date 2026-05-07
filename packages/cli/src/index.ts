@@ -124,6 +124,48 @@ function resolveAuth(input: { url?: string; token?: string }): {
   return { url, token };
 }
 
+/**
+ * Same as `resolveAuth` but runs the device-code `ac7 connect` flow
+ * inline when no token can be resolved, returning the freshly-minted
+ * token instead of failing. Used by the long-running runner verbs
+ * (`ac7 claude-code`, `ac7 codex`) where the natural UX on first run
+ * is "set me up, then start the session" rather than bouncing the
+ * operator out to a separate command.
+ *
+ * Single-use verbs (push, roster, objectives) keep the hard fail —
+ * those are typically scripted, and prompting from the middle of a
+ * pipeline would be surprising.
+ */
+async function resolveAuthOrConnect(input: { url?: string; token?: string }): Promise<{
+  url: string;
+  token: string;
+}> {
+  const url = input.url ?? process.env[ENV.url] ?? `http://127.0.0.1:${DEFAULT_PORT}`;
+  let token = input.token ?? process.env[ENV.token];
+  if (!token) {
+    const saved = findAuthEntry(url);
+    if (saved) token = saved.token;
+  }
+  if (token) return { url, token };
+
+  // No auth in this project. Fall through to the device-code flow.
+  // Pass `input.url` through (not the resolved fallback) so connect
+  // re-runs its own resolution — that way an unset `--url` still
+  // triggers connect's own prompt path with the right default.
+  process.stdout.write('ac7: no saved auth for this directory — running `ac7 connect`...\n');
+  try {
+    const result = await runConnectCommand(
+      input.url !== undefined ? { url: input.url } : {},
+      (line) => process.stdout.write(`${line}\n`),
+      (line) => process.stderr.write(`${line}\n`),
+    );
+    return { url: result.url, token: result.token };
+  } catch (err) {
+    if (err instanceof UsageError) fail(err.message, 2);
+    fail(err instanceof Error ? err.message : String(err));
+  }
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   if (argv.length === 0 || argv[0] === '-h' || argv[0] === '--help') {
@@ -745,7 +787,7 @@ async function handleClaudeCode(args: string[]): Promise<void> {
   }
 
   try {
-    const resolved = resolveAuth({ url, token });
+    const resolved = await resolveAuthOrConnect({ url, token });
     const code = await runClaudeCodeCommand({
       url: resolved.url,
       token: resolved.token,
@@ -820,7 +862,7 @@ async function handleCodex(args: string[]): Promise<void> {
   }
 
   try {
-    const resolved = resolveAuth({ url, token });
+    const resolved = await resolveAuthOrConnect({ url, token });
     const code = await runCodexCommand({
       url: resolved.url,
       token: resolved.token,

@@ -38,7 +38,7 @@ const DAVE = 'ac7_test_dave_secret_token';
 const TEAM: Team = {
   name: 'demo-team',
   directive: 'Ship the thing.',
-  brief: '',
+  context: '',
   permissionPresets: {},
 };
 

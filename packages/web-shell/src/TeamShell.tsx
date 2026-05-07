@@ -45,6 +45,7 @@ import { ChannelHeader } from './components/ChannelHeader.js';
 import { CommandPalette } from './components/CommandPalette.js';
 import { Composer } from './components/Composer.js';
 import { DisconnectedBanner } from './components/DisconnectedBanner.js';
+import { FilePreviewModal } from './components/FilePreviewModal.js';
 import { FilesPanel } from './components/FilesPanel.js';
 import { Header } from './components/Header.js';
 import { InboxPanel } from './components/InboxPanel.js';
@@ -71,7 +72,7 @@ import {
 import { type Identity, setIdentity } from './lib/identity.js';
 import { closeInspector } from './lib/inspector.js';
 import { startSubscribe, streamConnected } from './lib/live.js';
-import { appendMessages, dmOther, messagesByThread } from './lib/messages.js';
+import { appendMessages, dmOther, messagesByThread, objectiveThreadKey } from './lib/messages.js';
 import { loadObjectives } from './lib/objectives.js';
 import { closePalette, togglePalette } from './lib/palette.js';
 import { initializePushState } from './lib/push.js';
@@ -247,14 +248,21 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
       // Auto-read the active thread: any time the view changes or a
       // new message lands, bump lastRead for the active thread so its
       // unread count stays at 0 while the viewer is watching it.
+      // Objective threads (`obj:<id>`) don't have a top-level URL —
+      // they surface inside the objective detail view, so when that
+      // view is active the embedded thread is what the viewer is
+      // looking at and counts as read.
       disposeAutoRead = effect(() => {
         const current = view.value;
         const map = messagesByThread.value;
-        if (current.kind !== 'thread') return;
-        const messages = map.get(current.key) ?? [];
+        let key: string | null = null;
+        if (current.kind === 'thread') key = current.key;
+        else if (current.kind === 'objective-detail') key = objectiveThreadKey(current.id);
+        if (key === null) return;
+        const messages = map.get(key) ?? [];
         if (messages.length === 0) return;
         const latest = messages[messages.length - 1];
-        if (latest) markThreadRead(current.key, latest.ts);
+        if (latest) markThreadRead(key, latest.ts);
       });
 
       // Presence-freshness hook: every time the live stream transitions
@@ -328,6 +336,7 @@ export function TeamShell(props: TeamShellProps): JSX.Element {
           <AccountPanel viewer={viewer} />
         </RouteModal>
       )}
+      <FilePreviewModal />
       <CommandPalette />
     </>
   );

@@ -40,6 +40,7 @@ import {
   normalizePath,
   ownerOf,
   parentOf,
+  parseObjectiveNamespacePath,
   ROOT_PATH,
 } from './paths.js';
 
@@ -131,10 +132,42 @@ export interface WriteFileResult {
   renamed: boolean;
 }
 
+/**
+ * Hook for the objective-namespace ACL gate. Decoupled from the
+ * objectives store so the FS layer doesn't have to know what an
+ * objective row looks like — it only needs the membership question
+ * answered.
+ *
+ * `isMember` returns true if `viewerName` is the originator, the
+ * current assignee, or one of the watchers of `objectiveId`. The FS
+ * store calls this whenever a path under `/objectives/<id>/...` is
+ * read, written, or deleted by a non-admin viewer.
+ *
+ * Optional at construction time — without a provider, the namespace
+ * is silently treated as forbidden for non-admins (read/write 403),
+ * which is the right failure mode while the caller is wiring things up.
+ */
+export interface ObjectiveAclProvider {
+  isMember(objectiveId: string, viewerName: string): boolean;
+}
+
 export interface FilesystemStore {
   stat(path: string, viewer: ViewerContext): FsEntry | null;
   list(path: string, viewer: ViewerContext): FsEntry[];
   listShared(viewer: ViewerContext): FsEntry[];
+  /** Admin-only flat enumeration of every file across the team. */
+  listAllFiles(viewer: ViewerContext): FsEntry[];
+
+  /**
+   * Create a new file entry that points at the same blob as `srcPath`.
+   * Refcount-aware — the blob bytes are not duplicated; only the
+   * metadata row is. Used to materialize objective attachments into
+   * `/objectives/<id>/...` while keeping the originator's home copy
+   * intact. Source must be readable by `viewer`; destination must be
+   * writable by `viewer`. Honors the same collision strategies as
+   * `writeFile`.
+   */
+  copyByBlobRef(input: CopyByBlobRefInput): FsEntry;
 
   openReadStream(path: string, viewer: ViewerContext): { entry: FsEntry; stream: Readable };
 
@@ -160,14 +193,31 @@ export interface FilesystemStore {
   ensureHome(slotName: string, now?: number): void;
 }
 
+export interface CopyByBlobRefInput {
+  src: string;
+  dst: string;
+  mimeType?: string;
+  /** Default 'error'. Same semantics as `writeFile`. */
+  collision?: WriteCollisionStrategy;
+  viewer: ViewerContext;
+}
+
 interface SqliteFilesystemStoreOptions {
   db: DatabaseSyncInstance;
   blobs: BlobStore;
+  /**
+   * ACL provider for the `/objectives/<id>/...` namespace. Injected
+   * rather than imported so the FS package has no inbound dependency
+   * on the objectives store. Optional — without it, namespace paths
+   * 403 for non-admins.
+   */
+  objectiveAcl?: ObjectiveAclProvider;
 }
 
 class SqliteFilesystemStore implements FilesystemStore {
   private readonly db: DatabaseSyncInstance;
   private readonly blobs: BlobStore;
+  private readonly objectiveAcl: ObjectiveAclProvider | null;
 
   private readonly getEntryStmt: StatementInstance;
   private readonly listChildrenStmt: StatementInstance;
@@ -185,10 +235,12 @@ class SqliteFilesystemStore implements FilesystemStore {
   private readonly hasGrantStmt: StatementInstance;
   private readonly movePathStmt: StatementInstance;
   private readonly listHomesStmt: StatementInstance;
+  private readonly listAllFilesStmt: StatementInstance;
 
   constructor(opts: SqliteFilesystemStoreOptions) {
     this.db = opts.db;
     this.blobs = opts.blobs;
+    this.objectiveAcl = opts.objectiveAcl ?? null;
     this.db.exec(CREATE_SCHEMA);
 
     this.getEntryStmt = this.db.prepare('SELECT * FROM fs_entries WHERE path = ?');
@@ -237,6 +289,9 @@ class SqliteFilesystemStore implements FilesystemStore {
     this.listHomesStmt = this.db.prepare(
       "SELECT * FROM fs_entries WHERE parent_path = '/' AND kind = 'directory' ORDER BY name",
     );
+    this.listAllFilesStmt = this.db.prepare(
+      "SELECT * FROM fs_entries WHERE kind = 'file' ORDER BY updated_at DESC",
+    );
   }
 
   // ─── permissions ────────────────────────────────────────────────
@@ -246,15 +301,30 @@ class SqliteFilesystemStore implements FilesystemStore {
     return ownerOf(path) === viewer.name;
   }
 
+  /**
+   * Membership in the objective whose namespace contains `path`. Returns
+   * `false` for paths outside the objective namespace and for the bare
+   * `/objectives` parent (which has no specific objective). Used as the
+   * ACL gate for both read and write under `/objectives/<id>/...`.
+   */
+  private isObjectiveMember(path: string, viewer: ViewerContext): boolean {
+    if (this.objectiveAcl === null) return false;
+    const parsed = parseObjectiveNamespacePath(path);
+    if (parsed === null) return false;
+    return this.objectiveAcl.isMember(parsed.id, viewer.name);
+  }
+
   private canRead(path: string, viewer: ViewerContext): boolean {
     if (viewer.permissions.includes('members.manage')) return true;
     if (this.ownsPath(path, viewer)) return true;
+    if (this.isObjectiveMember(path, viewer)) return true;
     return this.hasGrant(path, viewer.name);
   }
 
   private canWrite(path: string, viewer: ViewerContext): boolean {
     if (viewer.permissions.includes('members.manage')) return true;
-    return this.ownsPath(path, viewer);
+    if (this.ownsPath(path, viewer)) return true;
+    return this.isObjectiveMember(path, viewer);
   }
 
   // ─── read API ──────────────────────────────────────────────────
@@ -303,6 +373,20 @@ class SqliteFilesystemStore implements FilesystemStore {
 
   listShared(viewer: ViewerContext): FsEntry[] {
     const rows = this.listSharedStmt.all(viewer.name) as unknown as FsEntryRow[];
+    return rows.map(rowToEntry);
+  }
+
+  /**
+   * Flat list of every file across every home, newest first. Admin-only —
+   * the existing tree navigation under `/<owner>/` is the right path
+   * for non-directors, who shouldn't see the global file list. Throws
+   * `forbidden` if the caller lacks `members.manage`.
+   */
+  listAllFiles(viewer: ViewerContext): FsEntry[] {
+    if (!viewer.permissions.includes('members.manage')) {
+      throw new FsError('forbidden', 'admin permission required to list all files');
+    }
+    const rows = this.listAllFilesStmt.all() as unknown as FsEntryRow[];
     return rows.map(rowToEntry);
   }
 
@@ -406,6 +490,102 @@ class SqliteFilesystemStore implements FilesystemStore {
     const row = this.getEntryStmt.get(finalPath) as FsEntryRow | undefined;
     if (!row) throw new FsError('corrupt', `entry vanished after write: ${finalPath}`);
     return { entry: rowToEntry(row), renamed };
+  }
+
+  /**
+   * Materialize a new entry at `dst` that shares the underlying blob
+   * with `src`. Used to mount objective attachments into
+   * `/objectives/<id>/...` without duplicating blob bytes.
+   *
+   * Refcount semantics: the shared blob's refcount is incremented by
+   * one — the source entry still holds its own reference, so deleting
+   * either entry leaves the other intact, and the bytes are dropped
+   * from disk only when the last entry referencing them goes away.
+   */
+  copyByBlobRef(input: CopyByBlobRefInput): FsEntry {
+    const src = normalizePath(input.src);
+    const dstNormalized = normalizePath(input.dst);
+    if (dstNormalized === ROOT_PATH) {
+      throw new FsError('invalid_input', 'cannot copy to root');
+    }
+    if (!this.canRead(src, input.viewer)) {
+      throw new FsError('forbidden', `cannot read source: ${src}`);
+    }
+    if (!this.canWrite(dstNormalized, input.viewer)) {
+      throw new FsError('forbidden', `cannot write to destination: ${dstNormalized}`);
+    }
+    const srcRow = this.getEntryStmt.get(src) as FsEntryRow | undefined;
+    if (!srcRow) throw new FsError('not_found', `no such source: ${src}`);
+    if (srcRow.kind !== 'file') {
+      throw new FsError('is_a_directory', `source is a directory: ${src}`);
+    }
+    if (!srcRow.content_hash || srcRow.size === null) {
+      throw new FsError('corrupt', `source has no content: ${src}`);
+    }
+    const mimeType = input.mimeType ?? srcRow.mime_type ?? 'application/octet-stream';
+    const now = Date.now();
+
+    // Auto-create dst ancestors (e.g. `/objectives` and
+    // `/objectives/<id>`) before the metadata transaction. Same
+    // pattern as `writeFile` — keeps mkdir its own idempotent step.
+    this.ensureDirectoryTree(parentOf(dstNormalized), input.viewer, now);
+
+    const collision = input.collision ?? 'error';
+    let finalPath = dstNormalized;
+
+    this.withTx(() => {
+      let existing = this.getEntryStmt.get(finalPath) as FsEntryRow | undefined;
+      if (existing) {
+        if (existing.kind === 'directory') {
+          throw new FsError('is_a_directory', `cannot overwrite directory: ${finalPath}`);
+        }
+        if (collision === 'error') {
+          throw new FsError('exists', `already exists: ${finalPath}`);
+        }
+        if (collision === 'suffix') {
+          const parentPath = existing.parent_path;
+          const base = basenameOf(finalPath);
+          const newName = dedupeBasename(base, (candidate) => {
+            const p = joinPath(parentPath, candidate);
+            return this.getEntryStmt.get(p) !== undefined;
+          });
+          finalPath = joinPath(parentPath, newName);
+          existing = undefined;
+        }
+      }
+
+      if (existing && collision === 'overwrite') {
+        const priorHash = existing.content_hash;
+        this.updateEntryContentStmt.run(srcRow.content_hash, srcRow.size, mimeType, now, finalPath);
+        this.incRefStmt.run(srcRow.content_hash);
+        if (priorHash && priorHash !== srcRow.content_hash) {
+          this.decrementAndMaybeDropBlob(priorHash);
+        }
+      } else {
+        const ownerName = ownerOf(finalPath);
+        if (!ownerName) {
+          throw new FsError('invalid_input', 'cannot write directly under root');
+        }
+        this.insertEntryStmt.run(
+          finalPath,
+          parentOf(finalPath),
+          basenameOf(finalPath),
+          'file',
+          ownerName,
+          srcRow.content_hash,
+          srcRow.size,
+          mimeType,
+          now,
+          input.viewer.name,
+          now,
+        );
+        this.incRefStmt.run(srcRow.content_hash);
+      }
+    });
+
+    const row = this.getEntryStmt.get(finalPath) as FsEntryRow | undefined;
+    if (!row) throw new FsError('corrupt', `entry vanished after copy: ${finalPath}`);
+    return rowToEntry(row);
   }
 
   mkdir(path: string, writer: ViewerContext, opts: { recursive?: boolean } = {}): FsEntry {

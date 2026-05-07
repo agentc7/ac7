@@ -22,12 +22,14 @@
 import { FS_PATHS } from '@agentc7/sdk/protocol';
 import type { FsEntry } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
+import { briefing } from '../lib/briefing.js';
 import { getClient } from '../lib/client.js';
+import { openPreview } from '../lib/file-preview.js';
 import { selectFiles } from '../lib/view.js';
 import { AlertCircle, X } from './icons/index.js';
 
 interface PanelState {
-  mode: 'tree' | 'shared';
+  mode: 'tree' | 'shared' | 'all';
   path: string;
   entries: FsEntry[] | null;
   loading: boolean;
@@ -66,6 +68,21 @@ async function refreshShared(): Promise<void> {
     panelState.value = {
       ...panelState.value,
       error: err instanceof Error ? err.message : 'failed to list shared files',
+      loading: false,
+      entries: null,
+    };
+  }
+}
+
+async function refreshAll(): Promise<void> {
+  panelState.value = { ...panelState.value, mode: 'all', loading: true, error: null };
+  try {
+    const entries = await getClient().fsAll();
+    panelState.value = { ...panelState.value, entries, loading: false };
+  } catch (err) {
+    panelState.value = {
+      ...panelState.value,
+      error: err instanceof Error ? err.message : 'failed to list all files',
       loading: false,
       entries: null,
     };
@@ -126,6 +143,8 @@ async function handleDelete(entry: FsEntry): Promise<void> {
     await getClient().fsRm(entry.path, entry.kind === 'directory');
     if (panelState.value.mode === 'shared') {
       await refreshShared();
+    } else if (panelState.value.mode === 'all') {
+      await refreshAll();
     } else {
       await refreshTree(panelState.value.path);
     }
@@ -192,6 +211,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
   }
 
   const entries = current.entries ?? [];
+  const isAdmin = briefing.value?.permissions.includes('members.manage') ?? false;
 
   return (
     <div class="flex-1 flex flex-col min-h-0" style="padding:16px;overflow-y:auto">
@@ -202,7 +222,7 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
             <Breadcrumb path={current.path} />
           ) : (
             <span style="font-family:var(--f-mono);font-size:12.5px;color:var(--muted)">
-              Shared with you
+              {current.mode === 'all' ? 'All files (admin)' : 'Shared with you'}
             </span>
           )}
           <div style="margin-left:auto;display:flex;gap:8px">
@@ -241,6 +261,23 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
             >
               {current.mode === 'shared' ? 'Browse tree' : 'Shared with me'}
             </button>
+            {/* All-files view is an admin-only convenience: every file
+                across every home in one flat list. The server enforces
+                the same gate; this hides the toggle for non-admins
+                rather than letting them click and 403. */}
+            {isAdmin && (
+              <button
+                type="button"
+                class={`btn${current.mode === 'all' ? ' btn-primary' : ''}`}
+                style="font-size:12px"
+                onClick={() =>
+                  current.mode === 'all' ? void refreshTree(current.path) : void refreshAll()
+                }
+                title="Browse every file across every home (admin only)"
+              >
+                {current.mode === 'all' ? 'Browse tree' : 'All files'}
+              </button>
+            )}
           </div>
         </div>
       </header>
@@ -272,7 +309,9 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
         <p style="color:var(--muted);font-size:13px">
           {current.mode === 'shared'
             ? 'Nothing has been shared with you yet.'
-            : 'This directory is empty.'}
+            : current.mode === 'all'
+              ? 'No files anywhere on the team yet.'
+              : 'This directory is empty.'}
         </p>
       )}
 
@@ -303,13 +342,31 @@ export function FilesPanel({ viewer, path }: FilesPanelProps) {
                 {entry.name}/
               </button>
             ) : (
-              <span style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px">
-                <span style="font-weight:500;word-break:break-word">{entry.name}</span>
+              <button
+                type="button"
+                onClick={() =>
+                  openPreview({
+                    path: entry.path,
+                    name: entry.name,
+                    size: entry.size ?? 0,
+                    mimeType: entry.mimeType ?? 'application/octet-stream',
+                  })
+                }
+                title={`Preview ${entry.name}`}
+                style="flex:1;min-width:0;display:flex;flex-direction:column;gap:2px;background:transparent;border:0;padding:0;text-align:left;cursor:pointer;color:var(--ink)"
+              >
+                {/* In the flat all-files view two files can share a name across
+                    different homes, so the absolute path is the disambiguator;
+                    in tree/shared mode the name alone reads cleanly because
+                    the surrounding directory is implied by the breadcrumb. */}
+                <span style="font-weight:500;word-break:break-word">
+                  {current.mode === 'all' ? entry.path : entry.name}
+                </span>
                 <span style="color:var(--muted);font-size:11px">
                   {formatSize(entry.size)} · {entry.mimeType ?? 'unknown'}
                   {entry.owner !== viewer && ` · owned by ${entry.owner}`}
                 </span>
-              </span>
+              </button>
             )}
             {entry.kind === 'file' && (
               <a

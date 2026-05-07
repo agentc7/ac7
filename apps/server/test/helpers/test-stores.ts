@@ -31,7 +31,12 @@ export function mockTeamStore(team: Team): TeamStore {
     hasTeam: () => true,
     getPresets: () => ({ ...current.permissionPresets }),
     setTeam: (input) => {
-      current = { ...current, name: input.name, directive: input.directive, brief: input.brief };
+      current = {
+        ...current,
+        name: input.name,
+        directive: input.directive,
+        context: input.context,
+      };
       return snapshot();
     },
     updateTeam: (patch) => {
@@ -39,7 +44,7 @@ export function mockTeamStore(team: Team): TeamStore {
         ...current,
         name: patch.name ?? current.name,
         directive: patch.directive ?? current.directive,
-        brief: patch.brief ?? current.brief,
+        context: patch.context ?? current.context,
       };
       return snapshot();
     },
@@ -86,7 +91,7 @@ export interface SeededStores {
 export interface SeedTeamInput {
   name: string;
   directive: string;
-  brief?: string;
+  context?: string;
   permissionPresets?: Record<string, Permission[]>;
 }
 
@@ -96,7 +101,7 @@ export function seedStores(input: { team: SeedTeamInput; members: SeedMember[] }
   stores.team.setTeam({
     name: input.team.name,
     directive: input.team.directive,
-    brief: input.team.brief ?? '',
+    context: input.team.context ?? '',
   });
   for (const [name, leaves] of Object.entries(input.team.permissionPresets ?? {})) {
     stores.team.setPreset(name, leaves);

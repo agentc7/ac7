@@ -56,8 +56,8 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
       name: 'roster',
       description:
         `List all teammates currently on the ac7 net. You go by ${identity} in ` +
-        `team ${team.name}. Directive: ${team.directive}. Returns each teammate's ` +
-        `name, role, authority, and connection state.`,
+        `team ${team.name}. Returns each teammate's name, role, authority, and ` +
+        `connection state.`,
       inputSchema: { type: 'object', properties: {} },
     },
     {
@@ -69,12 +69,12 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
         `named channel's members, use \`channels_post\` instead — \`broadcast\` always goes ` +
         `to general. You go by ${identity}. Teammates: ${teammateList}. Optionally attach ` +
         `files from your home (\`/${name}/...\`); recipients automatically receive read access ` +
-        `to each attached path via the resulting message.`,
+        `to each attached path via the resulting message. Returns delivery counts (live ` +
+        `subscribers, addressed targets) and the new message id.`,
       inputSchema: {
         type: 'object',
         properties: {
           body: { type: 'string', description: 'The message body the team will receive.' },
-          title: { type: 'string', description: 'Optional short title / subject line.' },
           level: {
             type: 'string',
             enum: [...LEVELS],
@@ -95,14 +95,14 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
       description:
         `Send a direct message to a specific teammate on ${team.name}. Messages are ` +
         `private to you and the target. You go by ${identity}. Available names: ` +
-        `${teammateList}. Directive: ${team.directive}. Optionally attach files from ` +
-        `your home; the recipient receives read access to each attached path.`,
+        `${teammateList}. Optionally attach files from your home; the recipient ` +
+        `receives read access to each attached path. Returns delivery counts and the ` +
+        `new message id.`,
       inputSchema: {
         type: 'object',
         properties: {
           to: { type: 'string', description: 'The name of the teammate to message.' },
           body: { type: 'string', description: 'The message body.' },
-          title: { type: 'string', description: 'Optional short title / subject line.' },
           level: {
             type: 'string',
             enum: [...LEVELS],
@@ -138,7 +138,8 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
         `team. You must already be a member of the channel; ask a director to add you if ` +
         `not. You go by ${identity}. Optionally attach files from your home; channel members ` +
         `receive read access to each attached path. To find available channels run ` +
-        `\`channels_list\`. To post to the team-wide general channel use \`broadcast\`.`,
+        `\`channels_list\`. To post to the team-wide general channel use \`broadcast\`. ` +
+        `Returns delivery counts and the new message id.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -147,7 +148,6 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
             description: 'Channel slug (e.g. "frontend", "ops"). Must be a channel you belong to.',
           },
           body: { type: 'string', description: 'The message body.' },
-          title: { type: 'string', description: 'Optional short title / subject line.' },
           level: {
             type: 'string',
             enum: [...LEVELS],
@@ -167,11 +167,10 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
       name: 'recent',
       description:
         `Fetch recent messages from the ${team.name} team's general channel, a specific ` +
-        `DM thread, or a named channel. You go by ${identity}. Team directive: ` +
-        `${team.directive}. Pass exactly one of: \`with=NAME\` for DMs with that teammate, ` +
-        `\`channel=SLUG\` for a named channel's scrollback, or no scope arg for the general ` +
-        `team channel. Returns messages newest-first up to ${DEFAULT_RECENT_LIMIT} by ` +
-        `default (max ${MAX_RECENT_LIMIT}).`,
+        `DM thread, or a named channel. You go by ${identity}. Pass exactly one of: ` +
+        `\`with=NAME\` for DMs with that teammate, \`channel=SLUG\` for a named channel's ` +
+        `scrollback, or no scope arg for the general team channel. Returns messages ` +
+        `newest-first up to ${DEFAULT_RECENT_LIMIT} by default (max ${MAX_RECENT_LIMIT}).`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -199,7 +198,8 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
         `assigned to you, originated by you, or objectives you're watching. ` +
         `Use \`status\` to filter (active | blocked | done | cancelled); omit to see all ` +
         `statuses. Objectives always carry a required outcome — use \`objectives_view\` ` +
-        `for full detail including the watcher list and audit log.`,
+        `for full detail including the watcher list and audit log. Returns each objective's ` +
+        `id, title, outcome, status, assignee, originator, and timestamps.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -215,10 +215,11 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
     {
       name: 'objectives_view',
       description:
-        `Fetch the full state of a single objective including its outcome, current status, ` +
-        `block reason (if any), and the append-only event history. Use this before calling ` +
+        `Fetch the full state of a single objective. Use this before calling ` +
         `\`objectives_update\` or \`objectives_complete\` so you have the latest acceptance ` +
-        `criteria fresh in context.`,
+        `criteria fresh in context. Returns the full objective record (id, title, outcome, ` +
+        `body, status, assignee, originator, watchers, attachments, block reason if any, ` +
+        `result if completed) plus the append-only event log.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -235,7 +236,8 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
         `block. This tool is for STATE transitions only — for progress notes, questions, ` +
         `intermediate findings, or any conversation about the objective, use ` +
         `\`objectives_discuss\` to post into the objective's discussion thread. This tool ` +
-        `never transitions to 'done' — call \`objectives_complete\` for that.`,
+        `never transitions to 'done' — call \`objectives_complete\` for that. Returns the ` +
+        `updated objective.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -264,7 +266,8 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
         `findings, coordination with the originator, or acknowledgments — anything that's ` +
         `conversation rather than a state transition. Every post is archived alongside ` +
         `the objective's event log and is visible in the web UI's inline thread view. ` +
-        `Optionally attach files from your home; thread members receive automatic read access.`,
+        `Optionally attach files from your home; thread members receive automatic read access. ` +
+        `Returns the new message id.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -272,10 +275,6 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
           body: {
             type: 'string',
             description: 'The message body to post into the objective thread.',
-          },
-          title: {
-            type: 'string',
-            description: 'Optional short title / subject line.',
           },
           attachments: {
             type: 'array',
@@ -293,7 +292,8 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
         `Mark an objective as done with a required result summary. Call ` +
         `\`objectives_view\` first to refresh the acceptance criteria in context. The ` +
         `\`result\` should explicitly address whether the stated outcome was met and link ` +
-        `or describe the deliverable. Only the current assignee may call this.`,
+        `or describe the deliverable. Only the current assignee may call this. Returns ` +
+        `the now-completed objective with its \`completedAt\` and \`result\` filled in.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -314,6 +314,14 @@ export function defineTools(briefing: BriefingResponse): Tool[] {
     // require either a grant (the file was attached to a message you
     // can see) or director authority. See `fs_shared` for a list of
     // files shared with you.
+    //
+    // Objective namespaces live at `/objectives/<id>/` and are
+    // collaboratively read/write/delete-able by every member of the
+    // objective (originator + assignee + watchers). Files attached at
+    // objective-create time are mirrored into this namespace
+    // automatically — agents who are members can also `fs_write`
+    // additional files there directly, and they participate in the
+    // same membership ACL.
     ...buildFilesystemTools(name),
     // ── UserType-gated tools ────────────────────────────────────────
     //
@@ -359,31 +367,33 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
     tools.push({
       name: 'team_get',
       description:
-        'Read the current team config (name, directive, brief, permission presets). ' +
-        'Use this to confirm team state before proposing edits, or to check whether ' +
-        'a previous `team_update` landed.',
+        'Read the current team config: returns name, directive, context, and the named ' +
+        'permission presets. Use this to confirm team state before proposing edits, or ' +
+        'to check whether a previous `team_update` landed.',
       inputSchema: { type: 'object', properties: {} },
     });
     tools.push({
       name: 'team_update',
       description:
-        'Update one or more team-level fields. `directive` and `brief` change the ' +
-        'context every member is briefed with on subsequent MCP sessions; live ' +
-        'sessions still reflect the OLD strings until the runner restarts (the MCP ' +
+        'Update one or more team-level fields. `directive` and `context` change the ' +
+        'briefing every member is shown on subsequent MCP sessions; live sessions ' +
+        'still reflect the OLD strings until the runner restarts (the MCP ' +
         '`instructions` field is frozen for the lifetime of a session by protocol). ' +
-        'Authority: requires `team.manage`. Pass at least one of `name`, `directive`, ' +
-        '`brief`.',
+        'Pass at least one of `name`, `directive`, `context`. Returns the updated team ' +
+        'config (same shape as `team_get`).',
       inputSchema: {
         type: 'object',
         properties: {
           name: { type: 'string', description: 'New team name (1–128 chars).' },
           directive: {
             type: 'string',
-            description: "New short directive (1–512 chars). Set the team's overarching mission.",
+            description:
+              "New short directive (1–512 chars). The team's standing imperative — what the team is here to do.",
           },
-          brief: {
+          context: {
             type: 'string',
-            description: 'New longer brief (≤ 4096 chars). Operating context.',
+            description:
+              'New longer team context (≤ 4096 chars). Background paragraph that complements the directive.',
           },
         },
       },
@@ -392,7 +402,9 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
     // ─── Permission presets ──────────────────────────────────────
     tools.push({
       name: 'presets_list',
-      description: "List the team's permission presets — named bundles of leaf permissions.",
+      description:
+        "List the team's permission presets — named bundles of leaf permissions. " +
+        'Returns each preset as `{ name, permissions[] }`.',
       inputSchema: { type: 'object', properties: {} },
     });
     tools.push({
@@ -400,7 +412,7 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
       description:
         'Create or replace a permission preset. Members that reference this preset by ' +
         'name in their raw permissions automatically pick up the new leaf set on the next ' +
-        'read — no member-by-member re-resolve required.',
+        'read — no member-by-member re-resolve required. Returns the upserted preset.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -421,9 +433,9 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
     tools.push({
       name: 'presets_delete',
       description:
-        'Delete a permission preset. Returns the names of members that still reference it; ' +
-        'their resolved permissions silently drop those leaves on the next read. Use this ' +
-        'with intent — there is no soft-delete.',
+        'Delete a permission preset. Use this with intent — there is no soft-delete. ' +
+        'Returns the names of members that still reference the deleted preset (their ' +
+        'resolved permissions silently drop those leaves on the next read).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -439,9 +451,10 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
     tools.push({
       name: 'members_add',
       description:
-        'Create a new team member. Returns the plaintext bearer token exactly once — ' +
-        'capture it from the response and deliver it to the operator/agent securely. ' +
-        '`permissions` accepts preset names (e.g. "admin", "operator") or leaf permissions.',
+        'Create a new team member. `permissions` accepts preset names (e.g. "admin", ' +
+        '"operator") or leaf permissions. Returns the new member plus the plaintext ' +
+        'bearer token (emitted exactly once — capture it from the response and deliver ' +
+        'it to the operator/agent securely).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -469,7 +482,8 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
       description:
         "Update an existing member's role, instructions, or permissions. Changes to " +
         "`instructions` apply to that member's NEXT MCP session — the current session " +
-        'continues to reflect the old briefing until the runner restarts.',
+        'continues to reflect the old briefing until the runner restarts. Returns the ' +
+        'updated member record (no token, no totp secret — those are not re-emitted).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -491,7 +505,8 @@ function buildAdminTools(briefing: BriefingResponse): Tool[] {
       name: 'members_remove',
       description:
         'Delete a member. All bearer tokens for the member are revoked. Refused if this ' +
-        'would leave the team with zero members holding `members.manage`.',
+        'would leave the team with zero members holding `members.manage`. Returns nothing ' +
+        'on success.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -513,7 +528,9 @@ function buildFilesystemTools(name: string): Tool[] {
       description:
         `List the contents of a directory in the ac7 virtual filesystem. ` +
         `Your home is \`${home}\`; passing "/" lists the set of homes you can see. ` +
-        `Entries include per-item metadata (kind, size, mime type, owner).`,
+        `Entries include per-item metadata (kind, size, mime type, owner). ` +
+        `Objective namespaces are listable at \`/objectives/<id>/\` if you're a ` +
+        `member (originator, assignee, or watcher) of that objective.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -555,13 +572,18 @@ function buildFilesystemTools(name: string): Tool[] {
         `Upload a file. Pass EITHER \`text\` (UTF-8 string) or \`base64\` (for binary ` +
         `content), never both. Parent directories are auto-created. By default errors on ` +
         `collision; use collide="suffix" to auto-rename ("foo.txt" → "foo-1.txt") or ` +
-        `"overwrite" to replace the existing file. You go by ${name}; your home is ${home}.`,
+        `"overwrite" to replace the existing file. You go by ${name}; your home is ${home}. ` +
+        `Returns the resulting FsEntry (path, name, size, mime, owner) — note the path ` +
+        `may differ from the requested one when collide="suffix" produced a rename.`,
       inputSchema: {
         type: 'object',
         properties: {
           path: {
             type: 'string',
-            description: `Absolute path to write (must sit under ${home} unless you are a director).`,
+            description:
+              `Absolute path to write. Allowed under ${home} (your home), ` +
+              `under \`/objectives/<id>/\` for any objective you're a member of, ` +
+              `or anywhere if you're a director.`,
           },
           mimeType: {
             type: 'string',
@@ -588,7 +610,7 @@ function buildFilesystemTools(name: string): Tool[] {
       name: 'fs_mkdir',
       description:
         `Create a directory. Pass recursive=true to auto-create missing parents. ` +
-        `You go by ${name}; your home is ${home}.`,
+        `You go by ${name}; your home is ${home}. Returns the directory's FsEntry.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -603,7 +625,7 @@ function buildFilesystemTools(name: string): Tool[] {
       description:
         `Remove a file or directory. Directories require recursive=true if non-empty. ` +
         `Deletion cascades blob refcounts — the underlying content is purged only when the ` +
-        `last referencing entry across the filesystem goes away.`,
+        `last referencing entry across the filesystem goes away. Returns nothing on success.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -620,7 +642,8 @@ function buildFilesystemTools(name: string): Tool[] {
       name: 'fs_mv',
       description:
         `Rename / move a file. Directory moves are not currently supported. ` +
-        `Both the source and destination must sit under a tree you own (or you must be a director).`,
+        `Both the source and destination must sit under a tree you own (or you must be a director). ` +
+        `Returns the FsEntry at the destination path.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -633,9 +656,13 @@ function buildFilesystemTools(name: string): Tool[] {
     {
       name: 'fs_shared',
       description:
-        `List every file that has been shared with you via a message or objective ` +
-        `attachment. Owner-private files from other slots never appear here — only ones ` +
-        `a teammate explicitly attached to a thread you can see.`,
+        `List every file that has been shared with you via a message attachment — ` +
+        `entries another member explicitly attached to a thread you can see. Owner- ` +
+        `private files from other slots never appear here. Files that live in objective ` +
+        `namespaces you're a member of (\`/objectives/<id>/...\`) are NOT in this list ` +
+        `either; access there flows from membership, not grants — use \`fs_ls\` on ` +
+        `that namespace path to see them. Returns each file's FsEntry (path, size, mime, ` +
+        `owner).`,
       inputSchema: { type: 'object', properties: {} },
     },
   ];
@@ -672,7 +699,8 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
       `contractual: it must state the tangible, verifiable result that defines "done", not ` +
       `just a vague intent. Optionally include a \`body\` for additional context and ` +
       `\`watchers\` (a list of names) to loop other teammates into the discussion thread ` +
-      `from the start. Available assignees: ${teammateList}.`,
+      `from the start. Available assignees: ${teammateList}. Returns the new objective ` +
+      `with its generated id.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -704,7 +732,7 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
           type: 'array',
           items: { type: 'string' },
           description:
-            'Optional list of file paths to attach to the objective. Every thread member (originator, assignee, watchers, directors) receives automatic read access. Use `fs_write` to upload a file first.',
+            "Optional list of file paths to attach to the objective. Each is mirrored into the objective's namespace at `/objectives/<id>/<basename>` so the file lives with the objective rather than in your home; every thread member (originator, assignee, watchers, directors) gets read/write access via the namespace ACL. Use `fs_write` to upload a file first.",
         },
       },
       required: ['title', 'outcome', 'assignee'],
@@ -722,7 +750,7 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
       `shifted, the problem went away, the assignee is overwhelmed, etc. Cancellation is ` +
       `terminal: a cancelled objective cannot be resumed (create a fresh one if you change ` +
       `your mind). ${cancelScope} Include a \`reason\` so the assignee and any watchers ` +
-      `understand why.`,
+      `understand why. Returns the now-cancelled objective.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -748,7 +776,8 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
       `lifecycle event and every discussion post on the objective — use this to loop in a ` +
       `reviewer, a subject-matter expert, or anyone who should have awareness without ` +
       `being the assignee. Directors are implicit members and never need to be added. ` +
-      `${watchersScope} Pass \`add\` and/or \`remove\` as arrays of names.`,
+      `${watchersScope} Pass \`add\` and/or \`remove\` as arrays of names. Returns the ` +
+      `updated objective with its new watcher list.`,
     inputSchema: {
       type: 'object',
       properties: {
@@ -777,7 +806,7 @@ function buildAuthorityTools(briefing: BriefingResponse): Tool[] {
         `new assignee receive channel pushes — the previous one so they know the ` +
         `objective left their plate, the new one so they know they now own it. Use this ` +
         `when the initial assignee is overwhelmed, the wrong skill match, or unavailable. ` +
-        `Director-only: managers cannot reassign.`,
+        `Returns the reassigned objective.`,
       inputSchema: {
         type: 'object',
         properties: {
@@ -913,12 +942,10 @@ async function handleBroadcast(
   if (!body) return errorResult('broadcast: `body` is required');
   const levelResult = parseLevel(args.level);
   if (levelResult.error) return errorResult(`broadcast: ${levelResult.error}`);
-  const title = typeof args.title === 'string' ? args.title : null;
   const attachments = await resolveAttachmentPaths(args.attachments, brokerClient);
   if ('error' in attachments) return errorResult(`broadcast: ${attachments.error}`);
   const result = await brokerClient.push({
     body,
-    title,
     level: levelResult.level,
     ...(attachments.list.length > 0 ? { attachments: attachments.list } : {}),
   });
@@ -939,13 +966,11 @@ async function handleSend(
   if (!to || !body) return errorResult('send: `to` and `body` are required');
   const levelResult = parseLevel(args.level);
   if (levelResult.error) return errorResult(`send: ${levelResult.error}`);
-  const title = typeof args.title === 'string' ? args.title : null;
   const attachments = await resolveAttachmentPaths(args.attachments, brokerClient);
   if ('error' in attachments) return errorResult(`send: ${attachments.error}`);
   const result = await brokerClient.push({
     to,
     body,
-    title,
     level: levelResult.level,
     ...(attachments.list.length > 0 ? { attachments: attachments.list } : {}),
   });
@@ -1091,7 +1116,6 @@ async function handleChannelsPost(
   if (!body) return errorResult('channels_post: `body` is required');
   const levelResult = parseLevel(args.level);
   if (levelResult.error) return errorResult(`channels_post: ${levelResult.error}`);
-  const title = typeof args.title === 'string' ? args.title : null;
   const attachments = await resolveAttachmentPaths(args.attachments, brokerClient);
   if ('error' in attachments) return errorResult(`channels_post: ${attachments.error}`);
 
@@ -1122,7 +1146,6 @@ async function handleChannelsPost(
 
   const result = await brokerClient.push({
     body,
-    title,
     level: levelResult.level,
     data: { thread: `chan:${channelId}` },
     ...(attachments.list.length > 0 ? { attachments: attachments.list } : {}),
@@ -1238,14 +1261,12 @@ async function handleObjectivesDiscuss(
   if (!id || !body) {
     return errorResult('objectives_discuss: both `id` and `body` are required');
   }
-  const title = typeof args.title === 'string' ? args.title : undefined;
   const attachmentsResult = await resolveAttachmentPaths(args.attachments, brokerClient);
   if ('error' in attachmentsResult) {
     return errorResult(`objectives_discuss: ${attachmentsResult.error}`);
   }
   const message = await brokerClient.discussObjective(id, {
     body,
-    ...(title !== undefined ? { title } : {}),
     ...(attachmentsResult.list.length > 0 ? { attachments: attachmentsResult.list } : {}),
   });
   const attachmentNote =
@@ -1405,7 +1426,7 @@ async function handleTeamGet(brokerClient: BrokerClient): Promise<CallToolResult
   const lines = [
     `team: ${team.name}`,
     `directive: ${team.directive}`,
-    `brief: ${team.brief.length === 0 ? '(empty)' : team.brief}`,
+    `context: ${team.context.length === 0 ? '(empty)' : team.context}`,
     `presets: ${presetNames.length === 0 ? '(none)' : presetNames.join(', ')}`,
   ];
   return textResult(lines.join('\n'));
@@ -1415,12 +1436,12 @@ async function handleTeamUpdate(
   args: Record<string, unknown>,
   brokerClient: BrokerClient,
 ): Promise<CallToolResult> {
-  const patch: { name?: string; directive?: string; brief?: string } = {};
+  const patch: { name?: string; directive?: string; context?: string } = {};
   if (typeof args.name === 'string') patch.name = args.name;
   if (typeof args.directive === 'string') patch.directive = args.directive;
-  if (typeof args.brief === 'string') patch.brief = args.brief;
+  if (typeof args.context === 'string') patch.context = args.context;
   if (Object.keys(patch).length === 0) {
-    return errorResult('team_update: pass at least one of name, directive, brief');
+    return errorResult('team_update: pass at least one of name, directive, context');
   }
   const team = await brokerClient.updateTeam(patch);
   return textResult(

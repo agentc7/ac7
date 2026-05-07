@@ -136,7 +136,7 @@ export async function startFakeBroker(): Promise<FakeBroker> {
           team: {
             name: FAKE_BROKER_TEAM_NAME,
             directive: FAKE_BROKER_MISSION,
-            brief: '',
+            context: '',
             permissionPresets: {},
           },
           teammates: [

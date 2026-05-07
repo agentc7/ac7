@@ -4,13 +4,16 @@
  * Replaces the "create a member, copy the token, paste it into your
  * config" onboarding flow with the gh-auth-style two-leg handshake:
  *
+ *   0. Prompt for the broker URL when neither `--url` nor `AC7_URL`
+ *      was provided (default `http://127.0.0.1:8717`). A bare Enter
+ *      accepts the default.
  *   1. CLI POSTs /enroll → broker mints (deviceCode, userCode)
  *   2. CLI prints `userCode` + verification URL to the operator,
  *      then polls /enroll/poll every `interval` seconds
  *   3. Director, signed in via TOTP at the broker URL, types the
  *      code into the SPA and approves
  *   4. CLI's next poll resolves with the token; CLI persists it to
- *      `~/.config/ac7/auth.json` and exits
+ *      `./.ac7/auth.json` (project-scoped) and exits
  *
  * The bearer token plaintext is never echoed to either operator's
  * terminal scrollback — it goes straight from the broker to the CLI's
@@ -24,9 +27,10 @@
  * director exists yet to approve).
  */
 
+import { relative } from 'node:path';
 import { Client, ClientError } from '@agentc7/sdk/client';
 import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
-import { authConfigPath, saveAuthEntry } from './auth-config.js';
+import { authConfigPath, findAuthConfigPath, saveAuthEntry } from './auth-config.js';
 import { UsageError } from './errors.js';
 
 export { UsageError };
@@ -52,6 +56,13 @@ export interface ConnectCommandInput {
   fetch?: typeof fetch;
   /** Test-only clock injection. */
   now?: () => number;
+  /**
+   * Prompt the operator for a single line of input. Used to ask for
+   * the broker URL when neither `--url` nor `AC7_URL` was provided.
+   * Returns the raw answer (no trim). Tests inject this; in production
+   * we wire up a readline-backed default.
+   */
+  prompt?: (question: string) => Promise<string>;
 }
 
 export interface ConnectCommandOutput {
@@ -108,9 +119,20 @@ export async function runConnectCommand(
   stderr: (line: string) => void,
   abortSignal?: AbortSignal,
 ): Promise<ConnectCommandOutput> {
-  const url = input.url ?? process.env[ENV.url] ?? `http://127.0.0.1:${DEFAULT_PORT}`;
+  // `--url` flag and `AC7_URL` env both bypass the prompt — they're
+  // explicit "use this URL" signals (CI, scripts, sticky shell env).
+  // Only with neither do we run the wizard; a bare Enter accepts the
+  // local-broker default. The banner that follows shows the URL so
+  // the operator still gets eyes-on confirmation before approving.
+  const defaultUrl = `http://127.0.0.1:${DEFAULT_PORT}`;
+  let url = input.url ?? process.env[ENV.url];
+  if (!url) {
+    const ask = input.prompt ?? defaultPrompt;
+    const answer = (await ask(`Broker URL [${defaultUrl}]: `)).trim();
+    url = answer.length > 0 ? answer : defaultUrl;
+  }
   if (!/^https?:\/\//.test(url)) {
-    throw new UsageError(`connect: --url must be http(s)://… (got '${url}')`);
+    throw new UsageError(`connect: URL must be http(s)://… (got '${url}')`);
   }
 
   // Use the SDK Client with skipAuth on the calls that need it.
@@ -239,7 +261,7 @@ export async function runConnectCommand(
             stdout(`  token: ${data.token}`);
           } else {
             stdout(`  saved to: ${authConfigDisplayPath(input.authConfigPath)}`);
-            stdout(`  next: ac7 claude-code`);
+            stdout(`  next: ac7 claude-code  (or: ac7 codex)`);
           }
           return {
             url,
@@ -256,6 +278,24 @@ export async function runConnectCommand(
 }
 
 /**
+ * Readline-backed prompt for the broker URL. Stays inline (no shared
+ * wizard IO module) since `connect` only ever asks one question; the
+ * dynamic `node:readline` import keeps the cold-start cost off the
+ * non-interactive paths (`--url` flag / `AC7_URL` env).
+ */
+async function defaultPrompt(question: string): Promise<string> {
+  const { createInterface } = await import('node:readline');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return await new Promise<string>((resolve) => {
+      rl.question(question, (answer) => resolve(answer));
+    });
+  } finally {
+    rl.close();
+  }
+}
+
+/**
  * Default label hint when the operator didn't pass `--label`. Prefer
  * `$HOSTNAME` when set (the actual machine name); fall back to a
  * generic placeholder. The director can always override at approval.
@@ -267,12 +307,14 @@ function defaultLabelHint(): string {
 }
 
 /**
- * Render the auth-config path for display, expanding $HOME → `~` so
- * the line in the success output reads naturally.
+ * Render the auth-config path for display, preferring a `./`-prefixed
+ * relative path when the file lives under cwd (the common case for
+ * project-scoped configs). Falls back to absolute when the file lives
+ * above cwd (re-`connect` from a subdir updating the project root).
  */
 function authConfigDisplayPath(override: string | undefined): string {
-  const path = override ?? authConfigPath();
-  const home = process.env.HOME;
-  if (home && path.startsWith(home)) return `~${path.slice(home.length)}`;
+  const path = override ?? findAuthConfigPath() ?? authConfigPath();
+  const rel = relative(process.cwd(), path);
+  if (!rel.startsWith('..') && !rel.startsWith('/')) return `./${rel}`;
   return path;
 }

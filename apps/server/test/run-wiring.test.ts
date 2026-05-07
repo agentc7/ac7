@@ -27,7 +27,7 @@ const ADMIN_TOKEN = 'ac7_run_wiring_test_admin_token';
 const TEAM = {
   name: 'demo-team',
   directive: 'Verify run.ts wiring.',
-  brief: '',
+  context: '',
 };
 
 const dirsToClean: string[] = [];

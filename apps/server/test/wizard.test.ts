@@ -67,14 +67,14 @@ describe('runFirstRunWizard', () => {
     };
   }
 
-  // Happy-path script: team name (default), directive, brief (skip),
+  // Happy-path script: team name (default), directive, context (skip),
   // admin name (default), role title (default), role description (skip),
   // press enter after token banner, TOTP code.
   function happyScript(code: string, overrides: Partial<Record<string, string>> = {}): string[] {
     return [
       overrides.teamName ?? '',
       overrides.directive ?? 'Ship the payment service',
-      overrides.brief ?? '',
+      overrides.context ?? '',
       overrides.adminName ?? '',
       overrides.roleTitle ?? '',
       overrides.roleDescription ?? '',
@@ -91,7 +91,7 @@ describe('runFirstRunWizard', () => {
 
     expect(result.team.name).toBe('my-team');
     expect(result.team.directive).toBe('Ship the payment service');
-    expect(result.team.brief).toBe('');
+    expect(result.team.context).toBe('');
     expect(result.team.permissionPresets).toBeDefined();
 
     expect(result.admin.name).toBe('director-1');
@@ -128,7 +128,7 @@ describe('runFirstRunWizard', () => {
     const io = mockIO([
       '', // team name
       'Ship', // directive
-      '', // brief
+      '', // context
       'has spaces', // bad name, rejected
       'chief', // good name
       '', // role title (default)

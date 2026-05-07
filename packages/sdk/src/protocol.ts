@@ -36,7 +36,7 @@ export const PATHS = {
   // gate on the permission. The helpers below compose the `:name`
   // subpaths.
   members: '/members',
-  // Team — name, directive, brief, permission presets. `GET /team` is
+  // Team — name, directive, context, permission presets. `GET /team` is
   // dual-auth (every authenticated member sees the team they're on).
   // `PATCH /team` requires `team.manage`. Permission-preset CRUD lives
   // under `/team/presets` (same gate). Mutations apply immediately to
@@ -56,6 +56,7 @@ export const PATHS = {
   fsRm: '/fs/rm',
   fsMv: '/fs/mv',
   fsShared: '/fs/shared',
+  fsAll: '/fs/all',
   // Device-code enrollment (RFC 8628-shaped). `enroll` mints a
   // device_code/user_code pair; `enrollPoll` is the device-side poll;
   // `enrollPending` lists requests waiting for director approval;

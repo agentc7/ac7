@@ -750,6 +750,12 @@ body::before {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
+  /* Pin to the right edge of the toolbar regardless of which siblings
+   * are present. The `.composer-hint` previously absorbed the slack
+   * via `flex: 1`, but on narrow viewports the hint is hidden, which
+   * lost the spacer and let Send drift left next to the icon buttons.
+   * `margin-left: auto` makes Send self-anchor right in either layout. */
+  margin-left: auto;
   background: var(--steel);
   color: #0e1c2b;
   font-family: var(--f-sans);
@@ -2039,7 +2045,18 @@ body::before {
  * ignored on screens where resize doesn't apply.
  */
 .activity-inspector {
+  /* Base layout: in the flow, sized by the user-driven width var.
+   * `position: relative` is needed so the absolutely-positioned
+   * resize handle anchors here. It MUST live in CSS (not inline on
+   * the element) — the mobile-overlay media queries below switch to
+   * `position: absolute` to take the panel out of flow, and inline
+   * styles would beat that and trap the inspector in the flow on
+   * narrow viewports (eating chat-pane width on phones). */
+  position: relative;
   width: var(--activity-inspector-width, 380px);
+  height: 100%;
+  background: var(--paper);
+  border-left: 1px solid var(--rule);
 }
 
 @media (max-width: 1279px) {
@@ -2450,4 +2467,29 @@ body::before {
 }
 [data-theme="dark"] .stat .stat-value {
   color: var(--ink);
+}
+
+/* ─────────────── iOS auto-zoom suppression ──────────────── *
+ * iOS Safari (and other touch browsers) auto-zoom into an input,
+ * textarea, or select when the computed font-size at focus time is
+ * less than 16px. We keep the 14px desktop look — that scale is
+ * intentional in the form vocabulary — and bump only on touch /
+ * narrow viewports, which is where the zoom triggers in practice.
+ *
+ * Targets both bare elements (covers `<input type="search">`, etc.
+ * that don't carry a `.input` class) and the explicit
+ * `.input`/`.textarea`/`.select` + `.composer-box textarea` rules
+ * that hard-set 14px above. Without naming those, the cascade keeps
+ * the 14px and the zoom still fires.
+ */
+@media (max-width: 640px), (pointer: coarse) {
+  input,
+  textarea,
+  select,
+  .input,
+  .textarea,
+  .select,
+  .composer-box textarea {
+    font-size: 16px;
+  }
 }

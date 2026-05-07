@@ -24,7 +24,7 @@ const AGENT_TOKEN = 'ac7_members_test_agent_token';
 const TEAM: Team = {
   name: 'members-team',
   directive: 'Exercise member CRUD.',
-  brief: '',
+  context: '',
   permissionPresets: {
     admin: [
       'team.manage',

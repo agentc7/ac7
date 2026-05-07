@@ -228,7 +228,7 @@ function seedConfig(dir: string): string {
       team: {
         name: 'demo',
         directive: 'ship',
-        brief: '',
+        context: '',
         permissionPresets: {},
       },
       members: [

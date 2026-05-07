@@ -363,7 +363,24 @@ export async function runServer(options: RunServerOptions): Promise<RunningServe
   // tree + permissions + refcount metadata in the main SQLite.
   const filesRoot = options.filesRoot ?? './data/files';
   const blobStore = new LocalBlobStore(filesRoot);
-  const filesStore = createSqliteFilesystemStore({ db, blobs: blobStore });
+  // Wire the objective-namespace ACL: the FS layer asks the
+  // objectives store whether a given viewer is the originator,
+  // assignee, or one of the watchers of an objective. The closure
+  // hides the row shape so the FS package keeps no inbound
+  // dependency on the objectives module beyond this seam.
+  const filesStore = createSqliteFilesystemStore({
+    db,
+    blobs: blobStore,
+    objectiveAcl: {
+      isMember(objectiveId, viewerName) {
+        const obj = objectivesStore.get(objectiveId);
+        if (obj === null) return false;
+        if (obj.originator === viewerName) return true;
+        if (obj.assignee === viewerName) return true;
+        return obj.watchers.includes(viewerName);
+      },
+    },
+  });
   // Pre-seed home directories so browsers can list their own home
   // without having to write first.
   for (const s of memberStore.members()) {

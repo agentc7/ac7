@@ -82,7 +82,7 @@ function composePrompt(self: Member, team: Team, others: Teammate[]): string {
     ``,
     `Team: ${team.name}`,
     `Directive: ${team.directive}`,
-    team.brief.trim().length > 0 && `Brief: ${team.brief}`,
+    team.context.trim().length > 0 && `Context: ${team.context}`,
     ``,
     selfInstructions.length > 0 && `Personal instructions:`,
     selfInstructions.length > 0 && selfInstructions,

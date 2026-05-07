@@ -3,7 +3,7 @@
  *
  * Triggered when the server boots without a config file at the
  * expected path AND stdin is a TTY. Walks the operator through
- * creating a team (name, directive, brief) and the first admin
+ * creating a team (name, directive, context) and the first admin
  * member, generates a random bearer token, and auto-enrolls the
  * admin in TOTP (admins need web UI login by default).
  *
@@ -149,7 +149,7 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Wiza
   const team: Team = {
     name: teamCore.name,
     directive: teamCore.directive,
-    brief: teamCore.brief,
+    context: teamCore.context,
     permissionPresets: DEFAULT_PERMISSION_PRESETS,
   };
 
@@ -169,7 +169,7 @@ export async function runFirstRunWizard(options: RunWizardOptions): Promise<Wiza
 
 async function promptTeam(
   io: WizardIO,
-): Promise<{ name: string; directive: string; brief: string }> {
+): Promise<{ name: string; directive: string; context: string }> {
   const name = await promptRequired(io, 'team name [my-team]: ', 'my-team', (v) =>
     v.length > 0 && v.length <= 128 ? null : 'must be 1-128 characters',
   );
@@ -179,8 +179,10 @@ async function promptTeam(
     '',
     (v) => (v.length > 0 && v.length <= 512 ? null : 'directive is required, max 512 chars'),
   );
-  const brief = (await io.prompt('brief (longer context, press enter to skip): ')).trim();
-  return { name, directive, brief };
+  const context = (
+    await io.prompt('team context (longer background, press enter to skip): ')
+  ).trim();
+  return { name, directive, context };
 }
 
 async function promptRequired(

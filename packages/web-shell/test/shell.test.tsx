@@ -329,7 +329,7 @@ describe('<Sidebar />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'alpha', directive: 'ship', brief: '', permissionPresets: {} },
+      team: { name: 'alpha', directive: 'ship', context: '', permissionPresets: {} },
       teammates: [
         {
           name: 'director-1',
@@ -432,7 +432,7 @@ describe('<TeamHome />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: '', brief: '', permissionPresets: {} },
+      team: { name: 'demo-team', directive: '', context: '', permissionPresets: {} },
       teammates: [],
       openObjectives: [],
       instructions: '',
@@ -468,7 +468,7 @@ describe('<TeamHome />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: '', brief: '', permissionPresets: {} },
+      team: { name: 'demo-team', directive: '', context: '', permissionPresets: {} },
       teammates: [],
       openObjectives: [],
       instructions: '',
@@ -497,7 +497,7 @@ describe('<TeamHome />', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: '', brief: '', permissionPresets: {} },
+      team: { name: 'demo-team', directive: '', context: '', permissionPresets: {} },
       teammates: [],
       openObjectives: [],
       instructions: '',
@@ -541,7 +541,7 @@ describe('briefing bootstrap', () => {
       name: 'director-1',
       role: { title: 'director', description: '' },
       permissions: ['members.manage'],
-      team: { name: 'demo-team', directive: 'ship', brief: '', permissionPresets: {} },
+      team: { name: 'demo-team', directive: 'ship', context: '', permissionPresets: {} },
       teammates: [
         {
           name: 'director-1',
@@ -587,7 +587,7 @@ describe('<Sidebar /> overview button', () => {
     expect(btn.className).toMatch(/\bactive\b/);
   });
 
-  it('renders team name and directive in the NavColumn team header', () => {
+  it('renders team name and viewer name in the NavColumn team header', () => {
     briefing.value = {
       name: 'director-1',
       role: { title: 'director', description: '' },
@@ -595,7 +595,7 @@ describe('<Sidebar /> overview button', () => {
       team: {
         name: 'demo-team',
         directive: 'Ship the payment service.',
-        brief: '',
+        context: '',
         permissionPresets: {},
       },
       teammates: [
@@ -609,9 +609,13 @@ describe('<Sidebar /> overview button', () => {
       instructions: '',
     };
     render(<Sidebar viewer="director-1" />);
-    // Team name + directive live in the NavColumn's top team header.
+    // Top of the NavColumn shows the team name and the viewer's own
+    // name underneath. The team directive is intentionally NOT here —
+    // it's static, never personalized, and would just be repeated
+    // chrome on every page; viewer name is the higher-signal anchor
+    // for "you are signed in as _" recognition.
     expect(screen.getByText('demo-team')).toBeTruthy();
-    expect(screen.getByText(/Ship the payment service/)).toBeTruthy();
+    expect(screen.getByText('director-1')).toBeTruthy();
   });
 });
 
@@ -624,7 +628,7 @@ describe('<TeamHome /> directive header', () => {
       team: {
         name: 'demo-team',
         directive: 'Ship the payment service.',
-        brief: 'Longer context about the operating window.',
+        context: 'Longer context about the operating window.',
         permissionPresets: {},
       },
       teammates: [

@@ -14,7 +14,7 @@
  *   - files                              — upload caps + blob root
  *
  * What's NOT here:
- *   - team.name / directive / brief, permission presets   → DB
+ *   - team.name / directive / context, permission presets   → DB
  *   - members[]                                            → DB
  *   - tokenHash, totpSecret                                → DB
  *

@@ -17,10 +17,10 @@ export interface TeamIdentity {
   slug: string;
   /** Display name. */
   name: string;
-  /** Short directive / mission statement. */
+  /** Short directive — the team's standing imperative. */
   directive: string;
-  /** Longer brief / context. */
-  brief: string;
+  /** Longer team context — background paragraph that complements the directive. */
+  context: string;
 }
 
 export const currentTeam = computed<TeamIdentity | null>(() => {
@@ -30,7 +30,7 @@ export const currentTeam = computed<TeamIdentity | null>(() => {
     slug: slugify(b.team.name),
     name: b.team.name,
     directive: b.team.directive,
-    brief: b.team.brief,
+    context: b.team.context,
   };
 });
 

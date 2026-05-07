@@ -61,7 +61,7 @@ Concretely, on every runner startup:
 1. **Authenticate** with `--token` / `$AC7_TOKEN` /
    `~/.config/ac7/auth.json`.
 2. **Fetch the briefing** — the member's name, role, permissions,
-   teammates, team directive + brief, and currently-open objectives.
+   teammates, team directive + context, and currently-open objectives.
 3. **Bind the IPC socket** at
    `$TMPDIR/.ac7-runner-<pid>.sock` (overridable). The agent's MCP
    bridge subprocess connects back to this.

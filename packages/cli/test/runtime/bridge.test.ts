@@ -34,7 +34,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { RunnerHandle } from '../../src/runtime/runner.js';
 import { startRunner } from '../../src/runtime/runner.js';
 import {
-  FAKE_BROKER_MISSION,
   FAKE_BROKER_NAME,
   FAKE_BROKER_TEAM_NAME,
   FAKE_BROKER_TOKEN,
@@ -219,7 +218,11 @@ describeIfBuilt('runner + bridge end-to-end', () => {
     const broadcast = result.tools.find((t) => t.name === 'broadcast');
     expect(broadcast?.description).toContain(FAKE_BROKER_NAME);
     const roster = result.tools.find((t) => t.name === 'roster');
-    expect(roster?.description).toContain(FAKE_BROKER_MISSION);
+    // Roster description references the team name and the agent's
+    // own identity, but not the directive — directive is already
+    // pinned in the briefing's MCP `instructions` field, so embedding
+    // it into tool descriptions would be duplicative.
+    expect(roster?.description).toContain(FAKE_BROKER_TEAM_NAME);
 
     const listTool = result.tools.find((t) => t.name === 'objectives_list');
     expect(listTool?.description).toContain('assigned to you');
@@ -237,7 +240,6 @@ describeIfBuilt('runner + bridge end-to-end', () => {
         arguments: {
           to: 'peer-1',
           body: 'hello from runner/bridge test',
-          title: 'greetings',
           level: 'warning',
         },
       },
@@ -250,7 +252,6 @@ describeIfBuilt('runner + bridge end-to-end', () => {
 
     const lastPush = broker.pushes[broker.pushes.length - 1];
     expect(lastPush?.body).toBe('hello from runner/bridge test');
-    expect(lastPush?.title).toBe('greetings');
     expect(lastPush?.level).toBe('warning');
   });
 

@@ -37,7 +37,7 @@ const NON_ADMIN_TOKEN = 'ac7_enroll_engineer_token';
 const TEAM: Team = {
   name: 'enroll-team',
   directive: 'Exercise the device-code flow.',
-  brief: '',
+  context: '',
   permissionPresets: {
     admin: [
       'team.manage',

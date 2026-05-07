@@ -50,7 +50,7 @@ const PEER_TOKEN = 'ac7_test_peer';
 const TEAM: Team = {
   name: 'e2e-team',
   directive: 'Exercise the full ac7 stack end-to-end.',
-  brief: '',
+  context: '',
   permissionPresets: {},
 };
 

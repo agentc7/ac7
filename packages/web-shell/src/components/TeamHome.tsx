@@ -2,7 +2,7 @@
  * TeamHome — the landing page at `/`.
  *
  * Replaces RosterPanel as the default view. Shows:
- *   - Team name + directive + brief (the team's "about")
+ *   - Team name + directive + context (the team's "about")
  *   - At-a-glance stats (active objectives, blocked, total members)
  *   - Roster — click a row to open the member's profile
  *     (hover card reveals the DM action)
@@ -53,9 +53,9 @@ export function TeamHome({ viewer }: TeamHomeProps) {
         }
       />
 
-      {b.team.brief && (
+      {b.team.context && (
         <div style="font-family:var(--f-sans);font-size:13.5px;color:var(--muted);line-height:1.55;white-space:pre-wrap;margin-bottom:24px">
-          {b.team.brief}
+          {b.team.context}
         </div>
       )}
 
