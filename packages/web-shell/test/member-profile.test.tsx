@@ -290,6 +290,11 @@ describe('AgentTimeline', () => {
 
     // LLM exchange: model name
     expect(screen.getByText('claude-sonnet-4-6')).toBeTruthy();
+    // Opaque HTTP rows are filtered out by default (the chip starts
+    // off so the live tail isn't dominated by background traffic).
+    // Click to enable so the renderer-affordance assertions below
+    // have rows to match against.
+    fireEvent.click(screen.getByRole('button', { name: /HTTP/ }));
     // Opaque HTTP: host + url as separate spans
     const text = container.textContent ?? '';
     expect(text).toContain('telemetry.example.com');
@@ -309,25 +314,29 @@ describe('AgentTimeline', () => {
     expect(screen.getByText(/No activity yet/i)).toBeTruthy();
   });
 
-  it('filter toggle hides the matching event kind', () => {
+  it('filter toggle hides and shows the matching event kind', () => {
     briefing.value = COMMANDER_BRIEFING;
     memberActivityRows.value = [LLM_ROW, OPAQUE_ROW];
     memberActivityLoading.value = false;
     render(<AgentTimeline />);
 
-    // Before toggle: both kinds visible.
+    // Initial state: HTTP filter is OFF by default (the chip ships
+    // unchecked), so telemetry rows are hidden. LLM rows show.
     expect(screen.getByText('claude-sonnet-4-6')).toBeTruthy();
-    const beforeText = document.body.textContent ?? '';
-    expect(beforeText).toContain('telemetry.example.com');
+    const initialText = document.body.textContent ?? '';
+    expect(initialText).not.toContain('telemetry.example.com');
 
-    // Click the HTTP filter button to turn it off.
+    // Click the HTTP chip to turn it on; the row appears.
     const httpButton = screen.getByRole('button', { name: /HTTP/ });
     fireEvent.click(httpButton);
+    const enabledText = document.body.textContent ?? '';
+    expect(enabledText).toContain('telemetry.example.com');
 
-    // Re-query after the state update.
-    const afterText = document.body.textContent ?? '';
-    expect(afterText).not.toContain('telemetry.example.com');
-    // LLM row still there.
+    // Click again to turn it back off; the row hides again.
+    fireEvent.click(httpButton);
+    const disabledText = document.body.textContent ?? '';
+    expect(disabledText).not.toContain('telemetry.example.com');
+    // LLM row stays visible regardless.
     expect(screen.getByText('claude-sonnet-4-6')).toBeTruthy();
   });
 });
