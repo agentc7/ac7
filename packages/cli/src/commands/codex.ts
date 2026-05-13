@@ -184,6 +184,10 @@ export async function runCodexCommand(input: CodexCommandInput): Promise<number>
       cwd,
       model: input.model,
       presence,
+      // Share the trace host's busy signal so codex tool-lifecycle
+      // notifications and MITM-derived LLM bumps both feed one
+      // observable. Null when --no-trace.
+      busy: runner.traceHost?.busy,
       log,
     });
   } catch (err) {

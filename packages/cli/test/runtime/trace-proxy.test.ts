@@ -334,3 +334,220 @@ describe('proxy raw TCP fallback path', () => {
     expect(proxy.proxyUrl.startsWith('http://')).toBe(true);
   });
 });
+
+describe('proxy shouldMitm gating', () => {
+  const cleanups: Array<() => Promise<void>> = [];
+
+  afterEach(async () => {
+    while (cleanups.length > 0) {
+      const c = cleanups.pop();
+      if (c) await c().catch(() => {});
+    }
+  });
+
+  it('MITMs hosts the predicate accepts (mitm: true, plaintext captured)', async () => {
+    const upstream = await startHttpsEchoServer();
+    cleanups.push(() => new Promise<void>((r) => upstream.server.close(() => r())));
+
+    const chunks: ProxyChunk[] = [];
+    const sessions: ProxySession[] = [];
+    const ca = createTraceCa();
+    const certPool = createCertPool(ca);
+    const proxy = await startProxyRelay({
+      log: () => {},
+      certPool,
+      // Predicate always accepts — equivalent to legacy behavior.
+      shouldMitm: () => true,
+      upstreamTlsOptions: { rejectUnauthorized: false },
+      onChunk: (c) => chunks.push({ ...c, bytes: Buffer.from(c.bytes) }),
+      onSessionEnd: (s) => sessions.push(s),
+    });
+    cleanups.push(() => proxy.close());
+
+    // CONNECT + TLS-trust-our-CA handshake (mirrors what a real Node
+    // agent does under HTTPS_PROXY + NODE_EXTRA_CA_CERTS).
+    const tcp = tcpConnect({ host: proxy.host, port: proxy.port });
+    await new Promise<void>((r, j) => {
+      tcp.once('connect', () => r());
+      tcp.once('error', j);
+    });
+    tcp.write(
+      `CONNECT localhost:${upstream.port} HTTP/1.1\r\nHost: localhost:${upstream.port}\r\n\r\n`,
+    );
+    await new Promise<void>((resolve) => {
+      let buf = '';
+      const onData = (d: Buffer): void => {
+        buf += d.toString('utf8');
+        if (buf.includes('\r\n\r\n')) {
+          tcp.off('data', onData);
+          resolve();
+        }
+      };
+      tcp.on('data', onData);
+    });
+    const client = tlsConnect({
+      socket: tcp,
+      servername: 'localhost',
+      ca: [ca.caCertPem],
+      minVersion: 'TLSv1.2',
+    });
+    await new Promise<void>((r, j) => {
+      client.once('secureConnect', () => r());
+      client.once('error', j);
+    });
+    client.write(`POST /v1/messages HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello`);
+    await new Promise<Buffer>((resolve) => {
+      const parts: Buffer[] = [];
+      client.on('data', (d: Buffer) => parts.push(d));
+      client.on('end', () => resolve(Buffer.concat(parts)));
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const clientText = Buffer.concat(
+      chunks.filter((c) => c.direction === 'client_to_upstream').map((c) => c.bytes),
+    ).toString('utf8');
+    expect(clientText).toContain('POST /v1/messages');
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.mitm).toBe(true);
+  }, 15_000);
+
+  it('raw-tunnels hosts the predicate rejects (mitm: false, ciphertext only)', async () => {
+    const upstream = await startHttpsEchoServer();
+    cleanups.push(() => new Promise<void>((r) => upstream.server.close(() => r())));
+
+    const chunks: ProxyChunk[] = [];
+    const sessions: ProxySession[] = [];
+    const ca = createTraceCa();
+    const certPool = createCertPool(ca);
+    const proxy = await startProxyRelay({
+      log: () => {},
+      certPool,
+      // Predicate rejects — proxy must fall back to raw TCP tunnel
+      // even though a CertPool is configured. The client's TLS
+      // handshake completes against the upstream's real cert.
+      shouldMitm: () => false,
+      onChunk: (c) => chunks.push({ ...c, bytes: Buffer.from(c.bytes) }),
+      onSessionEnd: (s) => sessions.push(s),
+    });
+    cleanups.push(() => proxy.close());
+
+    const tcp = tcpConnect({ host: proxy.host, port: proxy.port });
+    await new Promise<void>((r, j) => {
+      tcp.once('connect', () => r());
+      tcp.once('error', j);
+    });
+    tcp.write(
+      `CONNECT localhost:${upstream.port} HTTP/1.1\r\nHost: localhost:${upstream.port}\r\n\r\n`,
+    );
+    await new Promise<void>((resolve) => {
+      let buf = '';
+      const onData = (d: Buffer): void => {
+        buf += d.toString('utf8');
+        if (buf.includes('\r\n\r\n')) {
+          tcp.off('data', onData);
+          resolve();
+        }
+      };
+      tcp.on('data', onData);
+    });
+    // Important: trust the upstream cert directly (no MITM cert
+    // involved), exactly as a real agent would when system trust
+    // applies end-to-end.
+    const client = tlsConnect({
+      socket: tcp,
+      servername: 'localhost',
+      ca: [upstream.cert],
+      // The test upstream cert is self-signed for 'localhost'; we
+      // still want a real handshake to validate the raw-tunnel
+      // works at the application layer.
+      rejectUnauthorized: true,
+      minVersion: 'TLSv1.2',
+    });
+    await new Promise<void>((r, j) => {
+      client.once('secureConnect', () => r());
+      client.once('error', j);
+    });
+    client.write(`POST /v1/messages HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello`);
+    await new Promise<Buffer>((resolve) => {
+      const parts: Buffer[] = [];
+      client.on('data', (d: Buffer) => parts.push(d));
+      client.on('end', () => resolve(Buffer.concat(parts)));
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Captured bytes are encrypted TLS records — the plaintext HTTP
+    // request never appears in the chunks. This is the privacy
+    // promise of scoped MITM: hosts off the allowlist are not
+    // decrypted, even though we routed their traffic.
+    const everything = Buffer.concat(chunks.map((c) => c.bytes)).toString('utf8');
+    expect(everything).not.toContain('POST /v1/messages');
+    expect(everything).not.toContain('hello');
+    // Session metadata is still produced — we know the agent talked
+    // to this host, just not what was said.
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.mitm).toBe(false);
+    expect(sessions[0]?.upstream.host).toBe('localhost');
+    expect(sessions[0]?.upstream.port).toBe(upstream.port);
+    expect(sessions[0]?.bytesOut).toBeGreaterThan(0);
+    expect(sessions[0]?.bytesIn).toBeGreaterThan(0);
+  }, 15_000);
+
+  it('omitted shouldMitm preserves legacy "MITM whenever certPool is set" behavior', async () => {
+    // This guards the migration path: existing callers that didn't
+    // pass shouldMitm should still get MITM behavior.
+    const upstream = await startHttpsEchoServer();
+    cleanups.push(() => new Promise<void>((r) => upstream.server.close(() => r())));
+
+    const sessions: ProxySession[] = [];
+    const ca = createTraceCa();
+    const certPool = createCertPool(ca);
+    const proxy = await startProxyRelay({
+      log: () => {},
+      certPool,
+      // shouldMitm intentionally omitted.
+      upstreamTlsOptions: { rejectUnauthorized: false },
+      onSessionEnd: (s) => sessions.push(s),
+    });
+    cleanups.push(() => proxy.close());
+
+    const tcp = tcpConnect({ host: proxy.host, port: proxy.port });
+    await new Promise<void>((r, j) => {
+      tcp.once('connect', () => r());
+      tcp.once('error', j);
+    });
+    tcp.write(
+      `CONNECT localhost:${upstream.port} HTTP/1.1\r\nHost: localhost:${upstream.port}\r\n\r\n`,
+    );
+    await new Promise<void>((resolve) => {
+      let buf = '';
+      const onData = (d: Buffer): void => {
+        buf += d.toString('utf8');
+        if (buf.includes('\r\n\r\n')) {
+          tcp.off('data', onData);
+          resolve();
+        }
+      };
+      tcp.on('data', onData);
+    });
+    const client = tlsConnect({
+      socket: tcp,
+      servername: 'localhost',
+      ca: [ca.caCertPem],
+      minVersion: 'TLSv1.2',
+    });
+    await new Promise<void>((r, j) => {
+      client.once('secureConnect', () => r());
+      client.once('error', j);
+    });
+    client.write(`GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`);
+    await new Promise<Buffer>((resolve) => {
+      const parts: Buffer[] = [];
+      client.on('data', (d: Buffer) => parts.push(d));
+      client.on('end', () => resolve(Buffer.concat(parts)));
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.mitm).toBe(true);
+  }, 15_000);
+});

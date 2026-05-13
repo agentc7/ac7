@@ -160,4 +160,65 @@ describe('TraceHost', () => {
       await host.close();
     }
   });
+
+  it('close() force-drains leaked busy handles as the final teardown safety net', async () => {
+    // Simulates the production failure mode: a sub-system (proxy
+    // reassembler, hook server, codex sniff) failed to drain a
+    // handle before its own close. Without this safety net, the
+    // runner's busy reporter would keep heartbeating `busy: true`
+    // until its AbortController fires, then post a final
+    // `busy: false`. The forceFinishAll() inside TraceHost.close()
+    // makes the indicator drop earlier and protects against bugs
+    // where the reassembler's flush path silently misses a handle.
+    const logged: Array<{ msg: string; ctx?: Record<string, unknown> }> = [];
+    const host = await startTraceHost({
+      log: (msg, ctx) => logged.push({ msg, ctx }),
+      caCertPath: join(tmpDir, 'leak.pem'),
+      brokerClient: stubBrokerClient(),
+      name: 'TEST',
+    });
+
+    // Leak a handle as if a reassembler bug forgot to call finish().
+    // Disable the max-age timer so this test isn't racing the 5min
+    // default — we want close() to do the draining, not the timer.
+    host.busy.start('llm_inflight', { maxAgeMs: Number.POSITIVE_INFINITY });
+    host.busy.start('tool_inflight', { maxAgeMs: Number.POSITIVE_INFINITY });
+    expect(host.busy.busy).toBe(true);
+    expect(host.busy.getSourceCounts()).toEqual({ llm_inflight: 1, tool_inflight: 1 });
+
+    await host.close();
+
+    expect(host.busy.busy).toBe(false);
+    expect(host.busy.getSourceCounts()).toEqual({ llm_inflight: 0, tool_inflight: 0 });
+    // The diagnostic log fires with the pre-drain counts so
+    // operators can tell which source leaked.
+    const drainLog = logged.find(
+      (l) => l.msg === 'trace-host: force-drained leaked busy handles at teardown',
+    );
+    expect(drainLog).toBeTruthy();
+    expect(drainLog?.ctx?.drained).toBe(2);
+    expect(drainLog?.ctx?.sourceCounts).toEqual({
+      llm_inflight: 1,
+      tool_inflight: 1,
+    });
+  });
+
+  it('close() does not log the drain message when no handles leaked', async () => {
+    // Happy path: every sub-system drained its handles correctly,
+    // so forceFinishAll() returns 0 and stays quiet. We don't want
+    // the diagnostic log to fire on normal shutdowns since it would
+    // be noise.
+    const logged: Array<{ msg: string }> = [];
+    const host = await startTraceHost({
+      log: (msg) => logged.push({ msg }),
+      caCertPath: join(tmpDir, 'clean.pem'),
+      brokerClient: stubBrokerClient(),
+      name: 'TEST',
+    });
+    await host.close();
+    const drainLog = logged.find(
+      (l) => l.msg === 'trace-host: force-drained leaked busy handles at teardown',
+    );
+    expect(drainLog).toBeUndefined();
+  });
 });
