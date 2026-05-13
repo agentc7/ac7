@@ -198,9 +198,15 @@ WAL, online prune doesn't block live writes for long.
   no `llm_exchange` entries — the proxy doesn't speak HPACK yet.
   In practice the Anthropic SDK defaults to HTTP/1.1 for
   `/v1/messages`, so this is rarely hit.
-- **Anthropic parser only.** OpenAI / Gemini / Mistral land as
+- **Anthropic parser only.** OpenAI / Azure OpenAI traffic IS
+  captured (those hosts are on the MITM allowlist) but lands as
   `opaque_http`. Codex traces today fall in this bucket — adding
-  typed parsers is a follow-up.
+  typed parsers for OpenAI's Chat Completions / Responses APIs
+  is a follow-up. Gemini / Mistral / Bedrock are not currently
+  on the allowlist — their traffic passes through unmodified
+  and produces no activity events. See
+  [tracing.mdx → Host allowlist](/docs/tracing#host-allowlist)
+  for how to extend.
 - **Uploader queue cap.** The uploader caps in-flight at 1000
   events / 1 MB and evicts oldest-first under sustained broker
   unreachability. Events dropped here won't appear later.

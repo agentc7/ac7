@@ -31,7 +31,9 @@ import { existsSync } from 'node:fs';
 import type { BriefingResponse } from '@agentc7/sdk/types';
 import { CLI_VERSION } from '../../../version.js';
 import type { Presence } from '../../presence.js';
+import type { BusySignal } from '../../trace/busy.js';
 import type { TraceHost } from '../../trace/host.js';
+import { attachCodexBusySniff, type CodexBusySniff } from './busy-sniff.js';
 import type { CodexChannelSink } from './channel-sink.js';
 import { createCodexChannelSink } from './channel-sink.js';
 import { setupCodexHome } from './codex-home.js';
@@ -108,6 +110,15 @@ export interface CodexSpawnOptions {
   model?: string;
   /** Presence signal — flipped by status notifications. */
   presence: Presence;
+  /**
+   * Busy signal — bumped on each tool-execution `item/started` and
+   * decremented on the matching `item/completed`. Optional: when
+   * absent (e.g. `--no-trace`), tool-lifecycle events still get
+   * logged but don't drive the indicator. Pass the same signal the
+   * trace host uses so LLM-call and tool-execution bumps share one
+   * 0↔busy transition contract.
+   */
+  busy?: BusySignal;
   /** Logger, structured JSON to stderr by default. */
   log: (msg: string, ctx?: Record<string, unknown>) => void;
 }
@@ -311,6 +322,13 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
       opts.log('codex: item completed', { type: p.item.type, turnId: p.turnId });
     }
   });
+  // Tool-execution busy sniff (only when a busy signal is provided —
+  // i.e., tracing is enabled). Subscribes to the same notifications
+  // above; logging stays here, busy-counter ownership lives in the
+  // shared helper so tests can exercise the same code path.
+  const busySniff: CodexBusySniff | null = opts.busy
+    ? attachCodexBusySniff({ rpc, busy: opts.busy, log: opts.log })
+    : null;
   rpc.onNotification(NOTIFICATIONS.error, (params) => {
     opts.log('codex: error notification', params as Record<string, unknown>);
   });
@@ -344,6 +362,10 @@ export async function spawnCodex(opts: CodexSpawnOptions): Promise<CodexSpawnRes
         /* best-effort */
       }
     }
+    // Drain any in-flight tool handles before we tear down the rpc
+    // client — codex won't be sending matching `item/completed` once
+    // we close, so anything left here would wedge the busy signal.
+    busySniff?.drain();
     rpc.close(reason);
     if (child.exitCode === null && child.signalCode === null) {
       try {

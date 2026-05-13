@@ -5,10 +5,13 @@
  * The runner constructs a `TraceHost` at startup when tracing is
  * enabled, bakes its `envVars()` into the agent child's environment,
  * and calls `noteObjective{Open,Close}()` from the objectives
- * tracker when SSE objective events arrive. Every HTTPS flow the
- * agent makes is decrypted transparently via the MITM proxy;
- * completed HTTP/1.1 exchanges stream up to the broker via the
- * activity uploader in real time, not at span close.
+ * tracker when SSE objective events arrive. HTTPS flows to known LLM-
+ * provider hosts (see `known-hosts.ts`) are MITM-decrypted and the
+ * resulting HTTP/1.1 exchanges stream up to the broker via the
+ * activity uploader in real time. Traffic to non-allowlisted hosts
+ * passes through the proxy as a raw TCP tunnel — the agent's TLS
+ * client talks to the real upstream cert end-to-end, system trust
+ * applies, no plaintext is observed.
  *
  * There's no TraceBuffer, no span boundary, no per-objective
  * copying. The agent's activity log is the source of truth; per-
@@ -28,7 +31,9 @@ import type { ActivityEvent, TraceEntry } from '@agentc7/sdk/types';
 import { ActivityUploader } from './activity-uploader.js';
 import { extractEntries, type HttpExchange } from './anthropic.js';
 import { type BusySignal, createBusySignal } from './busy.js';
+import { type HookServer, startHookServer } from './hook-server.js';
 import { type Http1Exchange, Http1Reassembler } from './http1-reassembler.js';
+import { isKnownLlmHost } from './known-hosts.js';
 import { type CertPool, createCertPool, createTraceCa, type TraceCa } from './mitm/ca.js';
 import { type ProxyRelay, startProxyRelay } from './proxy.js';
 import { looksLikeSseStream, reassembleAnthropicSse } from './sse.js';
@@ -74,6 +79,19 @@ export interface TraceHost {
    * can render a spinner next to the agent's name.
    */
   readonly busy: BusySignal;
+  /**
+   * Loopback HTTP endpoint URL that Claude Code hooks should POST to.
+   * Used by the `claude-code` adapter to write a `type: "http"` hook
+   * config into `.claude/settings.json` so PreToolUse / PostToolUse
+   * events drive `busy('tool_inflight')`.
+   *
+   * Co-located with the trace host because the lifecycles are identical
+   * (started together, torn down together, shares the busy signal).
+   * Null is impossible here — when tracing is enabled, hooks are
+   * available — but the field exists so callers can plumb without
+   * a separate option.
+   */
+  readonly hookEndpointUrl: string;
   /**
    * Env vars to merge into the agent child's environment (see the
    * comment on the implementation for the full list). Returns a
@@ -122,7 +140,10 @@ export async function startTraceHost(options: TraceHostOptions): Promise<TraceHo
   // matching response (or session-close request-only flush)
   // completes the exchange. Pending → finish handles are stored by
   // sessionId+startedAt so we can decrement at exchange time.
-  const busy = createBusySignal();
+  // Pass the host's structured logger through so handle auto-finish
+  // warnings (stuck handles tripping the max-age safety net) land in
+  // the same stream the rest of the trace layer logs into.
+  const busy = createBusySignal({ log });
   const pendingHandles = new Map<string, { finish: () => void }>();
   const handleKey = (sessionId: number, startedAt: number): string => `${sessionId}:${startedAt}`;
 
@@ -133,7 +154,7 @@ export async function startTraceHost(options: TraceHostOptions): Promise<TraceHo
   const reassembler = new Http1Reassembler({
     log,
     onRequestStart: ({ sessionId, startedAt }) => {
-      pendingHandles.set(handleKey(sessionId, startedAt), busy.start());
+      pendingHandles.set(handleKey(sessionId, startedAt), busy.start('llm_inflight'));
     },
     onExchange: (exchange) => {
       const handle = pendingHandles.get(handleKey(exchange.sessionId, exchange.startedAt));
@@ -149,12 +170,27 @@ export async function startTraceHost(options: TraceHostOptions): Promise<TraceHo
   const proxy = await startProxyRelay({
     log,
     certPool,
+    // Scoped MITM: only allowlisted LLM-provider hosts get TLS-
+    // terminated and parsed. Everything else flows through the proxy
+    // as a raw TCP tunnel so the agent's standard system trust store
+    // applies — we never see plaintext for non-LLM traffic, which
+    // both keeps the privacy posture honest and avoids breaking
+    // curl/git/python/etc. that don't honor NODE_EXTRA_CA_CERTS.
+    shouldMitm: isKnownLlmHost,
     onChunk: (chunk) => reassembler.ingest(chunk),
     onSessionEnd: (session) => reassembler.closeSession(session.id),
   });
 
+  // Loopback HTTP endpoint for Claude Code hook events. The runner
+  // writes its URL into `.claude/settings.json` so PreToolUse /
+  // PostToolUse callbacks bump the same `busy` signal the MITM uses.
+  // For codex this is unused — codex feeds busy via JSON-RPC
+  // notifications on the app-server stream.
+  const hookServer: HookServer = await startHookServer({ busy, log });
+
   log('trace-host: started', {
     proxyUrl: proxy.proxyUrl,
+    hookUrl: hookServer.url,
     caCertPath,
     name: options.name,
   });
@@ -167,6 +203,24 @@ export async function startTraceHost(options: TraceHostOptions): Promise<TraceHo
     certPool,
     caCertPath,
     busy,
+    hookEndpointUrl: hookServer.url,
+    /**
+     * Env vars the agent child needs to route through us and trust
+     * our MITM CA. Under scoped MITM (see `known-hosts.ts`), only the
+     * LLM-host allowlist gets TLS-terminated, so we deliberately do
+     * NOT inject the universal CA-bundle vars (`SSL_CERT_FILE`,
+     * `REQUESTS_CA_BUNDLE`, `CURL_CA_BUNDLE`, `GIT_SSL_CAINFO`):
+     *
+     *   - For allowlisted hosts, the agent's Node TLS client honors
+     *     `NODE_EXTRA_CA_CERTS` and accepts our leaf certs. Agents
+     *     that use a non-Node TLS stack (e.g. codex via reqwest) get
+     *     adapter-specific translation in their spawn paths.
+     *   - For non-allowlisted hosts, the proxy is a raw TCP tunnel —
+     *     the agent sees the real upstream cert, system trust
+     *     applies, our CA is irrelevant. Setting `SSL_CERT_FILE`
+     *     universally would actively break curl/git/python by
+     *     replacing the system trust store with our single-CA pem.
+     */
     envVars(existingEnv: NodeJS.ProcessEnv = {}): Record<string, string> {
       const existingNoProxy = existingEnv.NO_PROXY ?? existingEnv.no_proxy ?? '';
       const noProxyHosts = ['localhost', '127.0.0.1', '::1'];
@@ -218,6 +272,31 @@ export async function startTraceHost(options: TraceHostOptions): Promise<TraceHo
           error: err instanceof Error ? err.message : String(err),
         });
       });
+      await hookServer.close().catch((err: unknown) => {
+        log('trace-host: hook server close failed', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+      // Final safety net for the busy signal. Sub-system closes above
+      // (reassembler flush, hook server drain, codex sniff drain at
+      // its own teardown) should have drained every handle they own.
+      // If anything slipped through — a keep-alive socket that never
+      // emitted onSessionEnd, a dropped item/completed notification,
+      // a hook event that never fired — this guarantees the indicator
+      // goes idle before the runner exits rather than waiting on the
+      // 30s server-side TTL.
+      //
+      // Snapshot per-source counts BEFORE the drain so the diagnostic
+      // log tells us which source leaked (the counts are all zero
+      // after forceFinishAll, which would be useless on its own).
+      const leakedCounts = busy.getSourceCounts();
+      const drained = busy.forceFinishAll();
+      if (drained > 0) {
+        log('trace-host: force-drained leaked busy handles at teardown', {
+          drained,
+          sourceCounts: leakedCounts,
+        });
+      }
       try {
         await fs.unlink(caCertPath);
       } catch (err) {

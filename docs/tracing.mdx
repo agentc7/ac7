@@ -15,13 +15,30 @@ without embedding observability hooks into the agent itself.
 
 The runner runs **upstream** of the agent process and intercepts
 its network traffic at the TLS layer via a **loopback MITM TLS
-proxy** with a per-session local CA. Every HTTPS request the
-agent makes is transparently decrypted by the proxy, observed as
-plaintext, re-encrypted toward the real upstream, and passed
-through. From the upstream's point of view we are a normal TLS
-client doing standard SNI + cert validation — it can't tell us
-apart from any other user-agent, which means OAuth flows, token
-refreshes, streaming responses, and SSE all work identically.
+proxy** with a per-session local CA. HTTPS requests to **known
+LLM-provider hosts** (Anthropic, OpenAI, Azure OpenAI — see the
+allowlist below) are transparently decrypted by the proxy,
+observed as plaintext, re-encrypted toward the real upstream,
+and passed through. From the upstream's point of view we are a
+normal TLS client doing standard SNI + cert validation — it can't
+tell us apart from any other user-agent, which means OAuth flows,
+token refreshes, streaming responses, and SSE all work
+identically.
+
+Traffic to any **other** host (GitHub, npm, package registries,
+agent-spawned `curl`/`git`/`python` calls, telemetry endpoints,
+etc.) is **not** decrypted. The proxy still routes those
+connections — it has to, because `HTTPS_PROXY` is set on the
+agent child — but it passes the TCP bytes through as a raw
+tunnel. The agent's TLS client negotiates directly with the real
+upstream cert and the agent's system trust store is what
+validates it; the runner never sees plaintext.
+
+This is the honest privacy claim: **ac7 only decrypts traffic to
+LLM provider hosts on a maintained allowlist.** Adding a host
+requires editing
+[`known-hosts.ts`](https://github.com/anthropics/agentc7) (and
+ideally a parser for whatever shape lives behind it).
 
 Zero external tools. No tshark. No pcap. No SSLKEYLOGFILE
 shenanigans. Just Node's built-in `crypto` + `tls` + a small
@@ -123,6 +140,39 @@ CODEX_HOME=~/.cache/agentc7/codex/ac7-codex-<random>/
 Node-only and would confuse reqwest.
 
 For codex specifics see [runners/codex](/docs/runners/codex).
+
+## The host allowlist
+
+The proxy is host-agnostic: every CONNECT lands in the same code
+path. The decision of "decrypt this session" vs "pass it through
+unmodified" is gated by a single predicate, `isKnownLlmHost`,
+exported from `runtime/trace/known-hosts.ts`. Production wires
+that predicate into the proxy at startup; tests can substitute
+any predicate they want to drive both code paths.
+
+Current allowlist patterns (regex, case-insensitive,
+anchored against the apex):
+
+```
+(?:^|\.)anthropic\.com$       # api.anthropic.com, console.anthropic.com, auth.anthropic.com
+(?:^|\.)openai\.com$          # api.openai.com, auth.openai.com
+(?:^|\.)openai\.azure\.com$   # <customer>.openai.azure.com
+```
+
+The bar for adding a host: the agent (or its bundled tools)
+makes inference-related calls to it — model invocations, token
+refresh against the same provider, provider-specific telemetry
+that the trace pipeline knows how to parse. Hosts we just
+"happen to see" (a package registry the agent installs from, a
+GitHub API call from an MCP tool) do not belong here.
+
+Non-allowlisted CONNECTs produce **no activity events** today.
+At the proxy layer the runner still observes session metadata
+(host, port, byte counts, duration) via the `onSessionEnd`
+callback, but this data isn't currently surfaced into the
+activity stream — promoting it to a new `network_session` event
+kind is a candidate follow-up if presence visibility for non-LLM
+hosts becomes valuable.
 
 ## How the MITM works
 
@@ -250,23 +300,32 @@ the work. ac7 mitigates this with defense in depth:
    only to `127.0.0.1` on a random ephemeral port. The CA is
    generated fresh per runner process; its cert is written with
    `0o600`; its private key never touches disk.
-2. **Redaction at parse time.** Secrets are replaced with
+2. **Scoped to an LLM-host allowlist.** TLS termination only
+   fires for hosts on the `known-hosts.ts` allowlist. Everything
+   else passes through as a raw TCP tunnel — the agent's TLS
+   client validates the real upstream cert against the agent's
+   system trust store and the runner never observes plaintext.
+   This is also why setting `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`
+   / `CURL_CA_BUNDLE` / `GIT_SSL_CAINFO` is deliberately *not*
+   done: they would replace the system trust store with our
+   single-CA pem and break every non-allowlisted HTTPS call.
+3. **Redaction at parse time.** Secrets are replaced with
    `[REDACTED]` before entries leave the runner. The server
    never sees the plaintext token.
-3. **Permission-gated view.** Only members with `activity.read`
+4. **Permission-gated view.** Only members with `activity.read`
    (or the captured member themselves) can read the activity
    stream. Watchers, originators, and assignees of OTHER
    members' objectives all get 403 on the GET endpoint.
-4. **CA cert deleted on runner exit.** The cert PEM is unlinked
+5. **CA cert deleted on runner exit.** The cert PEM is unlinked
    on every exit path (normal, SIGINT, SIGTERM,
    uncaughtException).
-5. **`.mcp.json` restored on every exit** (claude-code only) —
+6. **`.mcp.json` restored on every exit** (claude-code only) —
    the original is backed up and restored idempotently.
-6. **Ephemeral CODEX_HOME removed on exit** (codex only) — the
+7. **Ephemeral CODEX_HOME removed on exit** (codex only) — the
    entire temp directory is `rm -rf`'d, including the symlink to
    the user's `~/.codex/auth.json` (the symlink is removed; the
    real file isn't).
-7. **Upload is best-effort.** If the upload fails, the runner
+8. **Upload is best-effort.** If the upload fails, the runner
    logs and moves on. It does NOT retry past the queue cap, and
    it does NOT persist the trace to disk.
 
@@ -344,11 +403,15 @@ audit requirements.
   ALPN) produce no `llm_exchange` events. Adding an HPACK-aware
   parser is a follow-up. In practice the Anthropic SDK defaults
   to HTTP/1.1 for `/v1/messages`, so this is rarely hit.
-- **Anthropic parser only.** Other LLM providers (OpenAI,
-  Gemini, Mistral) land as `opaque_http`. **Codex traces today
-  fall in this bucket** — adding a typed OpenAI parser so codex
-  traces render the same way claude-code traces do is a
-  follow-up.
+- **Anthropic parser only.** OpenAI / Azure OpenAI traffic IS
+  decrypted (those hosts are on the allowlist) but lands as
+  `opaque_http` because there's no structured parser for the
+  Chat Completions / Responses API shapes yet. **Codex traces
+  today fall in this bucket** — adding a typed OpenAI parser so
+  codex traces render the same way claude-code traces do is a
+  follow-up. Other providers (Gemini, Mistral, Bedrock) are
+  passed through unmodified (not on the allowlist); adding them
+  is a code change to `known-hosts.ts` plus, ideally, a parser.
 - **Uploader queue cap.** The uploader caps in-flight at 1000
   events / 1 MB and evicts oldest-first under sustained broker
   unreachability. Events dropped here won't appear in the UI.

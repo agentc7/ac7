@@ -39,8 +39,10 @@ import { resolve } from 'node:path';
 import { DEFAULT_PORT, ENV } from '@agentc7/sdk/protocol';
 import {
   ClaudeCodeAdapterError,
+  type ClaudeSettingsHandle,
   findClaudeBinary,
   type McpConfigHandle,
+  prepareClaudeSettings,
   prepareMcpConfig,
 } from '../runtime/agents/claude-code.js';
 import { HUD_HEIGHT, startHud } from '../runtime/hud.js';
@@ -226,6 +228,7 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
   //    here tears down the runner before propagating so we don't leave
   //    an orphaned IPC socket.
   let mcpHandle: McpConfigHandle;
+  let settingsHandle: ClaudeSettingsHandle | null = null;
   // Auto-detect the bridge command from the currently-running cli
   // process. `process.execPath` is the node binary; `process.argv[1]`
   // is the absolute path to the cli's entry script (dist/index.js in
@@ -277,6 +280,26 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
   }
   log('claude-code: .mcp.json prepared', { path: mcpHandle.path });
 
+  // 3b. If tracing is enabled, write a `.claude/settings.json` hook
+  //    config so PreToolUse / PostToolUse events drive the busy
+  //    signal. Skipped under `--no-trace` since there's no hook
+  //    endpoint to point at. Failures here are non-fatal — they
+  //    only degrade the busy-signal accuracy during tool runs, not
+  //    correctness of the agent itself.
+  if (runner.traceHost) {
+    try {
+      settingsHandle = prepareClaudeSettings({
+        cwd,
+        hookUrl: runner.traceHost.hookEndpointUrl,
+      });
+      log('claude-code: .claude/settings.json prepared', { path: settingsHandle.path });
+    } catch (err) {
+      log('claude-code: .claude/settings.json prepare failed (busy hooks disabled)', {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   // 4. Spawn claude. In interactive sessions we route through a
   //    node-pty relay so we can (a) reserve the bottom `HUD_HEIGHT`
   //    rows for the ac7 status strip and (b) own the stream for
@@ -301,6 +324,15 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
       log('claude-code: mcp restore threw', {
         error: err instanceof Error ? err.message : String(err),
       });
+    }
+    if (settingsHandle) {
+      try {
+        settingsHandle.restore();
+      } catch (err) {
+        log('claude-code: settings.json restore threw', {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
     await runner.shutdown(reason).catch((err) => {
       log('claude-code: runner shutdown threw', {
@@ -432,6 +464,11 @@ export async function runClaudeCodeCommand(input: ClaudeCodeCommandInput): Promi
     });
     try {
       mcpHandle.restore();
+    } catch {
+      /* ignore */
+    }
+    try {
+      settingsHandle?.restore();
     } catch {
       /* ignore */
     }

@@ -95,10 +95,23 @@ export interface ProxyRelayOptions {
   log?: (msg: string, ctx?: Record<string, unknown>) => void;
   /**
    * Per-hostname leaf cert issuer. When provided, CONNECT targets
-   * get the MITM treatment; captured chunks are plaintext. Omit
-   * for pure TCP relay behavior.
+   * eligible per `shouldMitm` get the MITM treatment; captured
+   * chunks are plaintext. Omit for pure TCP relay behavior on every
+   * session.
    */
   certPool?: CertPool;
+  /**
+   * Predicate consulted on each CONNECT to decide MITM vs raw tunnel.
+   * Only consulted when `certPool` is also set. When omitted, every
+   * session with a `certPool` is MITM'd — the legacy "decrypt
+   * everything" behavior, useful for tests and one-off debugging.
+   *
+   * Production callers pass `isKnownLlmHost` here so only allowlisted
+   * LLM-provider traffic gets decrypted; all other HTTPS passes
+   * through unmodified end-to-end (agent's system trust applies, we
+   * never see plaintext).
+   */
+  shouldMitm?: (host: string) => boolean;
   /**
    * Extra options merged into the upstream `tls.connect()` call
    * during MITM. Production uses this for nothing (the defaults
@@ -136,6 +149,7 @@ export async function startProxyRelay(options: ProxyRelayOptions = {}): Promise<
       client,
       sessionId,
       certPool: options.certPool,
+      shouldMitm: options.shouldMitm,
       upstreamTlsOptions: options.upstreamTlsOptions,
       onChunk: options.onChunk,
       onSessionEnd: options.onSessionEnd,
@@ -175,6 +189,7 @@ interface SessionContext {
   client: Socket;
   sessionId: number;
   certPool: CertPool | undefined;
+  shouldMitm: ((host: string) => boolean) | undefined;
   upstreamTlsOptions: ConnectionOptions | undefined;
   onChunk: ((chunk: ProxyChunk) => void) | undefined;
   onSessionEnd: ((session: ProxySession) => void) | undefined;
@@ -259,14 +274,25 @@ function handleSession(ctx: SessionContext): void {
       upstreamPort = parsed.port;
       phase = 'connecting';
 
-      // MITM whenever a CertPool is configured, regardless of port.
-      // In practice agents only CONNECT to HTTPS targets (443 or
-      // vanity ports like 8443); the TLS handshake would fail
-      // cleanly on any non-TLS traffic. Keeping the code path
-      // uniform makes testing easier and avoids silent misbehavior.
-      if (ctx.certPool) {
+      // MITM only when (a) we have a CertPool, and (b) the host is
+      // on the allowlist (or no allowlist is configured — legacy
+      // mode used by tests). Everything else gets a raw TCP tunnel:
+      // the agent's TLS client talks straight to the real upstream
+      // cert, system trust applies, we never see plaintext. We still
+      // produce a ProxySession with byte counts + host:port so the
+      // activity layer retains "agent talked to X" metadata.
+      const wantMitm =
+        ctx.certPool !== undefined &&
+        (ctx.shouldMitm === undefined || ctx.shouldMitm(upstreamHost));
+      if (wantMitm) {
         startMitmBridge();
       } else {
+        log('proxy: passthrough (no MITM)', {
+          sessionId,
+          host: upstreamHost,
+          port: upstreamPort,
+          reason: ctx.certPool === undefined ? 'no-cert-pool' : 'host-not-allowlisted',
+        });
         startRawBridge();
       }
       return;

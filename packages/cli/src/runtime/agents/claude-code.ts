@@ -41,6 +41,7 @@ import {
   existsSync,
   constants as FS,
   fsyncSync,
+  mkdirSync,
   mkdtempSync,
   openSync,
   readFileSync,
@@ -297,6 +298,254 @@ export function prepareMcpConfig(options: PrepareMcpConfigOptions): McpConfigHan
   };
 
   return { path: mcpConfigPath, restore };
+}
+
+/**
+ * Shape of `.claude/settings.json`. Only `hooks` is modeled; everything
+ * else is preserved verbatim during merge/restore.
+ *
+ * Claude Code accepts `hooks` as a map from event name → array of hook
+ * matchers. For the busy-signal feeder we use `type: "http"` so each
+ * event becomes a localhost POST rather than a process fork.
+ */
+interface ClaudeSettingsConfig {
+  hooks?: Record<string, ClaudeHookMatcher[]>;
+  [k: string]: unknown;
+}
+
+interface ClaudeHookMatcher {
+  matcher?: string;
+  hooks: ClaudeHookEntry[];
+}
+
+interface ClaudeHookEntry {
+  type: 'command' | 'http';
+  command?: string;
+  url?: string;
+  [k: string]: unknown;
+}
+
+export interface PrepareClaudeSettingsOptions {
+  /** Directory containing `.claude/settings.json`. Usually the project cwd. */
+  cwd: string;
+  /**
+   * Full URL the Claude Code harness should POST to for each hook
+   * event. Comes from `TraceHost.hookEndpointUrl`. The same URL handles
+   * PreToolUse / PostToolUse / PostToolUseFailure — the runner routes by
+   * `hook_event_name` in the payload.
+   */
+  hookUrl: string;
+}
+
+export interface ClaudeSettingsHandle {
+  readonly path: string;
+  /**
+   * Restore `.claude/settings.json` to its pre-run state. If the file
+   * didn't exist before we touched it, delete it (and remove the
+   * `.claude/` dir if we created it). Idempotent.
+   */
+  restore(): void;
+}
+
+/**
+ * Marker key we add under each ac7-managed hook entry so a later
+ * restore (or stale state from a previous crash) can identify our
+ * entries unambiguously even if the individual contributor later edits
+ * the file.
+ */
+const AC7_HOOK_MARKER = 'x_ac7_busy_feeder';
+
+/**
+ * Merge our HTTP hook entries into `.claude/settings.json`, backing up
+ * the existing file first. Returns a handle whose `.restore()` undoes
+ * the modification.
+ *
+ * The hook config writes one entry per relevant lifecycle event
+ * (PreToolUse, PostToolUse, PostToolUseFailure) pointing at the
+ * loopback URL. Each entry is tagged with `x_ac7_busy_feeder: true`
+ * so we don't accidentally drop unrelated hooks the user has
+ * configured.
+ *
+ * Failure modes that leave the existing file UNTOUCHED:
+ *   - file exists but is not valid JSON
+ *   - backup write fails
+ *   - staging temp file write fails (before rename)
+ */
+export function prepareClaudeSettings(options: PrepareClaudeSettingsOptions): ClaudeSettingsHandle {
+  const claudeDir = resolve(options.cwd, '.claude');
+  const settingsPath = join(claudeDir, 'settings.json');
+  const dirExistedBefore = existsSync(claudeDir);
+  const existedBefore = existsSync(settingsPath);
+
+  // Parse before we touch anything. Invalid JSON → throw with a clear
+  // message rather than overwriting the user's file.
+  let originalBytes: string | null = null;
+  let existingConfig: ClaudeSettingsConfig = {};
+  if (existedBefore) {
+    originalBytes = readFileSync(settingsPath, 'utf8');
+    try {
+      const parsed = JSON.parse(originalBytes);
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        existingConfig = parsed as ClaudeSettingsConfig;
+      } else {
+        throw new Error('top-level value is not an object');
+      }
+    } catch (err) {
+      throw new ClaudeCodeAdapterError(
+        `refusing to modify ${settingsPath}: existing file is not a valid JSON object ` +
+          `(${err instanceof Error ? err.message : String(err)}). ` +
+          `Fix or delete the file, then re-run.`,
+      );
+    }
+  }
+
+  // Backup BEFORE writing the target — same invariant as prepareMcpConfig.
+  const backupDir = mkdtempSync(join(tmpdir(), 'ac7-runner-'));
+  const backupPath = join(backupDir, 'claude-settings.json.bak');
+  let backupWritten = false;
+  if (existedBefore && originalBytes !== null) {
+    try {
+      atomicWrite(backupPath, originalBytes);
+      backupWritten = true;
+    } catch (err) {
+      try {
+        rmdirSync(backupDir);
+      } catch {
+        /* ignore */
+      }
+      throw new ClaudeCodeAdapterError(
+        `failed to write backup of ${settingsPath}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+  }
+
+  // Build the merged config. Preserve all existing keys, including any
+  // hooks the user already configured for events we don't touch.
+  const existingHooks: Record<string, ClaudeHookMatcher[]> =
+    existingConfig.hooks && typeof existingConfig.hooks === 'object'
+      ? { ...existingConfig.hooks }
+      : {};
+
+  const ac7Entry: ClaudeHookEntry = {
+    type: 'http',
+    url: options.hookUrl,
+    [AC7_HOOK_MARKER]: true,
+  };
+
+  for (const event of ['PreToolUse', 'PostToolUse', 'PostToolUseFailure']) {
+    const existing = Array.isArray(existingHooks[event]) ? existingHooks[event] : [];
+    // Drop any prior ac7 entries (e.g. from a previous crash that
+    // didn't restore cleanly) so we don't accumulate duplicates.
+    const cleaned = existing.map((matcher) => ({
+      ...matcher,
+      hooks: (matcher.hooks ?? []).filter(
+        (h) => !(typeof h === 'object' && h !== null && AC7_HOOK_MARKER in h),
+      ),
+    }));
+    // Match-all matcher carrying just our hook entry.
+    cleaned.push({ matcher: '*', hooks: [ac7Entry] });
+    existingHooks[event] = cleaned;
+  }
+
+  const mergedConfig: ClaudeSettingsConfig = {
+    ...existingConfig,
+    hooks: existingHooks,
+  };
+
+  // Ensure the .claude directory exists before writing. atomicWrite
+  // does a same-directory rename, so the dir has to be in place first.
+  if (!dirExistedBefore) {
+    try {
+      mkdirSync(claudeDir, { recursive: true });
+    } catch (err) {
+      if (backupWritten) {
+        try {
+          unlinkSync(backupPath);
+        } catch {
+          /* ignore */
+        }
+      }
+      try {
+        rmdirSync(backupDir);
+      } catch {
+        /* ignore */
+      }
+      throw new ClaudeCodeAdapterError(
+        `failed to create ${claudeDir}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  try {
+    atomicWrite(settingsPath, `${JSON.stringify(mergedConfig, null, 2)}\n`);
+  } catch (err) {
+    if (backupWritten) {
+      try {
+        unlinkSync(backupPath);
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      rmdirSync(backupDir);
+    } catch {
+      /* ignore */
+    }
+    throw new ClaudeCodeAdapterError(
+      `failed to write ${settingsPath}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
+  let restored = false;
+  const restore = (): void => {
+    if (restored) return;
+    restored = true;
+    try {
+      if (existedBefore && originalBytes !== null) {
+        atomicWrite(settingsPath, originalBytes);
+      } else {
+        try {
+          unlinkSync(settingsPath);
+        } catch (err) {
+          const code = (err as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT') throw err;
+        }
+        // If we created the .claude/ dir for our own settings file
+        // and it's still empty, clean it up. If the individual
+        // contributor added unrelated files we leave it alone.
+        if (!dirExistedBefore) {
+          try {
+            rmdirSync(claudeDir);
+          } catch {
+            // Directory not empty or some other error — leave it.
+          }
+        }
+      }
+    } catch (err) {
+      process.stderr.write(
+        `ac7: warning: failed to restore ${settingsPath} from backup ${backupPath}: ${
+          err instanceof Error ? err.message : String(err)
+        }\n` + `  The backup file is still at ${backupPath} — you can copy it back manually.\n`,
+      );
+      return;
+    }
+    if (backupWritten) {
+      try {
+        unlinkSync(backupPath);
+      } catch {
+        /* ignore */
+      }
+    }
+    try {
+      rmdirSync(backupDir);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  return { path: settingsPath, restore };
 }
 
 /**

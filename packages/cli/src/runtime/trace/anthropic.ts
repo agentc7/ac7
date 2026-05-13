@@ -25,6 +25,7 @@
  * a crashed upload.
  */
 
+import { isKnownLlmHost } from './known-hosts.js';
 import { redactHeaders, redactJson } from './redact.js';
 
 export interface HttpRequestRecord {
@@ -113,6 +114,17 @@ export interface OpaqueHttpEntry {
 
 const ANTHROPIC_HOST_RE = /(?:^|\.)anthropic\.com$/i;
 const MESSAGES_PATH_RE = /\/v1\/messages(?:\?|$)/;
+
+// Sanity check: the structured decoder targets Anthropic's apex, which
+// must appear on the trace MITM allowlist. If a future edit drops
+// anthropic.com from `known-hosts.ts`, the decoder would silently stop
+// firing — catch that at module load instead.
+if (!isKnownLlmHost('api.anthropic.com')) {
+  throw new Error(
+    'trace/anthropic: anthropic.com is missing from KNOWN_LLM_HOST_PATTERNS — ' +
+      'the structured /v1/messages decoder can only run on MITM-decrypted traffic.',
+  );
+}
 const OPAQUE_BODY_PREVIEW_BYTES = 4096;
 
 /**
