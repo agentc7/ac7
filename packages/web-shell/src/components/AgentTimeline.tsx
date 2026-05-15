@@ -33,16 +33,18 @@ import type {
   AnthropicUsage,
 } from '@agentc7/sdk/types';
 import { signal } from '@preact/signals';
-import { useRef } from 'preact/hooks';
+import { useMemo, useRef } from 'preact/hooks';
 import { highlightXmlTags } from '../lib/channel-highlight.js';
 import {
   loadOlderMemberActivity,
   memberActivityConnected,
   memberActivityExhausted,
   memberActivityLoading,
+  memberActivityName,
   memberActivityRows,
 } from '../lib/member-activity.js';
 import { dmOther, selectThreadMessage, threadMessages } from '../lib/messages.js';
+import { useWindowedList } from '../lib/use-windowed-list.js';
 import { selectObjectiveDetail, view } from '../lib/view.js';
 
 type KindFilter = Record<ActivityEvent['kind'], boolean>;
@@ -215,8 +217,26 @@ export function buildThread(rows: ActivityRow[]): ThreadItem[] {
   return thread;
 }
 
+/**
+ * Content hash for the prefix-dedup in `buildThread`, memoized on the
+ * message object via a WeakMap.
+ *
+ * `buildThread` re-runs over the entire row list every time a new row
+ * lands, and each `llm_exchange` carries the agent's full prefix in
+ * `request.messages` — so a naive re-hash is quadratic in turn count
+ * and `JSON.stringify` of large tool payloads dominated the activity
+ * feed's render cost. Message objects are stable across renders (rows
+ * are appended, never rebuilt), so caching on the object means each
+ * message's content is serialized exactly once for the life of the
+ * page rather than once per render.
+ */
+const messageHashCache = new WeakMap<AnthropicMessage, string>();
 function hashMessage(m: AnthropicMessage): string {
-  return `${m.role}:${JSON.stringify(m.content)}`;
+  const cached = messageHashCache.get(m);
+  if (cached !== undefined) return cached;
+  const h = `${m.role}:${JSON.stringify(m.content)}`;
+  messageHashCache.set(m, h);
+  return h;
 }
 
 export interface ObjectiveSeen {
@@ -277,10 +297,13 @@ export function AgentTimeline() {
   const objFilter = objectiveFilter.value;
 
   // Mirror TimelineBody's filter pipeline so the eyebrow count
-  // reflects what the user actually sees rendered.
-  const filteredCount = clipToObjective(rows, objFilter).filter(
-    (row) => filters[row.event.kind],
-  ).length;
+  // reflects what the user actually sees rendered. Memoized — the
+  // clip walks + sorts the whole row list, and this component
+  // re-renders on every arriving row.
+  const filteredCount = useMemo(
+    () => clipToObjective(rows, objFilter).filter((row) => filters[row.event.kind]).length,
+    [rows, objFilter, filters],
+  );
 
   return (
     <section class="card" style="display:flex;flex-direction:column;gap:14px">
@@ -325,7 +348,7 @@ export function TimelineFilters() {
   const filters = kindFilters.value;
   const objFilter = objectiveFilter.value;
   const rows = memberActivityRows.value;
-  const objectives = objectivesSeen(rows);
+  const objectives = useMemo(() => objectivesSeen(rows), [rows]);
   return (
     <div class="flex items-center gap-2 flex-wrap">
       {objectives.length > 0 && <ObjectiveSelect objectives={objectives} current={objFilter} />}
@@ -347,28 +370,56 @@ export function TimelineBody() {
   const filters = kindFilters.value;
   const objFilter = objectiveFilter.value;
 
-  const clipped = clipToObjective(rows, objFilter);
-  const filteredRows = clipped.filter((row) => filters[row.event.kind]);
-  const thread = buildThread(filteredRows);
+  // The clip → filter → build pipeline is the activity feed's heavy
+  // lifting: each stage sorts the full row list, and `buildThread`
+  // expands every exchange into per-message thread items. This
+  // component re-renders on every arriving row, so without memoizing
+  // the whole pipeline runs from scratch many times per second on a
+  // busy stream. Deps are all signal values with stable identity
+  // between unrelated renders.
+  const thread = useMemo(() => {
+    const clipped = clipToObjective(rows, objFilter);
+    const filteredRows = clipped.filter((row) => filters[row.event.kind]);
+    return buildThread(filteredRows);
+  }, [rows, objFilter, filters]);
 
-  // Scroll-anchor preservation: prepending older rows would shift
-  // the visible content down by the height of the new rows. Capture
-  // the scroll position before the fetch and restore the same
-  // relative position after render. Falls back to no-op when the
-  // body isn't inside a scroll container (member-profile page,
-  // where the browser handles anchoring natively via overflow-anchor).
+  // Trailing render window — a long stream expands into thousands of
+  // thread items (each exchange is many `ThreadMessage`s, each block
+  // re-serializing tool payloads). Paint only the tail; `resetKey`
+  // collapses the window when the inspected agent changes.
+  const win = useWindowedList(thread.length, {
+    pageSize: 60,
+    resetKey: memberActivityName.value,
+  });
+  const windowStart = thread.length - win.visibleCount;
+  const visibleThread = thread.slice(windowStart);
+
+  // Scroll-anchor preservation: revealing older items (from the
+  // window or from the server) shifts the visible content down by
+  // their height. Capture the scroll position before, restore the
+  // same relative position after render. Falls back to no-op when the
+  // body isn't inside a scroll container (member-profile page, where
+  // the browser handles anchoring natively via overflow-anchor).
   const loadOlderBtnRef = useRef<HTMLButtonElement | null>(null);
   const onLoadOlder = async (): Promise<void> => {
     const btn = loadOlderBtnRef.current;
     const scroller = btn?.closest<HTMLElement>('[data-scroll-anchor]') ?? null;
     const before = scroller ? { height: scroller.scrollHeight, top: scroller.scrollTop } : null;
-    await loadOlderMemberActivity();
+    // Reveal in-memory items first; only hit the network once the
+    // window has caught up to everything already loaded.
+    if (win.hasHidden) {
+      win.showMore();
+    } else {
+      await loadOlderMemberActivity();
+    }
     if (scroller && before) {
       requestAnimationFrame(() => {
         scroller.scrollTop = before.top + (scroller.scrollHeight - before.height);
       });
     }
   };
+
+  const canLoadOlder = rows.length > 0 && (win.hasHidden || !exhausted);
 
   return (
     <>
@@ -379,7 +430,7 @@ export function TimelineBody() {
         </div>
       )}
 
-      {rows.length > 0 && !exhausted && (
+      {canLoadOlder && (
         <div>
           <button
             ref={loadOlderBtnRef}
@@ -394,7 +445,7 @@ export function TimelineBody() {
       )}
 
       <ol style="display:flex;flex-direction:column;gap:4px;list-style:none;padding:0;margin:0">
-        {thread.map((item) => (
+        {visibleThread.map((item) => (
           <li key={item.key}>
             <ThreadItemView item={item} />
           </li>

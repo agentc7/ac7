@@ -8,6 +8,7 @@ import {
   __resetMessagesForTests,
   appendMessages,
   PRIMARY_THREAD,
+  prependMessages,
   threadKeyOf,
   threadKeys,
   threadMessages,
@@ -92,6 +93,37 @@ describe('appendMessages', () => {
     ]);
     expect(threadMessages(PRIMARY_THREAD)).toHaveLength(1);
     expect(threadMessages('dm:build-bot')).toHaveLength(1);
+  });
+});
+
+describe('appendMessages out-of-order', () => {
+  it('sorts a backwards-in-time arrival into place (slow path)', () => {
+    appendMessages('director-1', [msg({ id: 'a', ts: 3 }), msg({ id: 'b', ts: 4 })]);
+    // A reconnect backfill delivers an older message after newer ones.
+    appendMessages('director-1', [msg({ id: 'c', ts: 1 })]);
+    expect(threadMessages(PRIMARY_THREAD).map((m) => m.id)).toEqual(['c', 'a', 'b']);
+  });
+});
+
+describe('prependMessages', () => {
+  it('places an older page ahead of existing messages', () => {
+    appendMessages('director-1', [msg({ id: 'a', ts: 5 }), msg({ id: 'b', ts: 6 })]);
+    prependMessages('director-1', [msg({ id: 'x', ts: 1 }), msg({ id: 'y', ts: 2 })]);
+    expect(threadMessages(PRIMARY_THREAD).map((m) => m.id)).toEqual(['x', 'y', 'a', 'b']);
+  });
+
+  it('dedupes against messages already loaded', () => {
+    appendMessages('director-1', [msg({ id: 'a', ts: 5 })]);
+    // Overlapping page — `a` is re-sent alongside genuinely older rows.
+    prependMessages('director-1', [msg({ id: 'older', ts: 1 }), msg({ id: 'a', ts: 5 })]);
+    expect(threadMessages(PRIMARY_THREAD).map((m) => m.id)).toEqual(['older', 'a']);
+  });
+
+  it('sorts when an incoming page overlaps the current head in time', () => {
+    appendMessages('director-1', [msg({ id: 'a', ts: 4 })]);
+    // Page contains a row newer than the current head — slow path.
+    prependMessages('director-1', [msg({ id: 'p', ts: 2 }), msg({ id: 'q', ts: 6 })]);
+    expect(threadMessages(PRIMARY_THREAD).map((m) => m.id)).toEqual(['p', 'a', 'q']);
   });
 });
 
