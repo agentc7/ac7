@@ -625,6 +625,26 @@ describe('POST /objectives/:id/discuss', () => {
     const res = await app.request('/objectives/obj-nope/discuss', authed(ALICE, { body: 'hi' }));
     expect(res.status).toBe(404);
   });
+
+  it('posts one message to the whole thread, not one per member', async () => {
+    const { app, broker } = makeApp();
+    // Thread members: carol (assignee), alice (originator + admin),
+    // dave (watcher) — three connected members.
+    const obj = await createOne(app, ALICE, { assignee: 'carol', watchers: ['dave'] });
+    const pushSpy = vi.spyOn(broker, 'push');
+    const res = await app.request(
+      `/objectives/${obj.id}/discuss`,
+      authed(CAROL, { body: 'one and only' }),
+    );
+    expect(res.status).toBe(200);
+    // A per-member fanout loop would call push (and mint a message id)
+    // once per thread member, which the web client rendered as one
+    // duplicate per connected member. One multi-recipient push instead.
+    expect(pushSpy).toHaveBeenCalledTimes(1);
+    const [payload, context] = pushSpy.mock.calls[0] ?? [];
+    expect(payload?.to).toBeUndefined();
+    expect(context?.recipients).toEqual(expect.arrayContaining(['alice', 'carol', 'dave']));
+  });
 });
 
 // ─── full-lifecycle audit log ────────────────────────────────────────
