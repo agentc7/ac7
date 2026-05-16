@@ -5,6 +5,14 @@
  * signal; both drive re-renders on change. Auto-scrolls to bottom
  * when a new message arrives AND the user is already near the bottom
  * — lets individual-contributors read history without being yanked back.
+ *
+ * Only the trailing window of the thread is painted (see
+ * `useWindowedList`) — a large DM would otherwise mount thousands of
+ * `MessageLine`s, each running inline-markdown rendering, on every
+ * open. The "load older" bar at the top first reveals more of what's
+ * already in memory, then pages older history from the server via
+ * `thread-history`. The thread's first page is fetched on open by
+ * `hydrateThread`, since the live backfill is not thread-scoped.
  */
 
 import { useEffect } from 'preact/hooks';
@@ -17,7 +25,13 @@ import {
   selectThreadMessage,
   threadMessages,
 } from '../lib/messages.js';
+import {
+  hydrateThread,
+  loadOlderThreadMessages,
+  threadHistoryState,
+} from '../lib/thread-history.js';
 import { useStickyBottom } from '../lib/use-sticky-bottom.js';
+import { useWindowedList } from '../lib/use-windowed-list.js';
 import { selectAgentDetail, view } from '../lib/view.js';
 import { ChevronsDown, PanelRight } from './icons/index.js';
 import { MessageLine } from './MessageLine.js';
@@ -46,6 +60,39 @@ export function Transcript({ viewer }: TranscriptProps) {
   // and thread switches uniformly.
   const { containerRef, onScroll, isPinned, jumpToBottom } = useStickyBottom();
 
+  // Trailing render window. `resetKey` collapses it back to one page
+  // when the viewer switches threads, so a long DM doesn't re-mount
+  // its whole backlog. `previousMessage` for grouping is still taken
+  // from the *full* array so a continuation row that straddles the
+  // window boundary keeps its grouping.
+  const win = useWindowedList(messages.length, { resetKey: threadKey });
+  const windowStart = messages.length - win.visibleCount;
+  const windowed = messages.slice(windowStart);
+
+  // Paging state for the "load older" bar: more in memory, or more on
+  // the server, or neither (bar hidden).
+  const hist = threadKey !== null ? threadHistoryState(threadKey) : null;
+  const canLoadOlder = win.hasHidden || (hist !== null && !hist.exhausted);
+
+  // Reveal older messages without the viewport jumping. Prepending
+  // content above the fold shifts everything down by the new content's
+  // height; capture the scroll metrics first and restore the same
+  // relative position once the new rows have painted.
+  const onLoadOlder = async (): Promise<void> => {
+    const el = containerRef.current;
+    const before = el ? { height: el.scrollHeight, top: el.scrollTop } : null;
+    if (win.hasHidden) {
+      win.showMore();
+    } else if (threadKey !== null) {
+      await loadOlderThreadMessages(viewer, threadKey);
+    }
+    if (el && before) {
+      requestAnimationFrame(() => {
+        el.scrollTop = before.top + (el.scrollHeight - before.height);
+      });
+    }
+  };
+
   // Drop any inspector → thread selection when navigating away from
   // the thread it was anchored to. The selected message id is opaque
   // across threads, so leaving it set would highlight nothing
@@ -53,6 +100,13 @@ export function Transcript({ viewer }: TranscriptProps) {
   useEffect(() => {
     selectThreadMessage(null);
   }, [threadKey]);
+
+  // Fetch the thread's own first page on open. The live backfill is a
+  // global recent-window, so a quiet DM can be entirely absent from
+  // it; `hydrateThread` is idempotent (guarded by a `hydrated` flag).
+  useEffect(() => {
+    if (threadKey !== null) void hydrateThread(viewer, threadKey);
+  }, [threadKey, viewer]);
 
   if (v.kind !== 'thread' || threadKey === null) return null;
 
@@ -109,14 +163,31 @@ export function Transcript({ viewer }: TranscriptProps) {
           {messages.length === 0 ? (
             <EmptyState threadKey={threadKey} />
           ) : (
-            messages.map((m, i) => (
-              <MessageLine
-                key={m.id}
-                message={m}
-                viewer={viewer}
-                {...(i > 0 && messages[i - 1] ? { previousMessage: messages[i - 1] } : {})}
-              />
-            ))
+            <>
+              {canLoadOlder && (
+                <div class="flex justify-center" style="padding:2px 0 10px">
+                  <button
+                    type="button"
+                    onClick={() => void onLoadOlder()}
+                    disabled={hist?.loading ?? false}
+                    class="btn btn-ghost btn-sm"
+                  >
+                    {hist?.loading ? 'Loading…' : '↑ Load older messages'}
+                  </button>
+                </div>
+              )}
+              {windowed.map((m, i) => {
+                const prev = messages[windowStart + i - 1];
+                return (
+                  <MessageLine
+                    key={m.id}
+                    message={m}
+                    viewer={viewer}
+                    {...(prev ? { previousMessage: prev } : {})}
+                  />
+                );
+              })}
+            </>
           )}
         </div>
         {!isPinned && messages.length > 0 && (

@@ -151,17 +151,11 @@ export function selectThreadMessage(id: string | null): void {
 }
 
 /**
- * Append one or more messages to their respective threads. Handles
- * inbound sorting (keeps arrays ordered by `ts` ascending) and dedups
- * by message id, so calling this repeatedly with overlapping history
- * pages is safe.
+ * Bucket a flat message list by thread key. Shared by `appendMessages`
+ * and `prependMessages` so each only walks the input once even when it
+ * spans many threads.
  */
-export function appendMessages(viewer: string, msgs: Message[]): void {
-  if (msgs.length === 0) return;
-  const next = new Map(messagesByThread.value);
-
-  // Bucket by thread key in one pass so we only touch each thread
-  // array once even if msgs covers many threads.
+function bucketByThread(viewer: string, msgs: Message[]): Map<string, Message[]> {
   const byThread = new Map<string, Message[]>();
   for (const m of msgs) {
     const key = threadKeyOf(m, viewer);
@@ -169,13 +163,68 @@ export function appendMessages(viewer: string, msgs: Message[]): void {
     arr.push(m);
     byThread.set(key, arr);
   }
+  return byThread;
+}
+
+/**
+ * Append one or more messages to their respective threads. Keeps
+ * arrays ordered by `ts` ascending and dedups by message id, so
+ * calling this repeatedly with overlapping history pages is safe.
+ *
+ * Fast path: when every fresh message lands at or after the current
+ * tail — the case for live WS arrivals and tail backfill, i.e. nearly
+ * always — the merged array is a plain concat with no full re-sort.
+ * That keeps per-frame cost flat as a thread grows; the old behavior
+ * ran a full `O(n log n)` sort on every arriving message. Out-of-order
+ * arrivals (reconnect backfill) still fall back to a sort.
+ */
+export function appendMessages(viewer: string, msgs: Message[]): void {
+  if (msgs.length === 0) return;
+  const next = new Map(messagesByThread.value);
+  const byThread = bucketByThread(viewer, msgs);
 
   for (const [key, incoming] of byThread) {
     const existing = next.get(key) ?? [];
     const seenIds = new Set(existing.map((m) => m.id));
     const fresh = incoming.filter((m) => !seenIds.has(m.id));
     if (fresh.length === 0) continue;
-    const merged = [...existing, ...fresh].sort((a, b) => a.ts - b.ts);
+    fresh.sort((a, b) => a.ts - b.ts);
+    const tailTs =
+      existing.length > 0 ? (existing[existing.length - 1]?.ts ?? -Infinity) : -Infinity;
+    const inOrder = (fresh[0]?.ts ?? -Infinity) >= tailTs;
+    const merged = inOrder
+      ? [...existing, ...fresh]
+      : [...existing, ...fresh].sort((a, b) => a.ts - b.ts);
+    next.set(key, merged);
+  }
+
+  messagesByThread.value = next;
+}
+
+/**
+ * Prepend older messages to their threads — the paging counterpart to
+ * `appendMessages`, used when the transcript fetches a page of history
+ * older than what's already loaded. Dedups by id and, like the append
+ * fast path, skips the full re-sort when the incoming page sits
+ * entirely at or before the current head (the normal case for an
+ * older-history page).
+ */
+export function prependMessages(viewer: string, msgs: Message[]): void {
+  if (msgs.length === 0) return;
+  const next = new Map(messagesByThread.value);
+  const byThread = bucketByThread(viewer, msgs);
+
+  for (const [key, incoming] of byThread) {
+    const existing = next.get(key) ?? [];
+    const seenIds = new Set(existing.map((m) => m.id));
+    const fresh = incoming.filter((m) => !seenIds.has(m.id));
+    if (fresh.length === 0) continue;
+    fresh.sort((a, b) => a.ts - b.ts);
+    const headTs = existing.length > 0 ? (existing[0]?.ts ?? Infinity) : Infinity;
+    const inOrder = (fresh[fresh.length - 1]?.ts ?? Infinity) <= headTs;
+    const merged = inOrder
+      ? [...fresh, ...existing]
+      : [...fresh, ...existing].sort((a, b) => a.ts - b.ts);
     next.set(key, merged);
   }
 
