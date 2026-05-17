@@ -1105,41 +1105,40 @@ export function createApp(options: AppOptions): CreatedApp {
       const threadKey = `obj:${objective.id}`;
       const primaryTargets = objectiveThreadMembers(objective, event);
       const body = systemMessageForEvent(objective, event.kind, event);
-      for (const target of primaryTargets) {
-        if (!broker.hasMember(target)) continue;
-        try {
-          await broker.push(
-            {
-              to: target,
-              body,
-              level: 'info',
-              // Minimal machine meta: classification + ids for filtering.
-              // The full objective state used to be serialized here as
-              // `data.objective = JSON.stringify(...)`, but that landed
-              // in the agent's channel-event envelope as a noisy XML
-              // attribute. Agents read the human-readable `body` above
-              // and call `objectives_view` for full state when they
-              // need it — one extra tool call on the rare path, clean
-              // events on the common path.
-              data: {
-                kind: 'objective',
-                event: event.kind,
-                objective_id: objective.id,
-                objective_status: objective.status,
-                thread: threadKey,
-                actor,
-              },
+      // One multi-recipient push, not a per-target loop — see the
+      // /discuss endpoint for the rationale: a loop mints a distinct
+      // message id per recipient, so a connected web client renders
+      // the event once per other connected thread member.
+      try {
+        await broker.push(
+          {
+            body,
+            level: 'info',
+            // Minimal machine meta: classification + ids for filtering.
+            // The full objective state used to be serialized here as
+            // `data.objective = JSON.stringify(...)`, but that landed
+            // in the agent's channel-event envelope as a noisy XML
+            // attribute. Agents read the human-readable `body` above
+            // and call `objectives_view` for full state when they
+            // need it — one extra tool call on the rare path, clean
+            // events on the common path.
+            data: {
+              kind: 'objective',
+              event: event.kind,
+              objective_id: objective.id,
+              objective_status: objective.status,
+              thread: threadKey,
+              actor,
             },
-            { from: actor },
-          );
-        } catch (err) {
-          logger.warn('failed to fanout objective event', {
-            objectiveId: objective.id,
-            event: event.kind,
-            target,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+          },
+          { from: actor, recipients: [...primaryTargets] },
+        );
+      } catch (err) {
+        logger.warn('failed to fanout objective event', {
+          objectiveId: objective.id,
+          event: event.kind,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
     };
 
@@ -1516,19 +1515,24 @@ export function createApp(options: AppOptions): CreatedApp {
     // POST /objectives/:id/discuss (thread members only)
     //
     // Discussion posts are real team messages with thread key
-    // `obj:<id>`. The server fans out to every thread member via
-    // `broker.push` — one targeted push per member so the existing
-    // single-`targetName` broker API still works. The message lands in
-    // the event log alongside chat, visible in the web UI's inline
-    // thread and in `recent`/`history` for anyone filtering by thread.
+    // `obj:<id>`. The post is ONE message delivered to every thread
+    // member via the broker's multi-recipient `recipients` path — the
+    // same path channel posts use. The message lands in the event log
+    // alongside chat, visible in the web UI's inline thread and in
+    // `recent`/`history` for anyone filtering by thread.
     //
-    // The caller itself also receives its own message back via the
-    // fanout (broker.push targets the sender). The link's self-echo
-    // suppression DOES apply here — agents won't see their own
-    // objective-discussion posts on the live stream — which is the
-    // same behaviour as `broadcast`/`send`. The web client still
-    // renders its own posts because the web SSE handler does NOT
-    // suppress self-echoes.
+    // Earlier this looped `broker.push({ to: member })` once per
+    // thread member. Each push minted its own message id, so a
+    // connected member's web client received the post once per *other*
+    // connected member and rendered it that many times (a single
+    // multi-recipient push has one id, which `appendMessages` dedupes).
+    //
+    // The caller itself also receives its own message back — the
+    // `recipients` path always includes the sender. The link's
+    // self-echo suppression DOES apply (agents won't see their own
+    // objective-discussion posts on the live stream — same as
+    // `broadcast`/`send`); the web client still renders its own posts
+    // because the web SSE handler does NOT suppress self-echoes.
     app.post(`${PATHS.objectives}/:id/discuss`, auth, async (c) => {
       const member = c.get('member');
       const id = c.req.param('id');
@@ -1561,37 +1565,31 @@ export function createApp(options: AppOptions): CreatedApp {
 
       const threadKey = `obj:${id}`;
       let canonical: Message | null = null;
-      for (const target of members) {
-        if (!broker.hasMember(target)) continue;
-        try {
-          const result = await broker.push(
-            {
-              to: target,
-              body: parsed.data.body,
-              title: parsed.data.title ?? null,
-              level: 'info',
-              data: {
-                kind: 'objective_discuss',
-                objective_id: id,
-                thread: threadKey,
-              },
-              ...(discussAttachments.length > 0 ? { attachments: discussAttachments } : {}),
+      try {
+        // Single multi-recipient push: one message id, one event-log
+        // row, delivered live to every connected thread member (and the
+        // sender). Offline members are dropped silently by the broker,
+        // exactly as the old per-target `hasMember` skip did.
+        const result = await broker.push(
+          {
+            body: parsed.data.body,
+            title: parsed.data.title ?? null,
+            level: 'info',
+            data: {
+              kind: 'objective_discuss',
+              objective_id: id,
+              thread: threadKey,
             },
-            { from: member.name },
-          );
-          // Grab the first returned message as the canonical response
-          // — every fanout push produces the same Message shape, and
-          // callers just want to know "my post landed as msg X" so
-          // they can dedupe. Subsequent fanouts reuse different ids
-          // internally but that's the broker's concern.
-          if (canonical === null) canonical = result.message;
-        } catch (err) {
-          logger.warn('failed to fanout objective discuss', {
-            objectiveId: id,
-            target,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+            ...(discussAttachments.length > 0 ? { attachments: discussAttachments } : {}),
+          },
+          { from: member.name, recipients: [...members] },
+        );
+        canonical = result.message;
+      } catch (err) {
+        logger.warn('failed to fanout objective discuss', {
+          objectiveId: id,
+          error: err instanceof Error ? err.message : String(err),
+        });
       }
 
       // Materialize grants for every thread member (minus the owner,
